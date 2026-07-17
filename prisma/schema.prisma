@@ -1,0 +1,123 @@
+// tpass-vote 資料模型。開票私鑰不落地：只存公鑰；sealedBox 為彌封後（去識別、洗牌）的密文快照。
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 學生會 email 白名單（超管種子來自 env，不入此表）。
+model Admin {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  addedBy   String
+  createdAt DateTime @default(now())
+}
+
+// 選舉主檔。開票私鑰不落地：只存公鑰；sealedBox 為彌封後（去識別、洗牌）的密文快照。
+model Election {
+  id                   String    @id @default(cuid())
+  slug                 String    @unique
+  title                String
+  kind                 String    // leader | grade_rep | other
+  parentId             String?   // 重選場次指向原選舉
+  seats                Int       @default(1)
+  maxChoices           Int       @default(1)
+  status               String    @default("draft") // draft | registration | campaigning | voting | closed | sealed | published
+  ballotMode           String?   // choose | approval（開放投票時依核准候選人數判定）
+  registrationStartsAt DateTime?
+  registrationEndsAt   DateTime?
+  votingStartsAt       DateTime?
+  votingEndsAt         DateTime?
+  tallyPublicKeyJwk    Json?
+  keyShares            Int       @default(1) // 1 | 2（開票金鑰分持份數）
+  sealedBox            Json?     // string[] 密文陣列（無身分、順序已洗牌）
+  sealedHash           String?
+  sealedAt             DateTime?
+  sealedBy             String?
+  resultsJson          Json?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  announcements Announcement[]
+  candidates    Candidate[]
+  voters        Voter[]
+  ballots       EncryptedBallot[]
+
+  @@index([status])
+}
+
+// 法定三公告（投票前30日/前14日/開票後7日）。
+model Announcement {
+  id          String    @id @default(cuid())
+  electionId  String
+  election    Election  @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  kind        String    // first | second | result
+  title       String
+  body        String    // markdown
+  publishedAt DateTime? // null = 草稿
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([electionId, kind])
+}
+
+model Candidate {
+  id          String   @id @default(cuid())
+  electionId  String
+  election    Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  members     Json     // [{name,email,grade}]；leader 聯名 2 人，其餘 1 人
+  number      Int?     // 號次，審核通過後編定
+  platform    String   // 政見
+  attachments Json?    // Upload id 清單（學生證影本等）
+  status      String   @default("pending") // pending | needs_fix | approved | rejected | withdrawn
+  reviewNote  String?
+  createdBy   String   // 登記者 email（伺服器端從 session 戳，不信 client）
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([electionId, number])
+  @@index([electionId, status])
+}
+
+// 選舉人名冊（選委會上傳）。
+model Voter {
+  id         String    @id @default(cuid())
+  electionId String
+  election   Election  @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  email      String
+  name       String?
+  votedAt    DateTime? // 最後一次投票時間；截止前可重投覆寫
+
+  ballot EncryptedBallot?
+
+  @@unique([electionId, email])
+}
+
+// 內信封：無開票私鑰不可解。voterId 唯一＝一人一格，重投＝upsert 覆寫。
+model EncryptedBallot {
+  id         String   @id @default(cuid())
+  electionId String
+  election   Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  voterId    String   @unique
+  voter      Voter    @relation(fields: [voterId], references: [id], onDelete: Cascade)
+  ciphertext String   // base64(RSA-OAEP 包 AES 金鑰 + AES-GCM 密文)
+  updatedAt  DateTime @updatedAt
+}
+
+// 檔案上傳：候選人登記附件（學生證影本等）。與 tpass-form 的 Upload 模式一致——
+// 只存 electionId 作範圍界線（配額、下載授權查詢），不用 FK 關聯（照抄 form 的作法）。
+model Upload {
+  id          String   @id @default(cuid())
+  electionId  String
+  storageKey  String   // 物件儲存 key
+  filename    String
+  mime        String
+  size        Int
+  uploaderSub String
+  createdAt   DateTime @default(now())
+
+  @@index([electionId])
+}
