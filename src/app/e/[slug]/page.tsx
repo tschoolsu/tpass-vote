@@ -1,0 +1,215 @@
+// 選舉詳情頁：狀態、時程倒數、核准候選人卡片、已發布公告連結、依狀態 CTA。
+// 不強制登入（同 tpass-form 的公開頁模式）：任何人可看，登記／投票才需要登入。
+import type { Metadata } from "next";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { CalendarClock, Megaphone } from "lucide-react";
+import { PublicShell } from "@/components/public/Shell";
+import { StatusBadge } from "@/components/public/Badges";
+import { CandidateCard } from "@/components/public/CandidateCard";
+import { CopyLinkButton } from "@/components/public/CopyLinkButton";
+import { LinkButton } from "@/components/public/LinkButton";
+import { Card } from "@/components/ui/primitives";
+import { getSession } from "@/lib/tpass-auth";
+import { isAdmin } from "@/config/admin";
+import { authConfig } from "@/config/auth";
+import { prisma } from "@/lib/db";
+import {
+  ANNOUNCEMENT_KINDS,
+  ANNOUNCEMENT_KIND_LABEL,
+  KIND_LABEL,
+  STATUS_LABEL,
+  describeRemaining,
+  formatDateTime,
+} from "@/components/public/shared";
+
+async function getElection(slug: string) {
+  return prisma.election.findUnique({
+    where: { slug },
+    include: {
+      candidates: { where: { status: "approved" }, orderBy: { number: "asc" } },
+      announcements: true,
+    },
+  });
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  const election = await getElection(slug);
+  if (!election || election.status === "draft") return { title: "找不到選舉" };
+  return {
+    title: `${election.title}｜T-Vote`,
+    description: `${STATUS_LABEL[election.status] ?? election.status}・${KIND_LABEL[election.kind] ?? election.kind}`,
+  };
+}
+
+export default async function ElectionDetailPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = await params;
+  const session = await getSession();
+  const election = await getElection(slug);
+  if (!election || election.status === "draft") notFound();
+
+  const admin = session ? await isAdmin(session.email) : false;
+  const now = new Date();
+  const shareUrl = new URL(`/e/${slug}`, authConfig.selfUrl).toString();
+
+  const publishedAnnouncements = ANNOUNCEMENT_KINDS.map((kind) =>
+    election.announcements.find((a) => a.kind === kind),
+  ).filter((a): a is NonNullable<typeof a> => a !== undefined && a.publishedAt !== null);
+
+  const timeline: { label: string; date: Date | null; countdown: string | null }[] = [
+    {
+      label: "登記開始",
+      date: election.registrationStartsAt,
+      countdown:
+        election.status === "campaigning" || election.status === "draft"
+          ? null
+          : election.registrationStartsAt && now < election.registrationStartsAt
+            ? describeRemaining(election.registrationStartsAt, now)
+            : null,
+    },
+    {
+      label: "登記截止",
+      date: election.registrationEndsAt,
+      countdown:
+        election.status === "registration"
+          ? describeRemaining(election.registrationEndsAt, now)
+          : null,
+    },
+    {
+      label: "投票開始",
+      date: election.votingStartsAt,
+      countdown:
+        election.status === "campaigning"
+          ? describeRemaining(election.votingStartsAt, now)
+          : null,
+    },
+    {
+      label: "投票截止",
+      date: election.votingEndsAt,
+      countdown:
+        election.status === "voting" ? describeRemaining(election.votingEndsAt, now) : null,
+    },
+  ];
+
+  return (
+    <PublicShell isLoggedIn={session !== null} isAdmin={admin}>
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge status={election.status} />
+        <span className="font-mono text-[11px] font-bold text-muted-foreground">
+          {KIND_LABEL[election.kind] ?? election.kind}
+        </span>
+        {election.parentId && (
+          <span className="font-mono text-[11px] font-bold text-tone-orange-text">重選場次</span>
+        )}
+      </div>
+
+      <h1 className="mt-3 font-extrabold text-2xl sm:text-3xl tracking-tight">{election.title}</h1>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <CTA status={election.status} slug={slug} />
+        <CopyLinkButton url={shareUrl} label="複製本頁連結" />
+      </div>
+
+      <Card className="mt-6">
+        <h2 className="flex items-center gap-2 font-extrabold text-base">
+          <CalendarClock className="h-4 w-4" /> 時程
+        </h2>
+        <dl className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {timeline.map((t) => (
+            <div key={t.label} className="rounded-xl border-2 border-foreground/15 p-3">
+              <dt className="font-mono text-[11px] font-bold text-muted-foreground">{t.label}</dt>
+              <dd className="mt-1 font-bold">{formatDateTime(t.date)}</dd>
+              {t.countdown && (
+                <dd className="mt-0.5 text-sm font-medium text-accent">{t.countdown}</dd>
+              )}
+            </div>
+          ))}
+        </dl>
+      </Card>
+
+      <section className="mt-6">
+        <h2 className="font-extrabold text-base">
+          核准候選人{election.candidates.length > 0 ? `（${election.candidates.length}）` : ""}
+        </h2>
+        {election.candidates.length === 0 ? (
+          <p className="mt-2 text-sm font-medium text-muted-foreground">
+            尚無核准候選人名單。
+          </p>
+        ) : (
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {election.candidates.map((c) => (
+              <CandidateCard
+                key={c.id}
+                kind={election.kind}
+                candidate={{
+                  id: c.id,
+                  number: c.number,
+                  members: c.members as unknown as { name: string; email: string; grade: string }[],
+                  platform: c.platform,
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {publishedAnnouncements.length > 0 && (
+        <section className="mt-6">
+          <h2 className="flex items-center gap-2 font-extrabold text-base">
+            <Megaphone className="h-4 w-4" /> 公告
+          </h2>
+          <div className="mt-3 flex flex-col gap-2">
+            {publishedAnnouncements.map((a) => (
+              <Link
+                key={a.kind}
+                href={`/e/${slug}/a/${a.kind}`}
+                className="flex items-center justify-between rounded-xl border-2 border-foreground bg-card px-4 py-3 font-bold shadow-[3px_3px_0_0_var(--color-foreground)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[5px_5px_0_0_var(--color-foreground)]"
+              >
+                <span>
+                  {ANNOUNCEMENT_KIND_LABEL[a.kind] ?? a.kind}：{a.title}
+                </span>
+                <span className="font-mono text-[11px] font-normal text-muted-foreground">
+                  {formatDateTime(a.publishedAt)}
+                </span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+    </PublicShell>
+  );
+}
+
+function CTA({ status, slug }: { status: string; slug: string }) {
+  if (status === "registration") {
+    return (
+      <LinkButton href={`/e/${slug}/register`} variant="primary">
+        登記候選人
+      </LinkButton>
+    );
+  }
+  if (status === "voting") {
+    return (
+      <LinkButton href={`/e/${slug}/vote`} variant="primary">
+        前往投票
+      </LinkButton>
+    );
+  }
+  if (status === "published") {
+    return (
+      <LinkButton href={`/e/${slug}/results`} variant="accent">
+        查看結果
+      </LinkButton>
+    );
+  }
+  return null;
+}

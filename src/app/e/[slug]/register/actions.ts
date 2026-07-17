@@ -1,0 +1,103 @@
+"use server";
+// 候選人登記 server action。安全不變量：
+// 1. 身分一律取自 session（requireSession），createdBy 由伺服器戳記，不信 client。
+// 2. 禁止重複登記：同一登記者（createdBy）已有非 rejected/withdrawn 的登記就拒絕新增；
+//    needs_fix 狀態允許編輯重送（同一筆覆寫，狀態轉回 pending）。
+// 3. 附件一律驗證屬於本場選舉、且是本人上傳，擋別人 upload id 被拿來冒用。
+
+import { Prisma } from "@prisma/client";
+import { z } from "zod";
+import { requireSession } from "@/lib/guard";
+import { prisma } from "@/lib/db";
+
+const memberSchema = z.object({
+  name: z.string().trim().min(1, "姓名必填").max(50),
+  email: z.string().trim().min(1, "email 必填").max(120).regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "email 格式不正確"),
+  grade: z.string().trim().min(1, "年級／班級必填").max(20),
+});
+
+const inputSchema = z.object({
+  members: z.array(memberSchema).min(1).max(2),
+  platform: z.string().trim().min(1, "請填寫政見").max(4000, "政見過長"),
+  attachmentIds: z.array(z.string().min(1)).min(1, "請上傳至少一份學生證影本"),
+});
+
+export type RegisterInput = z.infer<typeof inputSchema>;
+export type RegisterResult = { ok: true; status: "pending" } | { ok: false; error: string };
+
+export async function registerCandidate(
+  slug: string,
+  input: RegisterInput,
+): Promise<RegisterResult> {
+  const session = await requireSession(`/e/${slug}/register`);
+
+  const parsed = inputSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "表單格式不正確" };
+  }
+  const data = parsed.data;
+
+  const election = await prisma.election.findUnique({ where: { slug } });
+  if (!election) return { ok: false, error: "找不到這場選舉" };
+  if (election.status !== "registration") {
+    return { ok: false, error: "目前非候選人登記期間" };
+  }
+
+  const expectedCount = election.kind === "leader" ? 2 : 1;
+  if (data.members.length !== expectedCount) {
+    return {
+      ok: false,
+      error:
+        election.kind === "leader"
+          ? "學生會長／副會長場次需填候選人與副手兩組資料"
+          : "請填寫登記人資料",
+    };
+  }
+
+  const uploads = await prisma.upload.findMany({
+    where: { id: { in: data.attachmentIds }, electionId: election.id, uploaderSub: session.sub },
+    select: { id: true },
+  });
+  if (uploads.length !== data.attachmentIds.length) {
+    return { ok: false, error: "附件無效或不屬於你，請重新上傳" };
+  }
+
+  const existing = await prisma.candidate.findFirst({
+    where: { electionId: election.id, createdBy: session.email },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const membersJson = data.members as unknown as Prisma.InputJsonValue;
+  const attachmentsJson = data.attachmentIds as unknown as Prisma.InputJsonValue;
+
+  if (existing && existing.status !== "rejected" && existing.status !== "withdrawn") {
+    if (existing.status !== "needs_fix") {
+      return { ok: false, error: "你已經登記過這場選舉了" };
+    }
+    // needs_fix：編輯重送，覆寫同一筆，狀態轉回 pending 重新排審。
+    await prisma.candidate.update({
+      where: { id: existing.id },
+      data: {
+        members: membersJson,
+        platform: data.platform,
+        attachments: attachmentsJson,
+        status: "pending",
+        reviewNote: null,
+      },
+    });
+    return { ok: true, status: "pending" };
+  }
+
+  await prisma.candidate.create({
+    data: {
+      electionId: election.id,
+      members: membersJson,
+      platform: data.platform,
+      attachments: attachmentsJson,
+      status: "pending",
+      createdBy: session.email,
+    },
+  });
+
+  return { ok: true, status: "pending" };
+}
