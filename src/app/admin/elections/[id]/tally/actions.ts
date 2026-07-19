@@ -10,6 +10,9 @@ import { randomInt, createHash } from "node:crypto";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
+import { resultAnnouncementDraft, type ResultCandidateInfo } from "@/lib/result-announcement";
+import { cloneElection } from "@/lib/clone-election";
+import { recallPassed } from "@/lib/recall";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -81,7 +84,9 @@ export async function submitResults(electionId: string, results: unknown): Promi
 
   const election = await prisma.election.findUnique({
     where: { id: electionId },
-    include: { candidates: { where: { status: "approved" }, select: { id: true } } },
+    include: {
+      candidates: { where: { status: "approved" }, select: { id: true, number: true, members: true } },
+    },
   });
   if (!election) return { ok: false, error: "找不到選舉" };
   if (election.status !== "sealed") return { ok: false, error: "選舉尚未彌封，不能提交結果" };
@@ -103,9 +108,57 @@ export async function submitResults(electionId: string, results: unknown): Promi
     return { ok: false, error: "候選人清單與本場核准名單不符" };
   }
 
-  await prisma.election.update({
-    where: { id: electionId },
-    data: { resultsJson: r },
+  // 提交計票結果後，於同一流程自動生成／更新 legalTag='result' 的公告草稿，
+  // 讓選委直接到「結果公告」面板小編後發布，不必自己從零寫。已發布過的 result
+  // 公告不會被這裡覆寫（只有草稿——publishedAt 為 null——才會被改寫內容）。
+  const candidatesForDraft: ResultCandidateInfo[] = election.candidates.map((c) => ({
+    id: c.id,
+    number: c.number,
+    members: Array.isArray(c.members) ? (c.members as unknown as ResultCandidateInfo["members"]) : [],
+  }));
+  const draft = resultAnnouncementDraft(
+    { title: election.title, kind: election.kind, seats: election.seats },
+    r,
+    candidatesForDraft,
+  );
+
+  await prisma.$transaction(async (tx) => {
+    await tx.election.update({ where: { id: electionId }, data: { resultsJson: r } });
+
+    const existingResultAnnouncement = await tx.announcement.findFirst({
+      where: { electionId, legalTag: "result" },
+    });
+    if (!existingResultAnnouncement) {
+      await tx.announcement.create({
+        data: { electionId, legalTag: "result", title: draft.title, body: draft.body },
+      });
+    } else if (!existingResultAnnouncement.publishedAt) {
+      await tx.announcement.update({
+        where: { id: existingResultAnnouncement.id },
+        data: { title: draft.title, body: draft.body },
+      });
+    }
+
+    // 罷免通過 → 同一交易內自動生成補選草稿（以罷免案的 parent＝原職位選舉為本）。
+    // 防重複：parent 底下已有 lineage='by_election' 的子場就跳過，不重複建立。
+    const target = r.candidates[0];
+    if (election.kind === "recall" && election.parentId && target && recallPassed(target.votes, target.disagree)) {
+      const existingByElection = await tx.election.findFirst({
+        where: { parentId: election.parentId, lineage: "by_election" },
+        select: { id: true },
+      });
+      if (!existingByElection) {
+        const parent = await tx.election.findUnique({ where: { id: election.parentId } });
+        if (parent) {
+          await cloneElection(tx, parent, {
+            lineage: "by_election",
+            titleSuffix: "（補選）",
+            copyCandidates: "none",
+            copyRoster: true,
+          });
+        }
+      }
+    }
   });
 
   return { ok: true };

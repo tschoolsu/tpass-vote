@@ -16,7 +16,7 @@ export type CastResult =
 export async function castBallot(slug: string, ciphertext: string): Promise<CastResult> {
   const session = await requireSession(`/e/${slug}/vote`);
 
-  const election = await prisma.election.findUnique({ where: { slug } });
+  const election = await prisma.election.findFirst({ where: { slug, hiddenAt: null } });
   if (!election) return { ok: false, error: "找不到這場選舉" };
 
   const voter = await prisma.voter.findUnique({

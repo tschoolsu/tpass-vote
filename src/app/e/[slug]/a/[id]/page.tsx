@@ -1,4 +1,5 @@
-// 公告獨立頁（kind ∈ first/second/result）。未發布（草稿或不存在）一律 404。
+// 公告獨立頁（依 announcement id 讀取，非 legalTag）。未發布（草稿或不存在，或不屬於這個
+// slug 底下的選舉）一律 404。OG meta 用該則自己的 title，每則獨立。
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -9,37 +10,30 @@ import { getSession } from "@/lib/tpass-auth";
 import { isAdmin } from "@/config/admin";
 import { authConfig } from "@/config/auth";
 import { prisma } from "@/lib/db";
-import {
-  ANNOUNCEMENT_KIND_LABEL,
-  formatDateTime,
-  isAnnouncementKind,
-  plainExcerpt,
-} from "@/components/public/shared";
+import { LEGAL_TAG_LABEL, formatDateTime, plainExcerpt } from "@/components/public/shared";
 
-async function getAnnouncement(slug: string, kind: string) {
-  if (!isAnnouncementKind(kind)) return null;
-  const election = await prisma.election.findUnique({
-    where: { slug },
+async function getAnnouncement(slug: string, id: string) {
+  const election = await prisma.election.findFirst({
+    where: { slug, hiddenAt: null },
     select: { id: true, title: true, status: true },
   });
   if (!election) return null;
-  const announcement = await prisma.announcement.findUnique({
-    where: { electionId_kind: { electionId: election.id, kind } },
-  });
-  if (!announcement || !announcement.publishedAt) return null;
+  const announcement = await prisma.announcement.findUnique({ where: { id } });
+  if (!announcement || announcement.electionId !== election.id) return null;
+  if (!announcement.publishedAt) return null;
   return { election, announcement };
 }
 
 export async function generateMetadata({
   params,
 }: {
-  params: Promise<{ slug: string; kind: string }>;
+  params: Promise<{ slug: string; id: string }>;
 }): Promise<Metadata> {
-  const { slug, kind } = await params;
-  const found = await getAnnouncement(slug, kind);
+  const { slug, id } = await params;
+  const found = await getAnnouncement(slug, id);
   if (!found) return { title: "找不到公告" };
   return {
-    title: `${found.election.title}｜${ANNOUNCEMENT_KIND_LABEL[found.announcement.kind]}`,
+    title: `${found.election.title}｜${found.announcement.title}`,
     description: plainExcerpt(found.announcement.body),
   };
 }
@@ -47,16 +41,17 @@ export async function generateMetadata({
 export default async function AnnouncementPage({
   params,
 }: {
-  params: Promise<{ slug: string; kind: string }>;
+  params: Promise<{ slug: string; id: string }>;
 }) {
-  const { slug, kind } = await params;
+  const { slug, id } = await params;
   const session = await getSession();
-  const found = await getAnnouncement(slug, kind);
+  const found = await getAnnouncement(slug, id);
   if (!found) notFound();
 
   const { election, announcement } = found;
   const admin = session ? await isAdmin(session.email) : false;
-  const shareUrl = new URL(`/e/${slug}/a/${kind}`, authConfig.selfUrl).toString();
+  const shareUrl = new URL(`/e/${slug}/a/${id}`, authConfig.selfUrl).toString();
+  const tagLabel = announcement.legalTag ? LEGAL_TAG_LABEL[announcement.legalTag] ?? announcement.legalTag : null;
 
   return (
     <PublicShell isLoggedIn={session !== null} isAdmin={admin}>
@@ -65,7 +60,7 @@ export default async function AnnouncementPage({
       </Link>
 
       <p className="mt-3 font-mono text-[11px] font-bold text-muted-foreground">
-        {ANNOUNCEMENT_KIND_LABEL[announcement.kind] ?? announcement.kind}・
+        {tagLabel && <>{tagLabel}・</>}
         {formatDateTime(announcement.publishedAt)} 發布
       </p>
       <h1 className="mt-1 font-extrabold text-2xl sm:text-3xl tracking-tight">

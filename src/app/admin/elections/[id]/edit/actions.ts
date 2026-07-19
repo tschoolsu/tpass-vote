@@ -4,10 +4,10 @@ import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { parseElectionForm, type ElectionFormResult } from "@/app/admin/elections/election-schema";
+import { LOCKED_STATUSES } from "@/lib/election-status";
 
 // 投票開始後（含之後的每個狀態）選舉基本資料一律鎖定，避免改動 seats/maxChoices
 // 弄亂已經定案的 ballotMode 判定或已公告的期程。
-const LOCKED_STATUSES = new Set(["voting", "closed", "sealed", "published"]);
 
 export async function updateElection(
   electionId: string,

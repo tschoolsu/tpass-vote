@@ -4,9 +4,9 @@
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
+import { LOCKED_STATUSES } from "@/lib/election-status";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const LOCKED_STATUSES = new Set(["voting", "closed", "sealed", "published"]);
 
 export type RosterImportResult =
   | { ok: true; imported: number; skipped: number }

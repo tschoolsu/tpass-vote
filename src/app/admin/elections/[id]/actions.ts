@@ -1,13 +1,15 @@
 "use server";
-// 單場選舉總覽用的 server actions：存開票公鑰、狀態機單向推進、建立重選場次。
+// 單場選舉總覽用的 server actions：存開票公鑰、狀態機單向推進、建立重選場次、軟刪除／還原。
 // 狀態機只能單向前進；closed→sealed 走既有 tally/actions.ts 的 sealElection，
 // sealed→published 走 announcements 頁發布 result 公告時一併處理，都不在這裡的 NEXT_STATUS 表裡。
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { Prisma } from "@prisma/client";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
-import { NEXT_STATUS, type ElectionStatus } from "@/components/admin/status";
+import { nextStatus, type ElectionStatus } from "@/lib/election-status";
 import type { TallyResult } from "@/lib/tally";
+import { cloneElection } from "@/lib/clone-election";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -63,7 +65,7 @@ export async function advanceStatus(electionId: string): Promise<ActionResult> {
   if (!election) return { ok: false, error: "找不到選舉" };
 
   const current = election.status as ElectionStatus;
-  const next = NEXT_STATUS[current];
+  const next = nextStatus(current, election.kind);
   if (!next) {
     return {
       ok: false,
@@ -74,9 +76,21 @@ export async function advanceStatus(electionId: string): Promise<ActionResult> {
   let ballotMode: "choose" | "approval" | undefined;
   if (next === "voting") {
     if (!election.tallyPublicKeyJwk) return { ok: false, error: "尚未產生開票金鑰，無法開放投票" };
-    if (election.candidates.length === 0) return { ok: false, error: "尚無核准候選人，無法開放投票" };
     if (election._count.voters === 0) return { ok: false, error: "尚未上傳選舉人名冊，無法開放投票" };
-    ballotMode = election.candidates.length > election.seats ? "choose" : "approval";
+    if (election.kind === "recall") {
+      // 罷免只有 1 位「候選人」（罷免對象本身），別讓 candidates.length>seats 的判定邏輯
+      // 把它算成 choose 模式——罷免票種永遠是「同意／不同意」。
+      if (!election.recallTargetCandidateId) {
+        return { ok: false, error: "尚未設定罷免對象，無法開放投票" };
+      }
+      if (election.candidates.length === 0) {
+        return { ok: false, error: "尚無罷免候選人資料（系統應已自動建立），無法開放投票" };
+      }
+      ballotMode = "approval";
+    } else {
+      if (election.candidates.length === 0) return { ok: false, error: "尚無核准候選人，無法開放投票" };
+      ballotMode = election.candidates.length > election.seats ? "choose" : "approval";
+    }
   }
 
   const updated = await prisma.election.updateMany({
@@ -92,7 +106,11 @@ export async function advanceStatus(electionId: string): Promise<ActionResult> {
   return { ok: true };
 }
 
-export type RunoffResult = { ok: true; electionId: string } | { ok: false; error: string };
+export type ElectionCloneResult =
+  | { ok: true; electionId: string }
+  | { ok: false; error: string };
+// 保留舊名（TallyClient.tsx 等呼叫端沿用），形狀與 ElectionCloneResult 相同。
+export type RunoffResult = ElectionCloneResult;
 
 export async function createRunoff(
   electionId: string,
@@ -104,7 +122,6 @@ export async function createRunoff(
     where: { id: electionId },
     include: {
       candidates: { where: { status: "approved" } },
-      voters: { select: { email: true, name: true } },
     },
   });
   if (!election) return { ok: false, error: "找不到選舉" };
@@ -130,48 +147,99 @@ export async function createRunoff(
     if (!same) return { ok: false, error: "同票名單與已提交的計票結果不符" };
   }
 
-  let newSlug = `${election.slug}-runoff`;
-  let suffix = 2;
-  while (await prisma.election.findUnique({ where: { slug: newSlug }, select: { id: true } })) {
-    newSlug = `${election.slug}-runoff-${suffix}`;
-    suffix++;
-  }
+  const runoff = await prisma.$transaction((tx) =>
+    cloneElection(tx, election, {
+      lineage: "runoff",
+      titleSuffix: "（重選）",
+      copyCandidates: "tied",
+      copyRoster: true,
+      tiedCandidateIds: tiedIds,
+    }),
+  );
 
-  const runoff = await prisma.$transaction(async (tx) => {
-    const created = await tx.election.create({
-      data: {
-        slug: newSlug,
-        title: `${election.title}（重選）`,
-        kind: election.kind,
-        parentId: election.id,
-        seats: election.seats,
-        maxChoices: election.maxChoices,
-        status: "draft",
-      },
+  revalidatePath("/admin");
+  return { ok: true, electionId: runoff.id };
+}
+
+// 補選：以出缺職位的原選舉為本，只複製名冊，候選人從零登記（走完整登記/審核流程）。
+export async function createByElection(sourceId: string): Promise<ElectionCloneResult> {
+  await requireAdmin();
+
+  const source = await prisma.election.findUnique({ where: { id: sourceId } });
+  if (!source) return { ok: false, error: "找不到原選舉" };
+
+  const byElection = await prisma.$transaction((tx) =>
+    cloneElection(tx, source, {
+      lineage: "by_election",
+      titleSuffix: "（補選）",
+      copyCandidates: "none",
+      copyRoster: true,
+    }),
+  );
+
+  revalidatePath("/admin");
+  return { ok: true, electionId: byElection.id };
+}
+
+// 金鑰遺失重辦：複製名冊與已核准候選人，原場同一交易內作廢（軟刪除），新場從頭走金鑰產生。
+export async function redoElection(electionId: string): Promise<ElectionCloneResult> {
+  await requireAdmin();
+
+  const source = await prisma.election.findUnique({ where: { id: electionId } });
+  if (!source) return { ok: false, error: "找不到選舉" };
+
+  const redone = await prisma.$transaction(async (tx) => {
+    const created = await cloneElection(tx, source, {
+      lineage: "redo",
+      titleSuffix: "（重辦）",
+      copyCandidates: "approved",
+      copyRoster: true,
     });
-
-    if (election.voters.length > 0) {
-      await tx.voter.createMany({
-        data: election.voters.map((v) => ({ electionId: created.id, email: v.email, name: v.name })),
-      });
-    }
-
-    const tiedCandidates = tiedIds.map((id) => approvedById.get(id)!);
-    await tx.candidate.createMany({
-      data: tiedCandidates.map((c) => ({
-        electionId: created.id,
-        members: c.members as Prisma.InputJsonValue,
-        number: c.number,
-        platform: c.platform,
-        attachments: c.attachments === null ? Prisma.JsonNull : (c.attachments as Prisma.InputJsonValue),
-        status: "approved",
-        createdBy: c.createdBy,
-      })),
-    });
-
+    await tx.election.update({ where: { id: source.id }, data: { hiddenAt: new Date() } });
     return created;
   });
 
   revalidatePath("/admin");
-  return { ok: true, electionId: runoff.id };
+  revalidatePath(`/admin/elections/${electionId}`);
+  return { ok: true, electionId: redone.id };
+}
+
+// 軟刪除：只設 hiddenAt 旗標，資料（候選人／名冊／選票／公告）完全保留，不做 prisma.delete。
+// 隱藏後從所有公開端與管理端預設列表消失，但可隨時還原。
+export async function hideElection(electionId: string): Promise<ActionResult> {
+  await requireAdmin(`/admin/elections/${electionId}`);
+
+  const election = await prisma.election.findUnique({ where: { id: electionId } });
+  if (!election) return { ok: false, error: "找不到選舉" };
+  if (election.hiddenAt) return { ok: false, error: "此選舉已經是隱藏狀態" };
+
+  await prisma.election.update({
+    where: { id: electionId },
+    data: { hiddenAt: new Date() },
+  });
+
+  revalidatePath(`/admin/elections/${electionId}`);
+  revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/e/${election.slug}`);
+  redirect("/admin");
+}
+
+export async function restoreElection(electionId: string): Promise<ActionResult> {
+  await requireAdmin(`/admin/elections/${electionId}`);
+
+  const election = await prisma.election.findUnique({ where: { id: electionId } });
+  if (!election) return { ok: false, error: "找不到選舉" };
+  if (!election.hiddenAt) return { ok: false, error: "此選舉未處於隱藏狀態" };
+
+  await prisma.election.update({
+    where: { id: electionId },
+    data: { hiddenAt: null },
+  });
+
+  revalidatePath(`/admin/elections/${electionId}`);
+  revalidatePath("/admin");
+  revalidatePath("/");
+  revalidatePath(`/e/${election.slug}`);
+  return { ok: true };
 }

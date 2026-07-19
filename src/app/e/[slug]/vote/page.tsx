@@ -13,7 +13,7 @@ import { requireSession } from "@/lib/guard";
 import { isAdmin } from "@/config/admin";
 import { authConfig } from "@/config/auth";
 import { prisma } from "@/lib/db";
-import { formatDateTime } from "@/components/public/shared";
+import { formatDateTime, type MemberInfo } from "@/components/public/shared";
 
 export async function generateMetadata({
   params,
@@ -21,7 +21,10 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const election = await prisma.election.findUnique({ where: { slug }, select: { title: true } });
+  const election = await prisma.election.findFirst({
+    where: { slug, hiddenAt: null },
+    select: { title: true },
+  });
   if (!election) return { title: "找不到選舉" };
   return { title: `投票｜${election.title}`, description: "T-Vote 匿名投票" };
 }
@@ -33,7 +36,7 @@ export default async function VotePage({
 }) {
   const { slug } = await params;
   const session = await requireSession(`/e/${slug}/vote`);
-  const election = await prisma.election.findUnique({ where: { slug } });
+  const election = await prisma.election.findFirst({ where: { slug, hiddenAt: null } });
   if (!election || election.status === "draft") notFound();
 
   const admin = await isAdmin(session.email);
@@ -111,15 +114,19 @@ export default async function VotePage({
         <CopyLinkButton url={shareUrl} label="複製本頁連結" size="sm" />
       </div>
 
-      {voter.votedAt && (
-        <div className="mt-4 rounded-xl border-2 border-foreground bg-tone-blue-bg px-4 py-3 font-bold">
-          你已於 {formatDateTime(voter.votedAt)} 投票，可重投直到截止，以最後一次為準。
-        </div>
-      )}
-
       <p className="mt-4 text-sm font-medium text-muted-foreground">
         投票截止：{formatDateTime(election.votingEndsAt)}
       </p>
+
+      {voter.votedAt && (
+        <div className="mt-3 rounded-xl border-2 border-foreground bg-tone-blue-bg px-4 py-3">
+          <p className="font-bold">你已於 {formatDateTime(voter.votedAt)} 投過票</p>
+          <p className="mt-1 text-sm font-medium">
+            截止前可在任何裝置重新投票，以最後一次為準——重投會直接覆蓋上一次的選擇，
+            不會重複計票，也不會留下你改過票的紀錄。
+          </p>
+        </div>
+      )}
 
       <div className="mt-6">
         <VoteForm
@@ -127,12 +134,14 @@ export default async function VotePage({
           electionId={election.id}
           ballotMode={election.ballotMode as "choose" | "approval"}
           maxChoices={election.maxChoices}
+          seats={election.seats}
           publicKeyJwk={election.tallyPublicKeyJwk as unknown as JsonWebKey}
           kind={election.kind}
+          recallReason={election.recallReason}
           candidates={candidates.map((c) => ({
             id: c.id,
             number: c.number,
-            members: c.members as unknown as { name: string; email: string; grade: string }[],
+            members: c.members as unknown as MemberInfo[],
             platform: c.platform,
           }))}
         />

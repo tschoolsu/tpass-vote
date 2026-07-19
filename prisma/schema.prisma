@@ -21,11 +21,12 @@ model Election {
   id                   String    @id @default(cuid())
   slug                 String    @unique
   title                String
-  kind                 String    // leader | grade_rep | other
-  parentId             String?   // 重選場次指向原選舉
+  kind                 String    // leader | grade_rep | other | recall
+  parentId             String?   // 重選場次指向原選舉；罷免場次指向原選舉
+  lineage              String?   // runoff | by_election | redo（複製來源類型，供 UI 區分同票重選/罷免補選/重辦）
   seats                Int       @default(1)
   maxChoices           Int       @default(1)
-  status               String    @default("draft") // draft | registration | campaigning | voting | closed | sealed | published
+  status               String    @default("draft") // draft | registration | campaigning | voting | closed | sealed | published | petition | established（後兩者為罷免專屬前置）
   ballotMode           String?   // choose | approval（開放投票時依核准候選人數判定）
   registrationStartsAt DateTime?
   registrationEndsAt   DateTime?
@@ -38,30 +39,36 @@ model Election {
   sealedAt             DateTime?
   sealedBy             String?
   resultsJson          Json?
+  hiddenAt             DateTime? // null=正常；非 null=管理員軟刪除（隱藏）。資料完全保留，不做實體刪除。
+  recallReason         String?   // 罷免理由（kind=recall 專用）
+  recallDefense        String?   // 被罷免人答辯書，選填（kind=recall 專用）
+  recallTargetCandidateId String? // 原選舉被罷免候選人（組）id（kind=recall 專用）
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
-  announcements Announcement[]
-  candidates    Candidate[]
-  voters        Voter[]
-  ballots       EncryptedBallot[]
+  announcements    Announcement[]
+  candidates       Candidate[]
+  voters           Voter[]
+  ballots          EncryptedBallot[]
+  recallSignatures RecallSignature[]
 
   @@index([status])
 }
 
-// 法定三公告（投票前30日/前14日/開票後7日）。
+// 自由公告流：一般公告可任意多則；legalTag 非 null 者為法定里程碑公告（每場至多一則，由
+// action 層強制），null 為一般公告（不受此限）。
 model Announcement {
   id          String    @id @default(cuid())
   electionId  String
   election    Election  @relation(fields: [electionId], references: [id], onDelete: Cascade)
-  kind        String    // first | second | result
+  legalTag    String?   // null=一般公告；first | second | result（法定里程碑，每場至多一則）
   title       String
   body        String    // markdown
   publishedAt DateTime? // null = 草稿
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  @@unique([electionId, kind])
+  @@index([electionId])
 }
 
 model Candidate {
@@ -107,8 +114,22 @@ model EncryptedBallot {
   updatedAt  DateTime @updatedAt
 }
 
+// 罷免連署（具名、一人一署）。門檻與通過判定見 src/lib/recall.ts。
+model RecallSignature {
+  id          String   @id @default(cuid())
+  electionId  String
+  election    Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  signerEmail String
+  createdAt   DateTime @default(now())
+
+  @@unique([electionId, signerEmail])
+  @@index([electionId])
+}
+
 // 檔案上傳：候選人登記附件（學生證影本等）。與 tpass-form 的 Upload 模式一致——
 // 只存 electionId 作範圍界線（配額、下載授權查詢），不用 FK 關聯（照抄 form 的作法）。
+// kind 區分公開／私密：photo=候選人公開大頭照（走 /api/photos/[id]，免 admin，只吐 photo）；
+// attachment=學生證影本等私密附件（走 /api/files/[id]，admin-only，行為不變）。
 model Upload {
   id          String   @id @default(cuid())
   electionId  String
@@ -117,6 +138,7 @@ model Upload {
   mime        String
   size        Int
   uploaderSub String
+  kind        String   @default("attachment") // photo | attachment
   createdAt   DateTime @default(now())
 
   @@index([electionId])

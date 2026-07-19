@@ -15,6 +15,7 @@ import { authConfig } from "@/config/auth";
 import { prisma } from "@/lib/db";
 import { receiptOf } from "@/lib/ballot-crypto";
 import type { TallyResult } from "@/lib/tally";
+import { recallPassed } from "@/lib/recall";
 import { KIND_LABEL, candidateDisplayName, formatDateTime } from "@/components/public/shared";
 
 export async function generateMetadata({
@@ -23,7 +24,10 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const election = await prisma.election.findUnique({ where: { slug }, select: { title: true } });
+  const election = await prisma.election.findFirst({
+    where: { slug, hiddenAt: null },
+    select: { title: true },
+  });
   if (!election) return { title: "找不到選舉" };
   return { title: `開票結果｜${election.title}`, description: "T-Vote 開票結果" };
 }
@@ -35,8 +39,8 @@ export default async function ResultsPage({
 }) {
   const { slug } = await params;
   const session = await getSession();
-  const election = await prisma.election.findUnique({
-    where: { slug },
+  const election = await prisma.election.findFirst({
+    where: { slug, hiddenAt: null },
     include: { candidates: { where: { status: "approved" }, orderBy: { number: "asc" } } },
   });
   if (!election || election.status === "draft") notFound();
@@ -69,6 +73,9 @@ export default async function ResultsPage({
   const receipts = await Promise.all(sealedBox.map((ct) => receiptOf(ct)));
 
   const candidateById = new Map(election.candidates.map((c) => [c.id, c]));
+  const isRecall = election.kind === "recall";
+  const recallTarget = results?.candidates[0];
+  const recallResultPassed = recallTarget ? recallPassed(recallTarget.votes, recallTarget.disagree) : false;
 
   return (
     <PublicShell isLoggedIn={session !== null} isAdmin={admin}>
@@ -107,11 +114,23 @@ export default async function ResultsPage({
                 席次邊界出現同票，待選委會處理（抽籤或重選）
               </p>
             )}
+            {isRecall && recallTarget && (
+              <p
+                className={cn(
+                  "mt-2 rounded-xl border-2 px-3 py-2 text-center text-sm font-bold",
+                  recallResultPassed
+                    ? "border-foreground bg-tone-green-badge text-tone-green-text"
+                    : "border-destructive bg-card text-destructive",
+                )}
+              >
+                罷免案{recallResultPassed ? "通過" : "否決"}
+              </p>
+            )}
           </Card>
 
           <section className="mt-6">
             <h2 className="flex items-center gap-2 font-extrabold text-base">
-              <Trophy className="h-4 w-4" /> 各候選人結果
+              <Trophy className="h-4 w-4" /> {isRecall ? "罷免結果" : "各候選人結果"}
             </h2>
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
               {results.candidates.map((ct) => {
@@ -141,12 +160,28 @@ export default async function ResultsPage({
                             {candidate.number} 號
                           </span>
                         )}
-                        <h3 className="font-extrabold">{name}</h3>
+                        <h3 className="font-extrabold">
+                          {isRecall ? "罷免對象：" : ""}
+                          {name}
+                        </h3>
                       </div>
-                      {ct.elected && (
-                        <span className="rounded-md border-2 border-foreground bg-tone-green-badge px-2 py-0.5 font-mono text-[11px] font-bold text-tone-green-text">
-                          當選
+                      {isRecall ? (
+                        <span
+                          className={cn(
+                            "rounded-md border-2 px-2 py-0.5 font-mono text-[11px] font-bold",
+                            recallPassed(ct.votes, ct.disagree)
+                              ? "border-foreground bg-tone-green-badge text-tone-green-text"
+                              : "border-destructive bg-card text-destructive",
+                          )}
+                        >
+                          {recallPassed(ct.votes, ct.disagree) ? "通過" : "否決"}
                         </span>
+                      ) : (
+                        ct.elected && (
+                          <span className="rounded-md border-2 border-foreground bg-tone-green-badge px-2 py-0.5 font-mono text-[11px] font-bold text-tone-green-text">
+                            當選
+                          </span>
+                        )
                       )}
                       {ct.tied && (
                         <span className="rounded-md border-2 border-destructive bg-card px-2 py-0.5 font-mono text-[11px] font-bold text-destructive">
@@ -156,6 +191,10 @@ export default async function ResultsPage({
                     </div>
                     {results.mode === "choose" ? (
                       <p className="mt-2 font-bold">{ct.votes} 票</p>
+                    ) : isRecall ? (
+                      <p className="mt-2 font-bold">
+                        同意罷免 {ct.votes}・不同意罷免 {ct.disagree}
+                      </p>
                     ) : (
                       <p className="mt-2 font-bold">
                         同意 {ct.votes}・不同意 {ct.disagree}

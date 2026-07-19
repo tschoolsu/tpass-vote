@@ -9,26 +9,32 @@ import { StatusBadge } from "@/components/public/Badges";
 import { CandidateCard } from "@/components/public/CandidateCard";
 import { CopyLinkButton } from "@/components/public/CopyLinkButton";
 import { LinkButton } from "@/components/public/LinkButton";
+import { Markdown } from "@/components/public/Markdown";
+import { RecallSignaturePanel, type RecallRosterState } from "@/components/public/RecallSignaturePanel";
 import { Card } from "@/components/ui/primitives";
 import { getSession } from "@/lib/tpass-auth";
 import { isAdmin } from "@/config/admin";
-import { authConfig } from "@/config/auth";
+import { authConfig, loginUrlFor } from "@/config/auth";
 import { prisma } from "@/lib/db";
+import { recallThreshold } from "@/lib/recall";
+import type { TallyResult } from "@/lib/tally";
 import {
-  ANNOUNCEMENT_KINDS,
-  ANNOUNCEMENT_KIND_LABEL,
+  LEGAL_TAG_LABEL,
   KIND_LABEL,
   STATUS_LABEL,
+  LINEAGE_LABEL,
   describeRemaining,
   formatDateTime,
+  candidateDisplayName,
+  type MemberInfo,
 } from "@/components/public/shared";
 
 async function getElection(slug: string) {
-  return prisma.election.findUnique({
-    where: { slug },
+  return prisma.election.findFirst({
+    where: { slug, hiddenAt: null },
     include: {
       candidates: { where: { status: "approved" }, orderBy: { number: "asc" } },
-      announcements: true,
+      announcements: { orderBy: { publishedAt: "desc" } },
     },
   });
 }
@@ -61,11 +67,57 @@ export default async function ElectionDetailPage({
   const now = new Date();
   const shareUrl = new URL(`/e/${slug}`, authConfig.selfUrl).toString();
 
-  const publishedAnnouncements = ANNOUNCEMENT_KINDS.map((kind) =>
-    election.announcements.find((a) => a.kind === kind),
-  ).filter((a): a is NonNullable<typeof a> => a !== undefined && a.publishedAt !== null);
+  const publishedAnnouncements = election.announcements.filter((a) => a.publishedAt !== null);
 
-  const timeline: { label: string; date: Date | null; countdown: string | null }[] = [
+  const isRecall = election.kind === "recall";
+
+  // 罷免案專屬資料：對象、原選舉連結、連署進度、目前登入者的連署狀態（三態）。
+  // 這裡的 rosterState 只決定畫面初始呈現，不是安全邊界——真正擋人的是 server action 自己。
+  let recallTarget: { members: MemberInfo[] } | null = null;
+  let recallParent: { slug: string; title: string } | null = null;
+  let recallCount = 0;
+  let recallThresholdCount = 0;
+  let recallRosterState: RecallRosterState = "not_logged_in";
+
+  if (isRecall) {
+    const target =
+      election.candidates.find((c) => c.id === election.recallTargetCandidateId) ??
+      election.candidates[0] ??
+      null;
+    if (target) recallTarget = { members: target.members as unknown as MemberInfo[] };
+
+    if (election.parentId) {
+      const parent = await prisma.election.findUnique({
+        where: { id: election.parentId },
+        select: { slug: true, title: true, resultsJson: true },
+      });
+      if (parent) {
+        recallParent = { slug: parent.slug, title: parent.title };
+        if (parent.resultsJson) {
+          const parentResults = parent.resultsJson as unknown as TallyResult;
+          recallThresholdCount = recallThreshold(parentResults.validCount);
+        }
+      }
+    }
+
+    recallCount = await prisma.recallSignature.count({ where: { electionId: election.id } });
+
+    if (session) {
+      const [voter, signature] = await Promise.all([
+        prisma.voter.findUnique({
+          where: { electionId_email: { electionId: election.id, email: session.email } },
+        }),
+        prisma.recallSignature.findUnique({
+          where: {
+            electionId_signerEmail: { electionId: election.id, signerEmail: session.email },
+          },
+        }),
+      ]);
+      recallRosterState = !voter ? "not_in_roster" : signature ? "signed" : "not_signed";
+    }
+  }
+
+  const timelineAll: { label: string; date: Date | null; countdown: string | null }[] = [
     {
       label: "登記開始",
       date: election.registrationStartsAt,
@@ -100,6 +152,12 @@ export default async function ElectionDetailPage({
     },
   ];
 
+  // 罷免場次沒有登記/政見階段（see lib/election-status），登記相關兩列永遠是「未定」，
+  // 對使用者沒有資訊量，只留投票開始/截止。
+  const timeline = isRecall
+    ? timelineAll.filter((t) => t.label === "投票開始" || t.label === "投票截止")
+    : timelineAll;
+
   return (
     <PublicShell isLoggedIn={session !== null} isAdmin={admin}>
       <div className="flex flex-wrap items-center gap-2">
@@ -107,17 +165,71 @@ export default async function ElectionDetailPage({
         <span className="font-mono text-[11px] font-bold text-muted-foreground">
           {KIND_LABEL[election.kind] ?? election.kind}
         </span>
-        {election.parentId && (
-          <span className="font-mono text-[11px] font-bold text-tone-orange-text">重選場次</span>
+        {!isRecall && election.parentId && (
+          <span className="font-mono text-[11px] font-bold text-tone-orange-text">
+            {LINEAGE_LABEL[election.lineage ?? ""] ?? "重選場次"}
+          </span>
         )}
       </div>
 
       <h1 className="mt-3 font-extrabold text-2xl sm:text-3xl tracking-tight">{election.title}</h1>
 
+      {isRecall && (
+        <p className="mt-2 text-sm font-medium text-muted-foreground">
+          罷免對象：
+          <span className="font-bold text-foreground">
+            {recallTarget ? candidateDisplayName("recall", recallTarget.members) : "（未填）"}
+          </span>
+          {recallParent && (
+            <>
+              {" "}
+              ・原選舉：
+              <Link
+                href={`/e/${recallParent.slug}`}
+                className="font-bold text-accent hover:underline"
+              >
+                {recallParent.title}
+              </Link>
+            </>
+          )}
+        </p>
+      )}
+
       <div className="mt-4 flex flex-wrap gap-2">
         <CTA status={election.status} slug={slug} />
         <CopyLinkButton url={shareUrl} label="複製本頁連結" />
       </div>
+
+      {isRecall && (
+        <Card className="mt-6">
+          <h2 className="font-extrabold text-base">罷免事由</h2>
+          <div className="mt-3 text-sm">
+            <Markdown text={election.recallReason || "（未填寫）"} />
+          </div>
+        </Card>
+      )}
+
+      {isRecall && election.recallDefense && (
+        <Card className="mt-6">
+          <h2 className="font-extrabold text-base">答辯書</h2>
+          <div className="mt-3 text-sm">
+            <Markdown text={election.recallDefense} />
+          </div>
+        </Card>
+      )}
+
+      {isRecall && (
+        <Card className="mt-6">
+          <RecallSignaturePanel
+            slug={slug}
+            status={election.status}
+            loginUrl={loginUrlFor(`/e/${slug}`)}
+            rosterState={recallRosterState}
+            initialCount={recallCount}
+            threshold={recallThresholdCount}
+          />
+        </Card>
+      )}
 
       <Card className="mt-6">
         <h2 className="flex items-center gap-2 font-extrabold text-base">
@@ -136,31 +248,33 @@ export default async function ElectionDetailPage({
         </dl>
       </Card>
 
-      <section className="mt-6">
-        <h2 className="font-extrabold text-base">
-          核准候選人{election.candidates.length > 0 ? `（${election.candidates.length}）` : ""}
-        </h2>
-        {election.candidates.length === 0 ? (
-          <p className="mt-2 text-sm font-medium text-muted-foreground">
-            尚無核准候選人名單。
-          </p>
-        ) : (
-          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {election.candidates.map((c) => (
-              <CandidateCard
-                key={c.id}
-                kind={election.kind}
-                candidate={{
-                  id: c.id,
-                  number: c.number,
-                  members: c.members as unknown as { name: string; email: string; grade: string }[],
-                  platform: c.platform,
-                }}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+      {!isRecall && (
+        <section className="mt-6">
+          <h2 className="font-extrabold text-base">
+            核准候選人{election.candidates.length > 0 ? `（${election.candidates.length}）` : ""}
+          </h2>
+          {election.candidates.length === 0 ? (
+            <p className="mt-2 text-sm font-medium text-muted-foreground">
+              尚無核准候選人名單。
+            </p>
+          ) : (
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {election.candidates.map((c) => (
+                <CandidateCard
+                  key={c.id}
+                  kind={election.kind}
+                  candidate={{
+                    id: c.id,
+                    number: c.number,
+                    members: c.members as unknown as MemberInfo[],
+                    platform: c.platform,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {publishedAnnouncements.length > 0 && (
         <section className="mt-6">
@@ -170,12 +284,13 @@ export default async function ElectionDetailPage({
           <div className="mt-3 flex flex-col gap-2">
             {publishedAnnouncements.map((a) => (
               <Link
-                key={a.kind}
-                href={`/e/${slug}/a/${a.kind}`}
+                key={a.id}
+                href={`/e/${slug}/a/${a.id}`}
                 className="flex items-center justify-between rounded-xl border-2 border-foreground bg-card px-4 py-3 font-bold shadow-[3px_3px_0_0_var(--color-foreground)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[5px_5px_0_0_var(--color-foreground)]"
               >
                 <span>
-                  {ANNOUNCEMENT_KIND_LABEL[a.kind] ?? a.kind}：{a.title}
+                  {a.legalTag && <>{LEGAL_TAG_LABEL[a.legalTag] ?? a.legalTag}：</>}
+                  {a.title}
                 </span>
                 <span className="font-mono text-[11px] font-normal text-muted-foreground">
                   {formatDateTime(a.publishedAt)}

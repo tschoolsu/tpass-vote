@@ -1,13 +1,15 @@
-// 首頁（Server Component）：選舉列表。進行中場次依狀態顯示行動按鈕，已發布結果列出，草稿不顯示。
+// 首頁（Server Component）：未登入＝介紹型 landing（免登入可看）＋登入 CTA；
+// 登入後＝選舉列表，進行中場次依狀態顯示行動按鈕，已發布結果列出，草稿不顯示。
 import Link from "next/link";
-import { Vote as VoteIcon, ArrowUpRight } from "lucide-react";
-import { redirect } from "next/navigation";
+import { Vote as VoteIcon, ArrowUpRight, ShieldCheck } from "lucide-react";
+import { GithubMark } from "@/components/public/GithubMark";
 import { Header } from "@/components/common/Header";
 import { PublicFooter } from "@/components/public/Shell";
 import { StatusBadge } from "@/components/public/Badges";
 import { getSession } from "@/lib/tpass-auth";
 import { isAdmin } from "@/config/admin";
-import { authConfig, loginUrlFor } from "@/config/auth";
+import { authConfig } from "@/config/auth";
+import { GITHUB_URL } from "@/config/site";
 import { prisma } from "@/lib/db";
 import { KIND_LABEL, formatDateTime } from "@/components/public/shared";
 
@@ -41,16 +43,11 @@ export default async function HomePage({
   const { logout } = await searchParams;
   const justLoggedOut = !isLoggedIn && logout === "1";
 
-  // 契約 v2：本服務的 cookie 只在本網域，第一次被造訪時身上什麼都沒有——要主動去 auth
-  // 換一張自己的票，使用者才會「從門戶點進來就直接認得」（authorize 那趟是無感的）。
-  // 剛登出時不能導，否則會立刻被彈回登入，等於登不出去。
-  if (!isLoggedIn && !justLoggedOut) redirect(loginUrlFor("/"));
-
   const admin = session ? await isAdmin(session.email) : false;
 
   const elections = isLoggedIn
     ? await prisma.election.findMany({
-        where: { status: { not: "draft" } },
+        where: { status: { not: "draft" }, hiddenAt: null },
         select: {
           slug: true,
           title: true,
@@ -85,24 +82,49 @@ export default async function HomePage({
           <h1 className="mt-4 font-extrabold text-3xl sm:text-4xl tracking-tight">
             {justLoggedOut ? "您已登出" : "T-Vote 學生會線上選舉"}
           </h1>
-          <p className="mt-2 font-medium text-muted-foreground">
+          <p className="mt-2 max-w-2xl font-medium text-muted-foreground">
             {isLoggedIn
               ? "目前公告的選舉場次，點卡片查看詳情。"
               : justLoggedOut
                 ? "您已安全登出 T-Vote。要繼續查看選舉，請重新登入。"
-                : "請用學校帳號登入以查看選舉。"}
+                : "學生會長、副會長、班聯會代表選舉的公告、候選人登記與匿名投票，都在這裡進行。選票在你的瀏覽器加密後才送出，伺服器全程只收得到密文——投給誰，只有你自己知道。"}
           </p>
         </section>
 
         <section className="max-w-6xl mx-auto px-4 sm:px-6 pb-16">
           {!isLoggedIn ? (
-            <div className="rounded-2xl border-2 border-dashed border-foreground/30 p-12 text-center">
-              <a
-                href={authConfig.loginUrl}
-                className="inline-flex items-center gap-2 rounded-xl border-2 border-foreground bg-primary px-5 py-2.5 font-bold text-primary-foreground shadow-[3px_3px_0_0_var(--color-foreground)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[5px_5px_0_0_var(--color-foreground)]"
-              >
-                使用學校帳號登入
-              </a>
+            <div className="rounded-2xl border-2 border-dashed border-foreground/30 p-10 text-center">
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <a
+                  href={authConfig.loginUrl}
+                  className="inline-flex items-center gap-2 rounded-xl border-2 border-foreground bg-primary px-5 py-2.5 font-bold text-primary-foreground shadow-[3px_3px_0_0_var(--color-foreground)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[5px_5px_0_0_var(--color-foreground)]"
+                >
+                  使用學校帳號登入
+                </a>
+                <Link
+                  href="/about"
+                  className="inline-flex items-center gap-2 rounded-xl border-2 border-foreground bg-card px-5 py-2.5 font-bold text-foreground shadow-[3px_3px_0_0_var(--color-foreground)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[5px_5px_0_0_var(--color-foreground)]"
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                  投票怎麼保密？
+                </Link>
+              </div>
+              <p className="mt-4 text-sm font-medium text-muted-foreground">
+                想先了解投票怎麼保密？看
+                <Link href="/about" className="mx-1 font-bold text-accent hover:underline">
+                  關於本系統
+                </Link>
+                。原始碼公開，任何人都能檢視：
+                <a
+                  href={GITHUB_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-1 inline-flex items-center gap-1 font-bold text-accent hover:underline"
+                >
+                  <GithubMark className="h-3.5 w-3.5" />
+                  GitHub
+                </a>
+              </p>
             </div>
           ) : elections.length === 0 ? (
             <div className="rounded-2xl border-2 border-dashed border-foreground/30 p-12 text-center">

@@ -9,7 +9,12 @@ import { Card } from "@/components/ui/primitives";
 import { requireSession } from "@/lib/guard";
 import { isAdmin } from "@/config/admin";
 import { prisma } from "@/lib/db";
-import { CANDIDATE_STATUS_LABEL, KIND_LABEL, formatDateTime } from "@/components/public/shared";
+import {
+  CANDIDATE_STATUS_LABEL,
+  KIND_LABEL,
+  formatDateTime,
+  type MemberInfo,
+} from "@/components/public/shared";
 
 export async function generateMetadata({
   params,
@@ -17,7 +22,10 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const election = await prisma.election.findUnique({ where: { slug }, select: { title: true } });
+  const election = await prisma.election.findFirst({
+    where: { slug, hiddenAt: null },
+    select: { title: true },
+  });
   if (!election) return { title: "找不到選舉" };
   return { title: `候選人登記｜${election.title}`, description: "T-Vote 候選人登記" };
 }
@@ -29,7 +37,7 @@ export default async function RegisterPage({
 }) {
   const { slug } = await params;
   const session = await requireSession(`/e/${slug}/register`);
-  const election = await prisma.election.findUnique({ where: { slug } });
+  const election = await prisma.election.findFirst({ where: { slug, hiddenAt: null } });
   if (!election || election.status === "draft") notFound();
 
   const admin = await isAdmin(session.email);
@@ -104,11 +112,7 @@ export default async function RegisterPage({
               initial={
                 editable
                   ? {
-                      members: editable.members as unknown as {
-                        name: string;
-                        email: string;
-                        grade: string;
-                      }[],
+                      members: editable.members as unknown as MemberInfo[],
                       platform: editable.platform,
                       attachments: existingAttachments,
                     }

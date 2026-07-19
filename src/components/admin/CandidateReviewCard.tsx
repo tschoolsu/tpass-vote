@@ -3,10 +3,9 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, RotateCcw, XCircle, Paperclip } from "lucide-react";
-import { Badge, Button, Input, Textarea } from "@/components/ui/primitives";
+import { Badge, Button, Textarea } from "@/components/ui/primitives";
 import { CANDIDATE_STATUS_META } from "@/components/admin/status";
 import {
-  setCandidateNumber,
   approveCandidate,
   sendBackForFix,
   rejectCandidate,
@@ -39,7 +38,6 @@ export function CandidateReviewCard({
   locked: boolean;
 }) {
   const router = useRouter();
-  const [numberInput, setNumberInput] = useState(candidate.number?.toString() ?? "");
   const [note, setNote] = useState(candidate.reviewNote ?? "");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -114,22 +112,6 @@ export function CandidateReviewCard({
       {!locked && (
         <div className="flex flex-col gap-3 border-t-2 border-dashed border-foreground/30 pt-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Input
-              value={numberInput}
-              onChange={(e) => setNumberInput(e.target.value)}
-              type="number"
-              min={1}
-              placeholder="編號"
-              className="w-24"
-            />
-            <Button
-              type="button"
-              size="sm"
-              disabled={pending || numberInput.trim() === ""}
-              onClick={() => run(() => setCandidateNumber(electionId, candidate.id, Number(numberInput)))}
-            >
-              設定編號
-            </Button>
             <Button
               type="button"
               size="sm"
