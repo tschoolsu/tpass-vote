@@ -38,6 +38,8 @@ export const electionFormSchema = z
     registrationEndsAt: optionalDatetimeLocal,
     votingStartsAt: optionalDatetimeLocal,
     votingEndsAt: optionalDatetimeLocal,
+    // 對應職務：空＝genesis（公告時自動新建職務並回填）；有值＝這場填既有職務（連任/補選換人）。
+    officeId: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().optional()),
   })
   .refine(
     (v) => !v.registrationStartsAt || !v.registrationEndsAt || v.registrationEndsAt > v.registrationStartsAt,
@@ -71,6 +73,7 @@ export function parseElectionForm(
     registrationEndsAt: formData.get("registrationEndsAt"),
     votingStartsAt: formData.get("votingStartsAt"),
     votingEndsAt: formData.get("votingEndsAt"),
+    officeId: formData.get("officeId"),
   };
   const parsed = electionFormSchema.safeParse(raw);
   if (!parsed.success) {

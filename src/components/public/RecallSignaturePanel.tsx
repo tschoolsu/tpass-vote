@@ -3,15 +3,15 @@
 // （同一套進度條/徽章樣式），但這裡多了 client 互動：登入/資格/已署三態各自對應一種呈現。
 //
 // 身分一律不信任 client：這裡顯示的「你的狀態」只是 server 端算好傳進來的初始值，
-// 真正擋人的是 signRecall/withdrawSignature 這兩個 server action 自己的 requireSession +
-// 名冊查詢——client 這層的三態只是 UX，不是安全邊界。
+// 真正擋人的是 signRecall/withdrawSignature 這兩個 server action 自己的 requireSession——
+// 連署開放全校，client 這層的狀態只是 UX，不是安全邊界。
 import * as React from "react";
 import { CheckCircle2, XCircle, Users2 } from "lucide-react";
 import { Badge, Button, cn } from "@/components/ui/primitives";
 import { LinkButton } from "@/components/public/LinkButton";
 import { signRecall, withdrawSignature } from "@/app/e/[slug]/recall/actions";
 
-export type RecallRosterState = "not_logged_in" | "not_in_roster" | "not_signed" | "signed";
+export type RecallRosterState = "not_logged_in" | "not_signed" | "signed";
 
 export function RecallSignaturePanel({
   slug,
@@ -99,11 +99,6 @@ export function RecallSignaturePanel({
             <LinkButton href={loginUrl} variant="primary">
               登入以連署
             </LinkButton>
-          )}
-          {rosterState === "not_in_roster" && (
-            <p className="rounded-xl border-2 border-foreground/15 p-3 text-sm font-bold text-muted-foreground">
-              你不具本案連署資格（不在原選區名冊內）
-            </p>
           )}
           {rosterState === "not_signed" && (
             <Button variant="primary" onClick={handleSign} disabled={pending}>

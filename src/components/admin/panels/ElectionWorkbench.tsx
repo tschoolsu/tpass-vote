@@ -49,7 +49,6 @@ import { ClosingTallyPanel } from "@/components/admin/panels/ClosingTallyPanel";
 import { ResultsAnnouncementPanel } from "@/components/admin/panels/ResultsAnnouncementPanel";
 import { RecallPetitionPanel } from "@/components/admin/panels/RecallPetitionPanel";
 import { RecallEstablishedPanel } from "@/components/admin/panels/RecallEstablishedPanel";
-import { CreateRecallEntry } from "@/components/admin/panels/CreateRecallEntry";
 
 interface CandidateData {
   id: string;
@@ -93,6 +92,9 @@ interface ElectionData {
   hiddenAt: Date | null;
   recallReason: string | null;
   recallDefense: string | null;
+  recallLeadName: string | null;
+  recallLeadEmail: string | null;
+  officeId: string | null;
   candidates: CandidateData[];
   voters: VoterData[];
   announcements: AnnouncementRow[];
@@ -108,11 +110,13 @@ export function ElectionWorkbench({
   uploads,
   selfUrl,
   recallInfo,
+  offices,
 }: {
   election: ElectionData;
   uploads: { id: string; filename: string }[];
   selfUrl: string;
   recallInfo: RecallInfo | null;
+  offices: { id: string; title: string }[];
 }) {
   const status = election.status as ElectionStatus;
   const meta = STATUS_META[status] ?? STATUS_META.draft;
@@ -250,6 +254,8 @@ export function ElectionWorkbench({
               hasKey={hasKey}
               targetMembers={election.candidates[0]?.members ?? null}
               reason={election.recallReason ?? ""}
+              leadName={election.recallLeadName}
+              leadEmail={election.recallLeadEmail}
               count={recallInfo?.signatures.length ?? 0}
               threshold={recallInfo?.threshold ?? 0}
               signatures={recallInfo?.signatures ?? []}
@@ -297,7 +303,9 @@ export function ElectionWorkbench({
                 registrationEndsAt: election.registrationEndsAt,
                 votingStartsAt: election.votingStartsAt,
                 votingEndsAt: election.votingEndsAt,
+                officeId: election.officeId,
               }}
+              offices={offices}
               voters={election.voters}
             />
           ),
@@ -372,13 +380,6 @@ export function ElectionWorkbench({
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-2">
-          {!isRecall && status === "published" && !election.hiddenAt && (
-            <CreateRecallEntry
-              electionId={election.id}
-              candidates={approvedCandidates}
-              resultsJson={election.resultsJson}
-            />
-          )}
           {election.hiddenAt ? (
             <ConfirmActionButton
               action={restoreElection.bind(null, election.id)}

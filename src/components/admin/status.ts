@@ -96,7 +96,7 @@ export const LINEAGE_LABEL: Record<string, { label: string; badgeClass: string }
 };
 
 // kind="recall" 的 kind 徽章（election-schema.ts 的 ELECTION_KIND_LABEL 只涵蓋使用者可選的三種，
-// 不含 recall——recall 場次一律由 createRecall 系統建立，不走建立表單）。
+// 不含 recall——recall 場次一律由公開發起 initiateRecall 建立，不走選舉建立表單）。
 export const RECALL_KIND_META = { label: "罷免案", badgeClass: "bg-tone-violet-badge text-tone-violet-text" };
 
 export const CANDIDATE_STATUS_META: Record<string, { label: string; badgeClass: string }> = {

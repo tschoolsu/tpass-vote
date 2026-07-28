@@ -43,7 +43,7 @@ export default async function HomePage({
   const { logout } = await searchParams;
   const justLoggedOut = !isLoggedIn && logout === "1";
 
-  const admin = session ? await isAdmin(session.email) : false;
+  const admin = isAdmin(session);
 
   const elections = isLoggedIn
     ? await prisma.election.findMany({

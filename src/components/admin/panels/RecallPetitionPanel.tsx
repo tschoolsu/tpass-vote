@@ -28,6 +28,8 @@ export function RecallPetitionPanel({
   hasKey,
   targetMembers,
   reason,
+  leadName,
+  leadEmail,
   count,
   threshold,
   signatures,
@@ -38,6 +40,8 @@ export function RecallPetitionPanel({
   hasKey: boolean;
   targetMembers: unknown;
   reason: string;
+  leadName: string | null;
+  leadEmail: string | null;
   count: number;
   threshold: number;
   signatures: SignatureRow[];
@@ -61,6 +65,16 @@ export function RecallPetitionPanel({
           {members.length === 0 && <li className="text-sm text-muted-foreground">（無罷免對象資料）</li>}
         </ul>
       </div>
+
+      {(leadName || leadEmail) && (
+        <div>
+          <h3 className="font-extrabold mb-1">領銜人（發起人）</h3>
+          <p className="text-sm font-medium">
+            {leadName ?? "（未具名）"}
+            {leadEmail && <span className="font-mono text-[11px] text-muted-foreground"> · {leadEmail}</span>}
+          </p>
+        </div>
+      )}
 
       <div>
         <h3 className="font-extrabold mb-1">罷免事由</h3>

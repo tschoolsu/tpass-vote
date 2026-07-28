@@ -17,7 +17,6 @@ import { isAdmin } from "@/config/admin";
 import { authConfig, loginUrlFor } from "@/config/auth";
 import { prisma } from "@/lib/db";
 import { recallThreshold } from "@/lib/recall";
-import type { TallyResult } from "@/lib/tally";
 import {
   LEGAL_TAG_LABEL,
   KIND_LABEL,
@@ -63,7 +62,7 @@ export default async function ElectionDetailPage({
   const election = await getElection(slug);
   if (!election || election.status === "draft") notFound();
 
-  const admin = session ? await isAdmin(session.email) : false;
+  const admin = isAdmin(session);
   const now = new Date();
   const shareUrl = new URL(`/e/${slug}`, authConfig.selfUrl).toString();
 
@@ -86,34 +85,31 @@ export default async function ElectionDetailPage({
       null;
     if (target) recallTarget = { members: target.members as unknown as MemberInfo[] };
 
+    // 門檻母數＝罷免對象職務落地時的「當屆有效票」快照（Office.termValidCount）。
+    if (election.recallTargetOfficeId) {
+      const office = await prisma.office.findUnique({
+        where: { id: election.recallTargetOfficeId },
+        select: { termValidCount: true },
+      });
+      if (office?.termValidCount != null) recallThresholdCount = recallThreshold(office.termValidCount);
+    }
+
     if (election.parentId) {
       const parent = await prisma.election.findUnique({
         where: { id: election.parentId },
-        select: { slug: true, title: true, resultsJson: true },
+        select: { slug: true, title: true },
       });
-      if (parent) {
-        recallParent = { slug: parent.slug, title: parent.title };
-        if (parent.resultsJson) {
-          const parentResults = parent.resultsJson as unknown as TallyResult;
-          recallThresholdCount = recallThreshold(parentResults.validCount);
-        }
-      }
+      if (parent) recallParent = { slug: parent.slug, title: parent.title };
     }
 
     recallCount = await prisma.recallSignature.count({ where: { electionId: election.id } });
 
+    // 連署開放全校：登入即可連署，只看是否已署（不查選區名冊）。
     if (session) {
-      const [voter, signature] = await Promise.all([
-        prisma.voter.findUnique({
-          where: { electionId_email: { electionId: election.id, email: session.email } },
-        }),
-        prisma.recallSignature.findUnique({
-          where: {
-            electionId_signerEmail: { electionId: election.id, signerEmail: session.email },
-          },
-        }),
-      ]);
-      recallRosterState = !voter ? "not_in_roster" : signature ? "signed" : "not_signed";
+      const signature = await prisma.recallSignature.findUnique({
+        where: { electionId_signerEmail: { electionId: election.id, signerEmail: session.email } },
+      });
+      recallRosterState = signature ? "signed" : "not_signed";
     }
   }
 
@@ -190,6 +186,12 @@ export default async function ElectionDetailPage({
               >
                 {recallParent.title}
               </Link>
+            </>
+          )}
+          {election.recallLeadName && (
+            <>
+              {" "}
+              ・發起人：<span className="font-bold text-foreground">{election.recallLeadName}</span>
             </>
           )}
         </p>

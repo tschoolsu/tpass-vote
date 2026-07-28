@@ -31,6 +31,15 @@ export function loginUrlFor(returnPath = "/"): string {
   return u.toString();
 }
 
+// ban 導去的頁面。AUTH_DENIED_URL 選填；沒設就從 AUTH_AUTHORIZE_URL 的 origin 推 /denied
+// （auth 自己就長在那個 origin 上）。reason 不放這裡的 query string，/denied 自己憑 session 重查。
+export function deniedUrlFor(): string {
+  const base = process.env.AUTH_DENIED_URL ?? `${new URL(process.env.AUTH_AUTHORIZE_URL!).origin}/denied`;
+  const u = new URL(base);
+  u.searchParams.set("service", serviceId);
+  return u.toString();
+}
+
 export const authConfig = {
   jwksUrl: process.env.AUTH_JWKS_URL!,
   loginUrl: loginUrlFor("/"),

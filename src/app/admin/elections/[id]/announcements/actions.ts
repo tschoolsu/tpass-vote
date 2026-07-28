@@ -13,6 +13,8 @@
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
+import { upsertOfficesForElection } from "@/lib/office-upsert";
+import type { TallyResult } from "@/lib/tally";
 
 export type ActionResult = { ok: true; id: string } | { ok: false; error: string };
 
@@ -85,7 +87,10 @@ export async function publishAnnouncement(
   const t = title.trim();
   if (t === "") return { ok: false, error: "請輸入標題" };
 
-  const election = await prisma.election.findUnique({ where: { id: electionId } });
+  const election = await prisma.election.findUnique({
+    where: { id: electionId },
+    include: { candidates: { where: { status: "approved" } } },
+  });
   if (!election) return { ok: false, error: "找不到選舉" };
 
   const target = await resolveTarget(electionId, id, legalTag);
@@ -119,6 +124,23 @@ export async function publishAnnouncement(
           data: { status: "published" },
         });
         if (bumped.count === 0) throw new Error("CONFLICT");
+
+        // 公告生效＝就職時刻：把當選人落地到職務登記表（genesis 建、連任/補選更新；
+        // 罷免案通過則目標職務轉從缺）。resultsJson 前面已檢查存在。
+        if (election.resultsJson) {
+          await upsertOfficesForElection(
+            tx,
+            {
+              id: election.id,
+              kind: election.kind,
+              title: election.title,
+              officeId: election.officeId,
+              recallTargetOfficeId: election.recallTargetOfficeId,
+            },
+            election.resultsJson as unknown as TallyResult,
+            election.candidates,
+          );
+        }
       }
       return saved.id;
     });

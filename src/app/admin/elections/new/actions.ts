@@ -19,6 +19,11 @@ export async function createElection(
     return { ok: false, error: "這個 slug 已被使用", fieldErrors: { slug: "已被使用" } };
   }
 
+  if (v.officeId) {
+    const office = await prisma.office.findUnique({ where: { id: v.officeId }, select: { id: true } });
+    if (!office) return { ok: false, error: "選定的對應職務不存在，請重新選擇" };
+  }
+
   const created = await prisma.election.create({
     data: {
       title: v.title,
@@ -30,6 +35,7 @@ export async function createElection(
       registrationEndsAt: v.registrationEndsAt ?? null,
       votingStartsAt: v.votingStartsAt ?? null,
       votingEndsAt: v.votingEndsAt ?? null,
+      officeId: v.officeId ?? null,
       status: "draft",
     },
     select: { id: true, slug: true },

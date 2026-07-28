@@ -6,7 +6,6 @@ import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { authConfig } from "@/config/auth";
 import { recallThreshold } from "@/lib/recall";
-import type { TallyResult } from "@/lib/tally";
 import { ElectionWorkbench, type RecallInfo } from "@/components/admin/panels/ElectionWorkbench";
 
 function attachmentIds(attachments: unknown): string[] {
@@ -31,6 +30,8 @@ export default async function ElectionWorkbenchPage({
   });
   if (!election) notFound();
 
+  const offices = await prisma.office.findMany({ orderBy: { title: "asc" }, select: { id: true, title: true } });
+
   const allAttachmentIds = [...new Set(election.candidates.flatMap((c) => attachmentIds(c.attachments)))];
   const uploads =
     allAttachmentIds.length > 0
@@ -40,30 +41,28 @@ export default async function ElectionWorkbenchPage({
         })
       : [];
 
-  // 罷免案專屬：連署門檻算自原選舉的計票結果，連署人清單具名（選委可見 email），
-  // 名字靠這場自己的 Voter 名冊（建罷免案當下已複製自原選舉名冊）反查，不必回頭查 parent。
+  // 罷免案專屬：連署門檻＝罷免對象職務落地時的「當屆有效票」快照（Office.termValidCount）× 2/5。
+  // 連署開放全校、petition 階段無名冊，故連署人只顯示 email（無法反查姓名）。
   let recallInfo: RecallInfo | null = null;
   if (election.kind === "recall") {
-    const [signatures, parent] = await Promise.all([
+    const [signatures, office] = await Promise.all([
       prisma.recallSignature.findMany({ where: { electionId: id }, orderBy: { createdAt: "asc" } }),
-      election.parentId
-        ? prisma.election.findUnique({ where: { id: election.parentId }, select: { resultsJson: true } })
+      election.recallTargetOfficeId
+        ? prisma.office.findUnique({ where: { id: election.recallTargetOfficeId }, select: { termValidCount: true } })
         : Promise.resolve(null),
     ]);
-    const parentResults = (parent?.resultsJson as unknown as TallyResult | null) ?? null;
-    const threshold = parentResults ? recallThreshold(parentResults.validCount) : 0;
-    const voterNameByEmail = new Map(election.voters.map((v) => [v.email, v.name]));
+    const threshold = office?.termValidCount != null ? recallThreshold(office.termValidCount) : 0;
     recallInfo = {
       threshold,
       signatures: signatures.map((s) => ({
         email: s.signerEmail,
-        name: voterNameByEmail.get(s.signerEmail) ?? null,
+        name: null,
         createdAt: s.createdAt,
       })),
     };
   }
 
   return (
-    <ElectionWorkbench election={election} uploads={uploads} selfUrl={authConfig.selfUrl} recallInfo={recallInfo} />
+    <ElectionWorkbench election={election} uploads={uploads} selfUrl={authConfig.selfUrl} recallInfo={recallInfo} offices={offices} />
   );
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { recallThreshold, recallPassed } from "@/lib/recall";
+import { recallThreshold, recallPassed, canInitiateRecall, recallEligibleFrom } from "@/lib/recall";
 
 describe("recallThreshold", () => {
   it("原選舉無有效票 → 門檻為 0", () => {
@@ -37,5 +37,25 @@ describe("recallPassed", () => {
 
   it("零票（無人投票）→ 否決", () => {
     expect(recallPassed(0, 0)).toBe(false);
+  });
+});
+
+describe("canInitiateRecall（§27 就職滿 2 個月硬擋）", () => {
+  const started = new Date("2026-01-01T00:00:00Z");
+
+  it("就職日未知（null）→ 不得提起", () => {
+    expect(canInitiateRecall(null, new Date())).toBe(false);
+  });
+
+  it("未滿 2 個月 → 不得提起", () => {
+    expect(canInitiateRecall(started, new Date("2026-02-28T00:00:00Z"))).toBe(false);
+  });
+
+  it("恰好滿 2 個月 → 可提起", () => {
+    expect(canInitiateRecall(started, recallEligibleFrom(started))).toBe(true);
+  });
+
+  it("超過 2 個月 → 可提起", () => {
+    expect(canInitiateRecall(started, new Date("2026-06-01T00:00:00Z"))).toBe(true);
   });
 });

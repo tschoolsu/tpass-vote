@@ -30,6 +30,25 @@ export type CloneSourceElection = Pick<
   "id" | "slug" | "title" | "kind" | "seats" | "maxChoices"
 >;
 
+// 把一場選舉的 Voter 名冊複製進另一場（skipDuplicates 保證可重入）。cloneElection 與罷免案
+// established→voting 推進（§35 罷免投票限原選區）共用。只搬 email/name，不搬投票狀態。
+export async function copyVotersInto(
+  tx: Prisma.TransactionClient,
+  fromElectionId: string,
+  toElectionId: string,
+): Promise<number> {
+  const voters = await tx.voter.findMany({
+    where: { electionId: fromElectionId },
+    select: { email: true, name: true },
+  });
+  if (voters.length === 0) return 0;
+  const res = await tx.voter.createMany({
+    data: voters.map((v) => ({ electionId: toElectionId, email: v.email, name: v.name })),
+    skipDuplicates: true,
+  });
+  return res.count;
+}
+
 export async function cloneElection(
   tx: Prisma.TransactionClient,
   source: CloneSourceElection,
@@ -57,15 +76,7 @@ export async function cloneElection(
   });
 
   if (options.copyRoster) {
-    const voters = await tx.voter.findMany({
-      where: { electionId: source.id },
-      select: { email: true, name: true },
-    });
-    if (voters.length > 0) {
-      await tx.voter.createMany({
-        data: voters.map((v) => ({ electionId: created.id, email: v.email, name: v.name })),
-      });
-    }
+    await copyVotersInto(tx, source.id, created.id);
   }
 
   if (options.copyCandidates !== "none") {

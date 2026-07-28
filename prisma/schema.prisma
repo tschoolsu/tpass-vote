@@ -8,51 +8,50 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// 學生會 email 白名單（超管種子來自 env，不入此表）。
-model Admin {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  addedBy   String
-  createdAt DateTime @default(now())
-}
-
 // 選舉主檔。開票私鑰不落地：只存公鑰；sealedBox 為彌封後（去識別、洗牌）的密文快照。
 model Election {
-  id                   String    @id @default(cuid())
-  slug                 String    @unique
-  title                String
-  kind                 String    // leader | grade_rep | other | recall
-  parentId             String?   // 重選場次指向原選舉；罷免場次指向原選舉
-  lineage              String?   // runoff | by_election | redo（複製來源類型，供 UI 區分同票重選/罷免補選/重辦）
-  seats                Int       @default(1)
-  maxChoices           Int       @default(1)
-  status               String    @default("draft") // draft | registration | campaigning | voting | closed | sealed | published | petition | established（後兩者為罷免專屬前置）
-  ballotMode           String?   // choose | approval（開放投票時依核准候選人數判定）
-  registrationStartsAt DateTime?
-  registrationEndsAt   DateTime?
-  votingStartsAt       DateTime?
-  votingEndsAt         DateTime?
-  tallyPublicKeyJwk    Json?
-  keyShares            Int       @default(1) // 1 | 2（開票金鑰分持份數）
-  sealedBox            Json?     // string[] 密文陣列（無身分、順序已洗牌）
-  sealedHash           String?
-  sealedAt             DateTime?
-  sealedBy             String?
-  resultsJson          Json?
-  hiddenAt             DateTime? // null=正常；非 null=管理員軟刪除（隱藏）。資料完全保留，不做實體刪除。
-  recallReason         String?   // 罷免理由（kind=recall 專用）
-  recallDefense        String?   // 被罷免人答辯書，選填（kind=recall 專用）
-  recallTargetCandidateId String? // 原選舉被罷免候選人（組）id（kind=recall 專用）
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+  id                      String    @id @default(cuid())
+  slug                    String    @unique
+  title                   String
+  kind                    String // leader | grade_rep | other | recall
+  parentId                String? // 重選場次指向原選舉；罷免場次指向原選舉
+  lineage                 String? // runoff | by_election | redo（複製來源類型，供 UI 區分同票重選/罷免補選/重辦）
+  seats                   Int       @default(1)
+  maxChoices              Int       @default(1)
+  status                  String    @default("draft") // draft | registration | campaigning | voting | closed | sealed | published | petition | established（後兩者為罷免專屬前置）
+  ballotMode              String? // choose | approval（開放投票時依核准候選人數判定）
+  registrationStartsAt    DateTime?
+  registrationEndsAt      DateTime?
+  votingStartsAt          DateTime?
+  votingEndsAt            DateTime?
+  tallyPublicKeyJwk       Json?
+  keyShares               Int       @default(1) // 1 | 2（開票金鑰分持份數）
+  sealedBox               Json? // string[] 密文陣列（無身分、順序已洗牌）
+  sealedHash              String?
+  sealedAt                DateTime?
+  sealedBy                String?
+  resultsJson             Json?
+  hiddenAt                DateTime? // null=正常；非 null=管理員軟刪除（隱藏）。資料完全保留，不做實體刪除。
+  recallReason            String? // 罷免理由（kind=recall 專用）
+  recallDefense           String? // 被罷免人答辯書，選填（kind=recall 專用）
+  recallTargetCandidateId String? // 本罷免案自建的「罷免用候選人（組）」id＝計票對象（kind=recall 專用）
+  recallTargetOfficeId    String? // 罷免案指向的職務（業務/門檻判準；kind=recall 專用）
+  recallLeadEmail         String? // 領銜人 email（公開發起罷免留痕；kind=recall 專用）
+  recallLeadName          String? // 領銜人姓名，取自 session.name（kind=recall 專用）
+  officeId                String? // 這場選舉「填哪個既有職務」；null=genesis（公告時自動新建職務並回填）。單一職務選舉才設。
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   announcements    Announcement[]
   candidates       Candidate[]
   voters           Voter[]
   ballots          EncryptedBallot[]
   recallSignatures RecallSignature[]
+  office           Office?           @relation("ElectionFillsOffice", fields: [officeId], references: [id])
+  targetOffice     Office?           @relation("RecallTargetOffice", fields: [recallTargetOfficeId], references: [id])
 
   @@index([status])
+  @@index([recallTargetOfficeId])
 }
 
 // 自由公告流：一般公告可任意多則；legalTag 非 null 者為法定里程碑公告（每場至多一則，由
@@ -61,9 +60,9 @@ model Announcement {
   id          String    @id @default(cuid())
   electionId  String
   election    Election  @relation(fields: [electionId], references: [id], onDelete: Cascade)
-  legalTag    String?   // null=一般公告；first | second | result（法定里程碑，每場至多一則）
+  legalTag    String? // null=一般公告；first | second | result（法定里程碑，每場至多一則）
   title       String
-  body        String    // markdown
+  body        String // markdown
   publishedAt DateTime? // null = 草稿
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -75,13 +74,13 @@ model Candidate {
   id          String   @id @default(cuid())
   electionId  String
   election    Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
-  members     Json     // [{name,email,grade}]；leader 聯名 2 人，其餘 1 人
-  number      Int?     // 號次，審核通過後編定
-  platform    String   // 政見
-  attachments Json?    // Upload id 清單（學生證影本等）
+  members     Json // [{name,email,grade}]；leader 聯名 2 人，其餘 1 人
+  number      Int? // 號次，審核通過後編定
+  platform    String // 政見
+  attachments Json? // Upload id 清單（學生證影本等）
   status      String   @default("pending") // pending | needs_fix | approved | rejected | withdrawn
   reviewNote  String?
-  createdBy   String   // 登記者 email（伺服器端從 session 戳，不信 client）
+  createdBy   String // 登記者 email（伺服器端從 session 戳，不信 client）
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -110,7 +109,7 @@ model EncryptedBallot {
   election   Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
   voterId    String   @unique
   voter      Voter    @relation(fields: [voterId], references: [id], onDelete: Cascade)
-  ciphertext String   // base64(RSA-OAEP 包 AES 金鑰 + AES-GCM 密文)
+  ciphertext String // base64(RSA-OAEP 包 AES 金鑰 + AES-GCM 密文)
   updatedAt  DateTime @updatedAt
 }
 
@@ -133,7 +132,7 @@ model RecallSignature {
 model Upload {
   id          String   @id @default(cuid())
   electionId  String
-  storageKey  String   // 物件儲存 key
+  storageKey  String // 物件儲存 key
   filename    String
   mime        String
   size        Int
@@ -142,4 +141,40 @@ model Upload {
   createdAt   DateTime @default(now())
 
   @@index([electionId])
+}
+
+// 職務任期紀錄：跨選舉週期持久存在（同一職務連任/補選是同一筆 row 被更新，不是新增）。
+// 由選舉「公告結果」時自動 upsert（見 src/lib/office-upsert.ts），選委可事後手動編輯。
+// 是罷免功能的「對象」單位；就職日（startedAt）供 §27 兩個月硬擋，termValidCount 供 §28 門檻。
+model Office {
+  id               String    @id @default(cuid())
+  title            String // 職務名稱（顯示用，可改；識別靠 Election.officeId 明確關聯，不做 unique）
+  currentMembers   Json // [{name,email,grade}]；聯名（會長副會長）存成一組，從缺時 []
+  isVacant         Boolean   @default(false)
+  startedAt        DateTime? // 入職日；從缺時 null
+  sourceElectionId String? // 現任這一任由哪場選舉/補選產生（軟關聯，不設 FK，比照 Upload.electionId）
+  termValidCount   Int? // 落地時「當屆有效票總數」快照，供 2/5 罷免門檻（不即時查 sourceElection）
+  note             String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  editLogs         OfficeEditLog[]
+  fillingElections Election[]      @relation("ElectionFillsOffice")
+  recalls          Election[]      @relation("RecallTargetOffice")
+
+  @@index([isVacant])
+}
+
+// 職務編輯留痕：每次自動 upsert 或手動編輯都寫一筆，供「誰、何時、改了什麼」重播。
+model OfficeEditLog {
+  id          String   @id @default(cuid())
+  officeId    String
+  office      Office   @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  editorEmail String // 手動＝選委 email；自動＝固定 "system:election-publish"
+  action      String // create | update | manual_create | manual_edit
+  summary     String // 人類可讀一行
+  diff        Json // {field:{from,to}}，只記有變動欄位，供時間軸重播
+  createdAt   DateTime @default(now())
+
+  @@index([officeId, createdAt])
 }

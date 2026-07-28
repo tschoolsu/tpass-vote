@@ -33,6 +33,11 @@ export async function updateElection(
     }
   }
 
+  if (v.officeId) {
+    const office = await prisma.office.findUnique({ where: { id: v.officeId }, select: { id: true } });
+    if (!office) return { ok: false, error: "選定的對應職務不存在，請重新選擇" };
+  }
+
   await prisma.election.update({
     where: { id: electionId },
     data: {
@@ -45,6 +50,7 @@ export async function updateElection(
       registrationEndsAt: v.registrationEndsAt ?? null,
       votingStartsAt: v.votingStartsAt ?? null,
       votingEndsAt: v.votingEndsAt ?? null,
+      officeId: v.officeId ?? null,
     },
   });
 

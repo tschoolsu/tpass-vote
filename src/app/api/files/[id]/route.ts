@@ -9,7 +9,7 @@ import { getObject } from "@/lib/storage";
 
 export async function GET(_req: NextRequest, ctx: RouteContext<"/api/files/[id]">) {
   const session = await getSession();
-  if (!session || !(await isAdmin(session.email))) {
+  if (!isAdmin(session)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 

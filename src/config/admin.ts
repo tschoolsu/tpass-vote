@@ -1,28 +1,23 @@
-// Admin 守門：auth 沒有角色概念，「誰能管選舉」全在這裡的消費端白名單決定。
-//   超級管理員 = SUPER_ADMIN_EMAILS（env 種子，逗號分隔）—— 只有他們能管理名單。
-//   一般管理員 = 超管 ∪ DB 的 Admin 表 —— 能管理選舉（開票私鑰持有者仍另外把關，見 AGENTS.md）。
+// 授權判斷（契約 v2「permissions claim」）：只讀 T-Pass 通行證上的 permissions 章，
+// 不再自維護名單、不查 DB。角色（admin/moderator/ban/warning）統一在中央 auth panel 管。
 import "server-only";
-import { prisma } from "@/lib/db";
+import { permOf, type TPassClaims } from "@/lib/tpass-auth";
 
-const SUPER_ADMIN_EMAILS = (process.env.SUPER_ADMIN_EMAILS ?? "")
-  .split(",")
-  .map((e) => e.trim().toLowerCase())
-  .filter(Boolean);
-
-export function isSuperAdmin(email: string | null | undefined): boolean {
-  if (!email) return false;
-  return SUPER_ADMIN_EMAILS.includes(email.toLowerCase());
+// 超級管理員：role === "admin"（admin 隱含 moderator，見契約）。
+export function isSuperAdmin(session: TPassClaims | null | undefined): boolean {
+  return permOf(session).role === "admin";
 }
 
-// 是否為管理員（超管種子 或 DB 名單）。需查 DB，故為 async。
-export async function isAdmin(email: string | null | undefined): Promise<boolean> {
-  if (!email) return false;
-  if (isSuperAdmin(email)) return true;
-  const found = await prisma.admin.findUnique({
-    where: { email: email.toLowerCase() },
-    select: { id: true },
-  });
-  return found !== null;
+// 一般管理員（含超管）：role 不是 default 就能管選舉。
+export function isAdmin(session: TPassClaims | null | undefined): boolean {
+  return permOf(session).role !== "default";
 }
 
-export { SUPER_ADMIN_EMAILS };
+// 目前是否被警告（尚未過期）；回傳 reason/until 供 UI 顯示橫幅，非警告則回 null。
+export function warningOf(
+  session: TPassClaims | null | undefined,
+): { reason?: string; until?: number } | null {
+  const perm = permOf(session);
+  if (perm.restriction !== "warning") return null;
+  return { reason: perm.reason, until: perm.until };
+}

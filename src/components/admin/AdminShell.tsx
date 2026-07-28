@@ -5,11 +5,9 @@ import { AdminSidebar, AdminTabBar } from "@/components/admin/AdminNav";
 
 export function AdminShell({
   email,
-  superAdmin,
   children,
 }: {
   email: string;
-  superAdmin: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -44,10 +42,10 @@ export function AdminShell({
         </div>
       </header>
 
-      <AdminTabBar superAdmin={superAdmin} />
+      <AdminTabBar />
 
       <div className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-8 flex gap-8">
-        <AdminSidebar superAdmin={superAdmin} />
+        <AdminSidebar />
         <main className="flex-1 min-w-0">{children}</main>
       </div>
     </div>

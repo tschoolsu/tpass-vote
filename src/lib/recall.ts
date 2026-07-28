@@ -13,3 +13,19 @@ export function recallThreshold(parentValidCount: number): number {
 export function recallPassed(agree: number, disagree: number): boolean {
   return agree > disagree;
 }
+
+// §27：當選人就職未滿 2 個月者，不得提起罷免。以下為硬性判定（就職日未知＝不得提起）。
+export const RECALL_ELIGIBLE_MONTHS = 2;
+
+// 可提起罷免的最早日期＝就職日 + 2 個月。
+export function recallEligibleFrom(startedAt: Date): Date {
+  const d = new Date(startedAt);
+  d.setMonth(d.getMonth() + RECALL_ELIGIBLE_MONTHS);
+  return d;
+}
+
+// 現在是否已可對「就職日為 startedAt」的職務提起罷免。startedAt 為 null（就職日未知）＝不得提起。
+export function canInitiateRecall(startedAt: Date | null, now: Date): boolean {
+  if (!startedAt) return false;
+  return now.getTime() >= recallEligibleFrom(startedAt).getTime();
+}

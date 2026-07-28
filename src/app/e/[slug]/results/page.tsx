@@ -45,7 +45,7 @@ export default async function ResultsPage({
   });
   if (!election || election.status === "draft") notFound();
 
-  const admin = session ? await isAdmin(session.email) : false;
+  const admin = isAdmin(session);
   const shareUrl = new URL(`/e/${slug}/results`, authConfig.selfUrl).toString();
 
   if (election.status !== "published") {

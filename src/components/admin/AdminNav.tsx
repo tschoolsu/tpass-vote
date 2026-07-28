@@ -1,23 +1,20 @@
 "use client";
 // 後台導覽。桌機（≥md）= 左側 sidebar；手機 = header 下方水平捲動 tab bar。
 // 照抄 tpass-form/src/components/admin/AdminNav.tsx 的兩用寫法。
+// 管理員名單管理已移到 auth 中央 panel（Grant 表），這裡不再有 superAdminOnly 分級。
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Vote, Users, type LucideIcon } from "lucide-react";
+import { Vote, Briefcase, type LucideIcon } from "lucide-react";
 
-type Item = { href: string; label: string; icon: LucideIcon; superAdminOnly?: boolean };
+type Item = { href: string; label: string; icon: LucideIcon };
 
 const ITEMS: Item[] = [
   { href: "/admin", label: "選舉列表", icon: Vote },
-  { href: "/admin/members", label: "管理員名單", icon: Users, superAdminOnly: true },
+  { href: "/admin/offices", label: "職務登記表", icon: Briefcase },
 ];
 
 function isActive(pathname: string | null, href: string) {
   return href === "/admin" ? pathname === "/admin" : (pathname ?? "").startsWith(href);
-}
-
-function itemsFor(superAdmin: boolean) {
-  return ITEMS.filter((i) => !i.superAdminOnly || superAdmin);
 }
 
 function NavLink({ item, active, onClick }: { item: Item; active: boolean; onClick?: () => void }) {
@@ -37,23 +34,23 @@ function NavLink({ item, active, onClick }: { item: Item; active: boolean; onCli
   );
 }
 
-export function AdminSidebar({ superAdmin }: { superAdmin: boolean }) {
+export function AdminSidebar() {
   const pathname = usePathname();
   return (
     <nav className="hidden md:flex w-48 shrink-0 flex-col gap-2">
-      {itemsFor(superAdmin).map((item) => (
+      {ITEMS.map((item) => (
         <NavLink key={item.href} item={item} active={isActive(pathname, item.href)} />
       ))}
     </nav>
   );
 }
 
-export function AdminTabBar({ superAdmin }: { superAdmin: boolean }) {
+export function AdminTabBar() {
   const pathname = usePathname();
   return (
     <nav className="sticky top-16 z-40 border-b-2 border-foreground/20 bg-background/90 backdrop-blur-md md:hidden">
       <div className="flex gap-2 overflow-x-auto px-4 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {itemsFor(superAdmin).map((item) => (
+        {ITEMS.map((item) => (
           <NavLink key={item.href} item={item} active={isActive(pathname, item.href)} />
         ))}
       </div>

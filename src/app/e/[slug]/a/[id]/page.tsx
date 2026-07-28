@@ -49,7 +49,7 @@ export default async function AnnouncementPage({
   if (!found) notFound();
 
   const { election, announcement } = found;
-  const admin = session ? await isAdmin(session.email) : false;
+  const admin = isAdmin(session);
   const shareUrl = new URL(`/e/${slug}/a/${id}`, authConfig.selfUrl).toString();
   const tagLabel = announcement.legalTag ? LEGAL_TAG_LABEL[announcement.legalTag] ?? announcement.legalTag : null;
 

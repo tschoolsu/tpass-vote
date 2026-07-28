@@ -29,6 +29,7 @@ export function SettingsPanel({
   hasKey,
   locked,
   initial,
+  offices,
   voters,
 }: {
   electionId: string;
@@ -36,6 +37,7 @@ export function SettingsPanel({
   hasKey: boolean;
   locked: boolean;
   initial: ElectionFormInitial;
+  offices: { id: string; title: string }[];
   voters: VoterRow[];
 }) {
   const [editing, setEditing] = useState(false);
@@ -63,6 +65,7 @@ export function SettingsPanel({
             mode="edit"
             action={updateElection.bind(null, electionId)}
             initial={initial}
+            offices={offices}
             onSuccess={() => setEditing(false)}
           />
         ) : (

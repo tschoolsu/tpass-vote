@@ -9,7 +9,7 @@ import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { nextStatus, type ElectionStatus } from "@/lib/election-status";
 import type { TallyResult } from "@/lib/tally";
-import { cloneElection } from "@/lib/clone-election";
+import { cloneElection, copyVotersInto } from "@/lib/clone-election";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -74,9 +74,11 @@ export async function advanceStatus(electionId: string): Promise<ActionResult> {
   }
 
   let ballotMode: "choose" | "approval" | undefined;
+  // 罷免案的選區名冊在 established→voting 才複製（§35 罷免投票限原選區；petition/連署階段開放全校，
+  // 不需名冊）。來源＝罷免對象職務的原選舉。null 表非此情境。
+  let copyRosterFromElectionId: string | null = null;
   if (next === "voting") {
     if (!election.tallyPublicKeyJwk) return { ok: false, error: "尚未產生開票金鑰，無法開放投票" };
-    if (election._count.voters === 0) return { ok: false, error: "尚未上傳選舉人名冊，無法開放投票" };
     if (election.kind === "recall") {
       // 罷免只有 1 位「候選人」（罷免對象本身），別讓 candidates.length>seats 的判定邏輯
       // 把它算成 choose 模式——罷免票種永遠是「同意／不同意」。
@@ -87,17 +89,44 @@ export async function advanceStatus(electionId: string): Promise<ActionResult> {
         return { ok: false, error: "尚無罷免候選人資料（系統應已自動建立），無法開放投票" };
       }
       ballotMode = "approval";
+      if (!election.recallTargetOfficeId) {
+        return { ok: false, error: "罷免案未關聯職務，無法決定投票選區名冊" };
+      }
+      const office = await prisma.office.findUnique({
+        where: { id: election.recallTargetOfficeId },
+        select: { sourceElectionId: true },
+      });
+      if (!office?.sourceElectionId) {
+        return {
+          ok: false,
+          error: "此職務無來源選舉，無法自動帶入投票選區名冊，請選委手動上傳名冊後再開放投票",
+        };
+      }
+      copyRosterFromElectionId = office.sourceElectionId;
     } else {
+      if (election._count.voters === 0) return { ok: false, error: "尚未上傳選舉人名冊，無法開放投票" };
       if (election.candidates.length === 0) return { ok: false, error: "尚無核准候選人，無法開放投票" };
       ballotMode = election.candidates.length > election.seats ? "choose" : "approval";
     }
   }
 
-  const updated = await prisma.election.updateMany({
-    where: { id: electionId, status: current }, // 樂觀鎖：防兩個選委同時推進
-    data: { status: next, ...(ballotMode ? { ballotMode } : {}) },
+  const result = await prisma.$transaction(async (tx) => {
+    if (copyRosterFromElectionId) {
+      await copyVotersInto(tx, copyRosterFromElectionId, electionId);
+      const count = await tx.voter.count({ where: { electionId } });
+      if (count === 0) return { empty: true as const };
+    }
+    const updated = await tx.election.updateMany({
+      where: { id: electionId, status: current }, // 樂觀鎖：防兩個選委同時推進
+      data: { status: next, ...(ballotMode ? { ballotMode } : {}) },
+    });
+    return { updatedCount: updated.count };
   });
-  if (updated.count === 0) {
+
+  if ("empty" in result) {
+    return { ok: false, error: "原選舉選區名冊為空，無法開放罷免投票，請選委手動上傳名冊" };
+  }
+  if (result.updatedCount === 0) {
     return { ok: false, error: "狀態已被其他選委變更，請重新整理頁面" };
   }
 

@@ -40,7 +40,7 @@ export default async function RegisterPage({
   const election = await prisma.election.findFirst({ where: { slug, hiddenAt: null } });
   if (!election || election.status === "draft") notFound();
 
-  const admin = await isAdmin(session.email);
+  const admin = isAdmin(session);
 
   const existing = await prisma.candidate.findFirst({
     where: { electionId: election.id, createdBy: session.email },

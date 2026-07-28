@@ -21,17 +21,20 @@ export interface ElectionFormInitial {
   registrationEndsAt?: Date | null;
   votingStartsAt?: Date | null;
   votingEndsAt?: Date | null;
+  officeId?: string | null;
 }
 
 export function ElectionForm({
   mode,
   action,
   initial,
+  offices = [],
   onSuccess,
 }: {
   mode: "create" | "edit";
   action: (prev: ElectionFormResult | null, formData: FormData) => Promise<ElectionFormResult>;
   initial?: ElectionFormInitial;
+  offices?: { id: string; title: string }[];
   onSuccess: (result: ElectionFormResult) => void;
 }) {
   const [state, formAction, pending] = useActionState<ElectionFormResult | null, FormData>(
@@ -78,6 +81,21 @@ export function ElectionForm({
           ))}
         </Select>
         {fe.kind && <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.kind}</p>}
+      </div>
+
+      <div>
+        <Label htmlFor="officeId">對應職務（選填）</Label>
+        <Select id="officeId" name="officeId" defaultValue={initial?.officeId ?? ""} className="mt-1">
+          <option value="">新職務（公告結果時自動建立）</option>
+          {offices.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.title}（連任／補選：公告時更新此職務現任）
+            </option>
+          ))}
+        </Select>
+        <p className="mt-1 text-xs text-muted-foreground">
+          留空＝這是全新職務。若是既有職務的改選或罷免補選，選對應職務，公告結果時會更新那筆的現任與入職日。
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-3">

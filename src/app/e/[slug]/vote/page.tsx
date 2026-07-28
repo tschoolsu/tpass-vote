@@ -39,7 +39,7 @@ export default async function VotePage({
   const election = await prisma.election.findFirst({ where: { slug, hiddenAt: null } });
   if (!election || election.status === "draft") notFound();
 
-  const admin = await isAdmin(session.email);
+  const admin = isAdmin(session);
   const shareUrl = new URL(`/e/${slug}/vote`, authConfig.selfUrl).toString();
 
   const voter = await prisma.voter.findUnique({

@@ -17,7 +17,7 @@ export const metadata: Metadata = {
 
 export default async function AboutPage() {
   const session = await getSession();
-  const admin = session ? await isAdmin(session.email) : false;
+  const admin = isAdmin(session);
 
   return (
     <PublicShell isLoggedIn={session !== null} isAdmin={admin} wide>
