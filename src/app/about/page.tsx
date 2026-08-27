@@ -6,7 +6,7 @@ import { KeyRound, RefreshCcw, ShieldCheck, Eye, AlertTriangle } from "lucide-re
 import { PublicShell } from "@/components/public/Shell";
 import { GithubMark } from "@/components/public/GithubMark";
 import { Card } from "@/components/ui/primitives";
-import { getSession } from "@/lib/tpass-auth";
+import { tpass } from "@/config/auth";
 import { isAdmin } from "@/config/admin";
 import { GITHUB_URL } from "@/config/site";
 
@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 };
 
 export default async function AboutPage() {
-  const session = await getSession();
+  const session = await tpass.getSession();
   const admin = isAdmin(session);
 
   return (

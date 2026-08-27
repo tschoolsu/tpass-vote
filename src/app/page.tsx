@@ -6,9 +6,8 @@ import { GithubMark } from "@/components/public/GithubMark";
 import { Header } from "@/components/common/Header";
 import { PublicFooter } from "@/components/public/Shell";
 import { StatusBadge } from "@/components/public/Badges";
-import { getSession } from "@/lib/tpass-auth";
+import { tpass, authConfig } from "@/config/auth";
 import { isAdmin } from "@/config/admin";
-import { authConfig } from "@/config/auth";
 import { GITHUB_URL } from "@/config/site";
 import { prisma } from "@/lib/db";
 import { KIND_LABEL, formatDateTime } from "@/components/public/shared";
@@ -37,7 +36,7 @@ export default async function HomePage({
 }: {
   searchParams: Promise<{ logout?: string }>;
 }) {
-  const session = await getSession();
+  const session = await tpass.getSession();
   const isLoggedIn = session !== null;
   // logout=1 只是 auth 導回來的畫面提示，不是憑證：只有在 session 確實無效時才採信。
   const { logout } = await searchParams;

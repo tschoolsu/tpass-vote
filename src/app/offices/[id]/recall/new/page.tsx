@@ -7,9 +7,8 @@ import { ArrowLeft, ShieldAlert, Clock, Users2 } from "lucide-react";
 import { PublicShell } from "@/components/public/Shell";
 import { Card, Button } from "@/components/ui/primitives";
 import { InitiateRecallForm } from "@/components/public/InitiateRecallForm";
-import { getSession } from "@/lib/tpass-auth";
+import { tpass, loginUrlFor } from "@/config/auth";
 import { isAdmin } from "@/config/admin";
-import { loginUrlFor } from "@/config/auth";
 import { prisma } from "@/lib/db";
 import { canInitiateRecall, recallEligibleFrom } from "@/lib/recall";
 import { formatDateTime } from "@/components/public/shared";
@@ -28,7 +27,7 @@ function memberLabel(v: unknown): string {
 
 export default async function InitiateRecallPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const session = await getSession();
+  const session = await tpass.getSession();
   const admin = isAdmin(session);
 
   const office = await prisma.office.findUnique({ where: { id } });

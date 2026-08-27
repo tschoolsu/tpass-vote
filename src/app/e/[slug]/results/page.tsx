@@ -9,9 +9,8 @@ import { StatusBadge } from "@/components/public/Badges";
 import { CopyLinkButton } from "@/components/public/CopyLinkButton";
 import { ReceiptLookup } from "@/components/public/ReceiptLookup";
 import { Card, cn } from "@/components/ui/primitives";
-import { getSession } from "@/lib/tpass-auth";
+import { tpass, authConfig } from "@/config/auth";
 import { isAdmin } from "@/config/admin";
-import { authConfig } from "@/config/auth";
 import { prisma } from "@/lib/db";
 import { receiptOf } from "@/lib/ballot-crypto";
 import type { TallyResult } from "@/lib/tally";
@@ -38,7 +37,7 @@ export default async function ResultsPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const session = await getSession();
+  const session = await tpass.getSession();
   const election = await prisma.election.findFirst({
     where: { slug, hiddenAt: null },
     include: { candidates: { where: { status: "approved" }, orderBy: { number: "asc" } } },

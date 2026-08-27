@@ -7,7 +7,7 @@
 //   photo     ：候選人公開大頭照，走 /api/photos/[id]（免 admin）顯示，MIME 只收 image，
 //               因為會被公開路徑吐出去顯示，不能收 pdf 之類非圖片類型。
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/tpass-auth";
+import { tpass } from "@/config/auth";
 import { prisma } from "@/lib/db";
 import { newStorageKey, putObject } from "@/lib/storage";
 
@@ -26,7 +26,7 @@ function isUploadKind(v: unknown): v is UploadKind {
 }
 
 export async function POST(request: Request) {
-  const session = await getSession();
+  const session = await tpass.getSession();
   if (!session) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }

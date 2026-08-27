@@ -2,13 +2,13 @@
 // 照抄 tpass-form/src/app/api/files/[id]/route.ts；vote 的 Election 無 ownerSub 概念，
 // 所以直接用 isAdmin 把關，不像 form 再收斂到單一 owner。
 import { NextResponse, type NextRequest } from "next/server";
-import { getSession } from "@/lib/tpass-auth";
+import { tpass } from "@/config/auth";
 import { isAdmin } from "@/config/admin";
 import { prisma } from "@/lib/db";
 import { getObject } from "@/lib/storage";
 
 export async function GET(_req: NextRequest, ctx: RouteContext<"/api/files/[id]">) {
-  const session = await getSession();
+  const session = await tpass.getSession();
   if (!isAdmin(session)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }

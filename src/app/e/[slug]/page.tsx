@@ -12,9 +12,8 @@ import { LinkButton } from "@/components/public/LinkButton";
 import { Markdown } from "@/components/public/Markdown";
 import { RecallSignaturePanel, type RecallRosterState } from "@/components/public/RecallSignaturePanel";
 import { Card } from "@/components/ui/primitives";
-import { getSession } from "@/lib/tpass-auth";
+import { tpass, authConfig, loginUrlFor } from "@/config/auth";
 import { isAdmin } from "@/config/admin";
-import { authConfig, loginUrlFor } from "@/config/auth";
 import { prisma } from "@/lib/db";
 import { recallThreshold } from "@/lib/recall";
 import {
@@ -58,7 +57,7 @@ export default async function ElectionDetailPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const session = await getSession();
+  const session = await tpass.getSession();
   const election = await getElection(slug);
   if (!election || election.status === "draft") notFound();
 

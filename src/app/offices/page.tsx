@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Briefcase, ShieldAlert } from "lucide-react";
 import { PublicShell } from "@/components/public/Shell";
-import { getSession } from "@/lib/tpass-auth";
+import { tpass } from "@/config/auth";
 import { isAdmin } from "@/config/admin";
 import { prisma } from "@/lib/db";
 import { formatDateTime } from "@/components/public/shared";
@@ -30,7 +30,7 @@ function memberLabel(v: unknown): string {
 }
 
 export default async function OfficesPublicPage() {
-  const session = await getSession();
+  const session = await tpass.getSession();
   const admin = isAdmin(session);
   const offices = await prisma.office.findMany({
     where: { isVacant: false },

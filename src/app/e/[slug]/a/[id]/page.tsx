@@ -6,9 +6,8 @@ import { notFound } from "next/navigation";
 import { PublicShell } from "@/components/public/Shell";
 import { CopyLinkButton } from "@/components/public/CopyLinkButton";
 import { Markdown } from "@/components/public/Markdown";
-import { getSession } from "@/lib/tpass-auth";
+import { tpass, authConfig } from "@/config/auth";
 import { isAdmin } from "@/config/admin";
-import { authConfig } from "@/config/auth";
 import { prisma } from "@/lib/db";
 import { LEGAL_TAG_LABEL, formatDateTime, plainExcerpt } from "@/components/public/shared";
 
@@ -44,7 +43,7 @@ export default async function AnnouncementPage({
   params: Promise<{ slug: string; id: string }>;
 }) {
   const { slug, id } = await params;
-  const session = await getSession();
+  const session = await tpass.getSession();
   const found = await getAnnouncement(slug, id);
   if (!found) notFound();
 

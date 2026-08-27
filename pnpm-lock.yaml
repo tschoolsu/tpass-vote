@@ -35,6 +35,9 @@ importers:
       react-hook-form:
         specifier: ^7.54.2
         version: 7.81.0(react@19.2.4)
+      tpass-auth-js:
+        specifier: github:tschoolsu/tpass-auth-js#v1.1.1
+        version: https://codeload.github.com/tschoolsu/tpass-auth-js/tar.gz/a17a3efa16ebd02b86bdf6e3d26d0bec70bbace2(jose@6.2.3)(next@16.2.9(@babel/core@7.29.7)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -2216,6 +2219,16 @@ packages:
   to-regex-range@5.0.1:
     resolution: {integrity: sha512-65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ==}
     engines: {node: '>=8.0'}
+
+  tpass-auth-js@https://codeload.github.com/tschoolsu/tpass-auth-js/tar.gz/a17a3efa16ebd02b86bdf6e3d26d0bec70bbace2:
+    resolution: {tarball: https://codeload.github.com/tschoolsu/tpass-auth-js/tar.gz/a17a3efa16ebd02b86bdf6e3d26d0bec70bbace2}
+    version: 1.1.1
+    peerDependencies:
+      jose: ^6.0.0
+      next: '>=15'
+    peerDependenciesMeta:
+      next:
+        optional: true
 
   ts-api-utils@2.5.0:
     resolution: {integrity: sha512-OJ/ibxhPlqrMM0UiNHJ/0CKQkoKF243/AEmplt3qpRgkW8VG7IfOS41h7V8TjITqdByHzrjcS/2si+y4lIh8NA==}
@@ -4721,6 +4734,12 @@ snapshots:
   to-regex-range@5.0.1:
     dependencies:
       is-number: 7.0.0
+
+  tpass-auth-js@https://codeload.github.com/tschoolsu/tpass-auth-js/tar.gz/a17a3efa16ebd02b86bdf6e3d26d0bec70bbace2(jose@6.2.3)(next@16.2.9(@babel/core@7.29.7)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)):
+    dependencies:
+      jose: 6.2.3
+    optionalDependencies:
+      next: 16.2.9(@babel/core@7.29.7)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
 
   ts-api-utils@2.5.0(typescript@5.9.3):
     dependencies:
