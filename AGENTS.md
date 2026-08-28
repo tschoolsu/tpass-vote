@@ -11,7 +11,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 - 本機跑 `pnpm dev`（已設好 HTTPS + `vote.lvh.me:3006` + `NODE_TLS_REJECT_UNAUTHORIZED=0`；憑證在 `$HOME/tpass-certs`）。檢查用 `pnpm lint` + `pnpm exec tsc --noEmit`。
 - UI 一律 light-only Neobrutalism + OKLCH，照 `tpass-portal/docs/design.md`。
-- SSO 驗章照 `src/lib/tpass-auth.ts`（契約 v2），四鐵則（EdDSA 鎖定 / issuer / audience=tpass:vote / exp）不可動；只碰公鑰，絕不 import auth 的私鑰。
+- SSO 驗章在**套件 `tpass-auth-js`**（契約 v2，2026-08-27 起）——本 repo 只在 `src/config/auth.ts` 綁 env，callback / logout 兩條 route 各一行。四鐵則（EdDSA 鎖定 / issuer / audience=tpass:vote / exp）在套件裡且有測試守著；要改就去 `github.com/tschoolsu/tpass-auth-js` 改，**不要在這裡復活一份手抄的 `src/lib/tpass-auth.ts`**。只碰公鑰，絕不 import auth 的私鑰。
 - 網域 / issuer / audience / DB 連線全 env 驅動（`src/config/auth.ts`），不寫死。
 - 每個 server action / route handler 內部都要重呼 `require*` guard（`src/lib/guard.ts`），不能只靠 layout 擋。
 - Schema 變更走 migration（migrations 進 git）；部署端 `deploy.sh` 跑 `prisma migrate deploy`。
