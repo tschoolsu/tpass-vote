@@ -23,7 +23,13 @@
 
 # misc
 .DS_Store
+
+# 金鑰檔。tvote-key-*.json 是 KeyGenPanel 下載的開票私鑰（一旦誤入 git 該場選舉即失去匿名性）。
 *.pem
+*.key
+*.crt
+*.p12
+tvote-key-*.json
 
 # debug
 npm-debug.log*
