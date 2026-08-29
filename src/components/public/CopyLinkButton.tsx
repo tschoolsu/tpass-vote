@@ -3,7 +3,7 @@
 
 import * as React from "react";
 import { Check, Link2 } from "lucide-react";
-import { Button, type ButtonProps } from "@/components/ui/primitives";
+import { Button, type ButtonProps } from "tpass-ui";
 
 interface Props extends Omit<ButtonProps, "onClick" | "children"> {
   url: string;

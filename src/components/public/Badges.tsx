@@ -1,4 +1,4 @@
-import { cn } from "@/components/ui/primitives";
+import { cn } from "tpass-ui";
 import {
   STATUS_LABEL,
   STATUS_STYLE,

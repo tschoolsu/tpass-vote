@@ -19,7 +19,7 @@ import {
   FileSignature,
   Gavel,
 } from "lucide-react";
-import { Badge } from "@/components/ui/primitives";
+import { Badge } from "tpass-ui";
 import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
 import {
   STATUS_META,

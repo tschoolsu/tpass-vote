@@ -6,7 +6,7 @@
 // 大頭照走公開路徑 /api/photos/[id]（免 admin，選罷法第二十二條要求選票載明相片）；
 // 學生證影本等私密附件維持走 /api/files/[id]（admin-only），這裡完全不碰。
 import { User } from "lucide-react";
-import { Badge } from "@/components/ui/primitives";
+import { Badge } from "tpass-ui";
 import { candidateDisplayName, type MemberInfo } from "@/components/public/shared";
 import { Markdown } from "@/components/public/Markdown";
 

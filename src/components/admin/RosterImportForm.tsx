@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Upload } from "lucide-react";
-import { Textarea, Button } from "@/components/ui/primitives";
+import { Textarea, Button } from "tpass-ui";
 import { importRoster } from "@/app/admin/elections/[id]/roster/actions";
 
 export function RosterImportForm({ electionId }: { electionId: string }) {

@@ -14,7 +14,7 @@ import {
   Send,
   Users2,
 } from "lucide-react";
-import { Button, Card, Badge } from "@/components/ui/primitives";
+import { Button, Card, Badge } from "tpass-ui";
 import type { TallyKeyFile } from "@/lib/ballot-crypto";
 import { decryptAndTally, type TallyMeta } from "@/lib/tally-client";
 import type { TallyResult } from "@/lib/tally";

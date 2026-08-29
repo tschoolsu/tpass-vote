@@ -1,7 +1,7 @@
 // primitives.tsx 的 Button 是原生 <button>，不支援 asChild／不能包 <Link>（會產生非法 <a> 巢狀 <button>）。
 // 這裡照抄同一套 Neobrutalism 樣式，另外做一個「長得像按鈕的連結」給 CTA 用。
 import Link from "next/link";
-import { cn } from "@/components/ui/primitives";
+import { cn } from "tpass-ui";
 
 type Variant = "primary" | "default" | "accent" | "destructive";
 

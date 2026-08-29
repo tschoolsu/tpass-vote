@@ -11,7 +11,7 @@ import { CopyLinkButton } from "@/components/public/CopyLinkButton";
 import { LinkButton } from "@/components/public/LinkButton";
 import { Markdown } from "@/components/public/Markdown";
 import { RecallSignaturePanel, type RecallRosterState } from "@/components/public/RecallSignaturePanel";
-import { Card } from "@/components/ui/primitives";
+import { Card } from "tpass-ui";
 import { tpass, authConfig, loginUrlFor } from "@/config/auth";
 import { isAdmin } from "@/config/admin";
 import { prisma } from "@/lib/db";

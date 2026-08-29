@@ -8,7 +8,7 @@ import { PublicShell } from "@/components/public/Shell";
 import { StatusBadge } from "@/components/public/Badges";
 import { CopyLinkButton } from "@/components/public/CopyLinkButton";
 import { VoteForm } from "@/components/public/VoteForm";
-import { Card } from "@/components/ui/primitives";
+import { Card } from "tpass-ui";
 import { requireSession } from "@/lib/guard";
 import { isAdmin } from "@/config/admin";
 import { authConfig } from "@/config/auth";

@@ -3,7 +3,7 @@
 // 全部重用既有元件與 action，這裡只做版面組裝與 view/edit 切換狀態。
 import { useState } from "react";
 import { Pencil, Users } from "lucide-react";
-import { Badge, Button } from "@/components/ui/primitives";
+import { Badge, Button } from "tpass-ui";
 import { ElectionForm, type ElectionFormInitial } from "@/components/admin/ElectionForm";
 import { KeyGenPanel } from "@/components/admin/KeyGenPanel";
 import { RosterImportForm } from "@/components/admin/RosterImportForm";

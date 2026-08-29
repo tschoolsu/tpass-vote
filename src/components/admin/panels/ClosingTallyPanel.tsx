@@ -8,7 +8,7 @@ import { useState } from "react";
 import { Lock, CheckCircle2, ChevronDown, ChevronRight, Circle, AlertTriangle } from "lucide-react";
 import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
 import { RedoElectionButton } from "@/components/admin/RedoElectionButton";
-import { cn } from "@/components/ui/primitives";
+import { cn } from "tpass-ui";
 import { TallyPanel } from "@/components/admin/panels/TallyPanel";
 
 type SubStepState = "done" | "current" | "pending";

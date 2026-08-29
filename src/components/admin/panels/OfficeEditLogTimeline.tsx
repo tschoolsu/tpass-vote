@@ -1,5 +1,5 @@
 // 職務編輯記錄時間軸（純展示）。每筆顯示誰、何時、動作，展開看逐欄位 from→to。
-import { Badge } from "@/components/ui/primitives";
+import { Badge } from "tpass-ui";
 import { SYSTEM_EDITOR } from "@/lib/office-upsert";
 
 const ACTION_LABEL: Record<string, string> = {

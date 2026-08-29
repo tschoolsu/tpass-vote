@@ -7,7 +7,7 @@
 // 連署開放全校，client 這層的狀態只是 UX，不是安全邊界。
 import * as React from "react";
 import { CheckCircle2, XCircle, Users2 } from "lucide-react";
-import { Badge, Button, cn } from "@/components/ui/primitives";
+import { Badge, Button, cn } from "tpass-ui";
 import { LinkButton } from "@/components/public/LinkButton";
 import { signRecall, withdrawSignature } from "@/app/e/[slug]/recall/actions";
 

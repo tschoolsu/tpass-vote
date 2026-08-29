@@ -8,7 +8,7 @@ import { PublicShell } from "@/components/public/Shell";
 import { StatusBadge } from "@/components/public/Badges";
 import { CopyLinkButton } from "@/components/public/CopyLinkButton";
 import { ReceiptLookup } from "@/components/public/ReceiptLookup";
-import { Card, cn } from "@/components/ui/primitives";
+import { Card, cn } from "tpass-ui";
 import { tpass, authConfig } from "@/config/auth";
 import { isAdmin } from "@/config/admin";
 import { prisma } from "@/lib/db";

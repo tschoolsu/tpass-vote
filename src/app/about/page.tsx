@@ -5,7 +5,7 @@ import Link from "next/link";
 import { KeyRound, RefreshCcw, ShieldCheck, Eye, AlertTriangle } from "lucide-react";
 import { PublicShell } from "@/components/public/Shell";
 import { GithubMark } from "@/components/public/GithubMark";
-import { Card } from "@/components/ui/primitives";
+import { Card } from "tpass-ui";
 import { tpass } from "@/config/auth";
 import { isAdmin } from "@/config/admin";
 import { GITHUB_URL } from "@/config/site";

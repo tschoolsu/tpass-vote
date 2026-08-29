@@ -1,7 +1,7 @@
 // ③政見／④投票面板：主要顯示進度（即時投票率、投票起訖倒數）。發公告走頂層公告區塊，
 // 這裡不重複放公告 UI。純顯示，重用 public/shared 的倒數/格式化純函式（無 IO）。
 import { CalendarClock, Users2 } from "lucide-react";
-import { Card, cn } from "@/components/ui/primitives";
+import { Card, cn } from "tpass-ui";
 import { describeRemaining, formatDateTime } from "@/components/public/shared";
 
 export function CampaignVotingPanel({

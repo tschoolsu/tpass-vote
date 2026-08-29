@@ -7,7 +7,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Save, Megaphone, Pencil, Eye } from "lucide-react";
-import { Input, Textarea, Button, Badge, Label, cn } from "@/components/ui/primitives";
+import { Input, Textarea, Button, Badge, Label, cn } from "tpass-ui";
 import { Markdown } from "@/components/public/Markdown";
 import {
   saveAnnouncementDraft,

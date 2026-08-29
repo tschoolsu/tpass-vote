@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Plus, Briefcase, ChevronRight } from "lucide-react";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
-import { Badge, Button } from "@/components/ui/primitives";
+import { Badge, Button } from "tpass-ui";
 
 interface Member {
   name: string;

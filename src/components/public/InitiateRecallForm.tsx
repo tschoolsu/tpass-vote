@@ -4,7 +4,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, ShieldAlert } from "lucide-react";
-import { Button, Textarea, Label } from "@/components/ui/primitives";
+import { Button, Textarea, Label } from "tpass-ui";
 import { initiateRecall } from "@/app/offices/[id]/recall/actions";
 
 export function InitiateRecallForm({ officeId }: { officeId: string }) {

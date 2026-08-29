@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { PublicShell } from "@/components/public/Shell";
 import { CandidateStatusBadge } from "@/components/public/Badges";
 import { RegisterForm } from "@/components/public/RegisterForm";
-import { Card } from "@/components/ui/primitives";
+import { Card } from "tpass-ui";
 import { requireSession } from "@/lib/guard";
 import { isAdmin } from "@/config/admin";
 import { prisma } from "@/lib/db";

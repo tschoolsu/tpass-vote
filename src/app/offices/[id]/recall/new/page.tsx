@@ -5,7 +5,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ShieldAlert, Clock, Users2 } from "lucide-react";
 import { PublicShell } from "@/components/public/Shell";
-import { Card, Button } from "@/components/ui/primitives";
+import { Card, Button } from "tpass-ui";
 import { InitiateRecallForm } from "@/components/public/InitiateRecallForm";
 import { tpass, loginUrlFor } from "@/config/auth";
 import { isAdmin } from "@/config/admin";

@@ -8,7 +8,7 @@
 // 這一步的加密/送出邏輯本身沒有變，只是多了一個使用者必須主動確認的關卡。
 import * as React from "react";
 import { Loader2 } from "lucide-react";
-import { Button, cn } from "@/components/ui/primitives";
+import { Button, cn } from "tpass-ui";
 import { CandidateInfo, type PublicCandidate } from "@/components/public/CandidateCard";
 import { CopyLinkButton } from "@/components/public/CopyLinkButton";
 import { Markdown } from "@/components/public/Markdown";

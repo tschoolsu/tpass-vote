@@ -3,7 +3,7 @@
 // 從不接觸原始密文，也不打任何 API——純前端字串比對。
 import * as React from "react";
 import { CheckCircle2, Search, XCircle } from "lucide-react";
-import { Button, Input, cn } from "@/components/ui/primitives";
+import { Button, Input, cn } from "tpass-ui";
 
 export function ReceiptLookup({ receipts }: { receipts: string[] }) {
   const [query, setQuery] = React.useState("");

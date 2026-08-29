@@ -3,7 +3,7 @@
 // 發布，都不在這顆卡的推進按鈕範圍內——這兩段只給文字指引指向對應面板，不重複放操作按鈕，
 // 避免同一顆彌封按鈕在畫面上出現兩次讓選委看不懂該按哪個。
 import { CheckCircle2, XCircle } from "lucide-react";
-import { Card } from "@/components/ui/primitives";
+import { Card } from "tpass-ui";
 import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
 import { STATUS_META, type ElectionStatus } from "@/components/admin/status";
 

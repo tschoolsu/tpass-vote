@@ -6,7 +6,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCcw } from "lucide-react";
-import { Button } from "@/components/ui/primitives";
+import { Button } from "tpass-ui";
 import { redoElection } from "@/app/admin/elections/[id]/actions";
 
 export function RedoElectionButton({ electionId, className }: { electionId: string; className?: string }) {

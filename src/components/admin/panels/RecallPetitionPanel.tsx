@@ -3,7 +3,7 @@
 // 選委操作（成立、駁回）。成立與駁回都只在 status==="petition" 時可操作，狀態推進後
 // （established 及以後）本面板仍可展開回顧數字，但操作按鈕收起，避免對已成立的案子誤按。
 import { CheckCircle2, XCircle, Users2 } from "lucide-react";
-import { Badge, cn } from "@/components/ui/primitives";
+import { Badge, cn } from "tpass-ui";
 import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
 import { KeyGenPanel } from "@/components/admin/KeyGenPanel";
 import { Markdown } from "@/components/public/Markdown";

@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, RotateCcw, XCircle, Paperclip } from "lucide-react";
-import { Badge, Button, Textarea } from "@/components/ui/primitives";
+import { Badge, Button, Textarea } from "tpass-ui";
 import { CANDIDATE_STATUS_META } from "@/components/admin/status";
 import {
   approveCandidate,

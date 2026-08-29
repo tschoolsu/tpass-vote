@@ -3,7 +3,7 @@
 // 給狀態機推進 / 彌封 / 移除名冊 這類單一 server action 呼叫共用，避免每頁各寫一份。
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Button, type ButtonProps } from "@/components/ui/primitives";
+import { Button, type ButtonProps } from "tpass-ui";
 
 type Result = { ok: true } | { ok: false; error: string };
 

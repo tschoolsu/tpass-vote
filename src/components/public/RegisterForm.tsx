@@ -4,7 +4,7 @@
 // 大頭照走 kind=photo（公開，選罷法要求選票載明相片），學生證影本走 kind=attachment（預設，私密）。
 import * as React from "react";
 import { UploadCloud, X, Loader2, User } from "lucide-react";
-import { Button, Card, Input, Label, Textarea, cn } from "@/components/ui/primitives";
+import { Button, Card, Input, Label, Textarea, cn } from "tpass-ui";
 import { Markdown } from "@/components/public/Markdown";
 import { registerCandidate, type RegisterInput } from "@/app/e/[slug]/register/actions";
 import type { MemberInfo } from "@/components/public/shared";

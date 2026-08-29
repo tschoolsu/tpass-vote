@@ -5,7 +5,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, XCircle } from "lucide-react";
-import { Button, Textarea } from "@/components/ui/primitives";
+import { Button, Textarea } from "tpass-ui";
 import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
 import { saveRecallDefense } from "@/app/admin/elections/[id]/recall/actions";
 

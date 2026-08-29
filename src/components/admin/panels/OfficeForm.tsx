@@ -4,7 +4,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Plus, X, Loader2 } from "lucide-react";
-import { Button, Card, Input, Label, Textarea } from "@/components/ui/primitives";
+import { Button, Card, Input, Label, Textarea } from "tpass-ui";
 import { createOffice, updateOffice, type OfficeInput, type OfficeMemberInput } from "@/app/admin/offices/actions";
 
 type MemberRow = { name: string; email: string; grade: string };

@@ -37,6 +37,7 @@
     "react-dom": "19.2.4",
     "react-hook-form": "^7.54.2",
     "tpass-auth-js": "github:tschoolsu/tpass-auth-js#v1.1.1",
+    "tpass-ui": "github:tschoolsu/tpass-ui#v1.0.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {

@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { KeyRound, Download, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { generateTallyKeyPair, makeKeyFiles, type TallyKeyFile } from "@/lib/ballot-crypto";
-import { Button } from "@/components/ui/primitives";
+import { Button } from "tpass-ui";
 import { savePublicKey } from "@/app/admin/elections/[id]/actions";
 
 function downloadKeyFile(file: TallyKeyFile) {

@@ -6,7 +6,7 @@
 import { CheckCircle2 } from "lucide-react";
 import type { UiStage } from "@/components/admin/status";
 import type { ElectionStatus } from "@/lib/election-status";
-import { cn } from "@/components/ui/primitives";
+import { cn } from "tpass-ui";
 
 export function StageProgress({
   currentStage,

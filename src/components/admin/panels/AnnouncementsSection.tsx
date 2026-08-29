@@ -9,7 +9,7 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import { Megaphone, Plus, ChevronDown, ChevronRight, Info } from "lucide-react";
-import { Badge, Button } from "@/components/ui/primitives";
+import { Badge, Button } from "tpass-ui";
 import { CopyLinkButton } from "@/components/public/CopyLinkButton";
 import { AnnouncementEditor } from "@/components/admin/AnnouncementEditor";
 

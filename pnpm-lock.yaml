@@ -38,6 +38,9 @@ importers:
       tpass-auth-js:
         specifier: github:tschoolsu/tpass-auth-js#v1.1.1
         version: https://codeload.github.com/tschoolsu/tpass-auth-js/tar.gz/a17a3efa16ebd02b86bdf6e3d26d0bec70bbace2(jose@6.2.3)(next@16.3.3(@babel/core@7.29.7)(@types/node@20.19.43)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4))
+      tpass-ui:
+        specifier: github:tschoolsu/tpass-ui#v1.0.0
+        version: https://codeload.github.com/tschoolsu/tpass-ui/tar.gz/aa60038184da821da8f7a022557906ebfcec120f(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -2246,6 +2249,13 @@ packages:
     peerDependenciesMeta:
       next:
         optional: true
+
+  tpass-ui@https://codeload.github.com/tschoolsu/tpass-ui/tar.gz/aa60038184da821da8f7a022557906ebfcec120f:
+    resolution: {tarball: https://codeload.github.com/tschoolsu/tpass-ui/tar.gz/aa60038184da821da8f7a022557906ebfcec120f}
+    version: 1.0.0
+    peerDependencies:
+      react: '>=19'
+      react-dom: '>=19'
 
   ts-api-utils@2.5.0:
     resolution: {integrity: sha512-OJ/ibxhPlqrMM0UiNHJ/0CKQkoKF243/AEmplt3qpRgkW8VG7IfOS41h7V8TjITqdByHzrjcS/2si+y4lIh8NA==}
@@ -4773,6 +4783,11 @@ snapshots:
     optionalDependencies:
       next: 16.3.3(@babel/core@7.29.7)(@types/node@20.19.43)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
 
+  tpass-ui@https://codeload.github.com/tschoolsu/tpass-ui/tar.gz/aa60038184da821da8f7a022557906ebfcec120f(react-dom@19.2.4(react@19.2.4))(react@19.2.4):
+    dependencies:
+      react: 19.2.4
+      react-dom: 19.2.4(react@19.2.4)
+
   ts-api-utils@2.5.0(typescript@5.9.3):
     dependencies:
       typescript: 5.9.3
@@ -4886,7 +4901,7 @@ snapshots:
     dependencies:
       lightningcss: 1.32.0
       picomatch: 4.0.5
-      postcss: 8.5.19
+      postcss: 8.5.23
       rolldown: 1.1.5
       tinyglobby: 0.2.17
     optionalDependencies:

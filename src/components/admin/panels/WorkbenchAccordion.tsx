@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight, Lock, type LucideIcon } from "lucide-react";
 import type { UiStage } from "@/components/admin/status";
-import { cn } from "@/components/ui/primitives";
+import { cn } from "tpass-ui";
 
 export interface StepPanelDef {
   status: UiStage;

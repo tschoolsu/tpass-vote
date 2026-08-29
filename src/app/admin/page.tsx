@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Plus, Vote as VoteIcon, ArrowUpRight, Trash2 } from "lucide-react";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
-import { Badge } from "@/components/ui/primitives";
+import { Badge } from "tpass-ui";
 import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
 import { STATUS_META, LINEAGE_LABEL, RECALL_KIND_META, type ElectionStatus } from "@/components/admin/status";
 import { ELECTION_KIND_LABEL, type ElectionKind } from "@/app/admin/elections/election-schema";

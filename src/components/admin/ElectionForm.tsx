@@ -2,7 +2,7 @@
 // 選舉建立／編輯共用表單。new/page.tsx 與 [id]/edit/page.tsx 都用這份，
 // 差別只在傳入的 server action 與初始值——驗證規則集中在 election-schema.ts，這裡不重寫規則。
 import { useActionState, useEffect } from "react";
-import { Input, Select, Label, Button } from "@/components/ui/primitives";
+import { Input, Select, Label, Button } from "tpass-ui";
 import {
   ELECTION_KINDS,
   ELECTION_KIND_LABEL,
