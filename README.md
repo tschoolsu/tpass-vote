@@ -75,7 +75,10 @@ envelope 加密，沒開票私鑰誰都打不開）、**外信封＝你的身分
 
 ## 架構備忘
 
-- 驗章四鐵則在 `src/lib/tpass-auth.ts`（照抄 tpass-portal 參考實作）：`algorithms:['EdDSA']` / issuer / audience / exp。
+- 驗章本體在共用套件 `tpass-auth-js`（`github:tschoolsu/tpass-auth-js`），四鐵則
+  （`algorithms:['EdDSA']` / issuer / audience=`tpass:vote` / exp）在那裡且有測試守著。
+  本 repo 只在 `src/config/auth.ts` 綁 env，callback / logout 兩條 route 各一行；
+  要改驗章邏輯去那個 repo 改，**不要在這裡復活一份手抄的 `src/lib/tpass-auth.ts`**。
 - 「誰能管選舉」auth 不管，全在 `src/config/admin.ts` 的消費端白名單（env 種子 ∪ DB）。
 - 開票私鑰永不落地：`Election.tallyPublicKeyJwk` 只存公鑰；`sealedBox` 是彌封（去識別、洗牌）後的密文快照。細節與紅線見 `AGENTS.md`。
 - 檔案儲存 `src/lib/storage.ts` 預設 `local` driver（寫 `./.uploads`，本機 demo 用）；
