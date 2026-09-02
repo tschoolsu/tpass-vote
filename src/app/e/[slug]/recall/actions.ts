@@ -6,7 +6,7 @@
 //    本就沒有名冊。§35 的「投票限原選區」在 established→voting 推進時才複製名冊、另行把關。
 //    門檻母數＝罷免對象職務落地時的 Office.termValidCount 快照（§28）。
 
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { requireSession } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { recallThreshold } from "@/lib/recall";

@@ -7,7 +7,7 @@
 //    （tallyPublicKeyJwk/sealedBox/resultsJson 等一律不複製，新場要重新走完整流程）。
 // 2. 呼叫端必須在既有 $transaction 內傳入 tx；本函式不自己開交易，也不做任何 requireAdmin
 //    守門判斷——那是呼叫端的責任（各 action 自己驗證來源場次狀態是否允許複製）。
-import { Prisma, type Election } from "@prisma/client";
+import { Prisma, type Election } from "@/generated/prisma/client";
 
 export type CloneLineage = "runoff" | "by_election" | "redo";
 

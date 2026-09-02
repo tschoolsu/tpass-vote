@@ -5,7 +5,7 @@
 //
 // 安全不變量：身分一律取自 session（requireSession），不信任 client 傳來的身分。
 // 硬條件（§27 就職滿 2 個月、職務未從缺、無進行中連署案）在交易內二次驗證，不倚賴畫面。
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { requireSession } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { canInitiateRecall } from "@/lib/recall";

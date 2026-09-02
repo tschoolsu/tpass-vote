@@ -6,7 +6,7 @@
 // - election.officeId 為 null（genesis）→ 每個當選組各建一筆職務，恰好一筆時回填 election.officeId，
 //   讓日後改選/罷免補選精準命中。
 // 罷免案（kind=recall）不建職務，而是「通過→目標職務轉從缺；否決→完全不動」。
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@/generated/prisma/client";
 import type { TallyResult } from "@/lib/tally";
 import { recallPassed } from "@/lib/recall";
 

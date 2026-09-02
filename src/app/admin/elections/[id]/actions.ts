@@ -4,7 +4,7 @@
 // sealed→published 走 announcements 頁發布 result 公告時一併處理，都不在這裡的 NEXT_STATUS 表裡。
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { nextStatus, type ElectionStatus } from "@/lib/election-status";

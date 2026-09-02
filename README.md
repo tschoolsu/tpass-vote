@@ -4,7 +4,7 @@ TSchool 數位服務平台的學生會選舉子模組（消費端）。公告、
 開票結果。透過 T-Pass SSO 認身分，**只用 JWKS 公鑰本地驗章**，不回呼 auth、不碰私鑰。
 
 - 子網域（本機）：`https://vote.lvh.me:3006`（tpass-auth:3000 / tpass-portal:3001 之後）
-- 技術棧：Next 16.2.9 + React 19 + Tailwind v4 + jose + Prisma(Postgres)
+- 技術棧：Next 16.3 + React 19 + Tailwind v4 + tpass-auth-js + Prisma 7 (Postgres)
 
 > **目前狀態：功能完整（v1）。** 完整選舉流程：三份法定公告、候選人登記與補正審核、
 > 雙信封加密投票（截止前可跨裝置重投）、彌封、本地開票、結果公告與重選場次。
@@ -17,7 +17,7 @@ TSchool 數位服務平台的學生會選舉子模組（消費端）。公告、
 
 2. **資料庫建表**：
    ```bash
-   pnpm exec prisma migrate dev   # 套用既有 migrations（或視需要新增）
+   pnpm exec prisma migrate dev   # 套用 prisma/migrations；改 schema 後也用它產新 migration（不要 db push）
    ```
    或透過上層 ops repo：`scripts/tpass db setup vote`（冪等，會順便建 role/db）。
 
@@ -80,6 +80,7 @@ envelope 加密，沒開票私鑰誰都打不開）、**外信封＝你的身分
   本 repo 只在 `src/config/auth.ts` 綁 env，callback / logout 兩條 route 各一行；
   要改驗章邏輯去那個 repo 改，**不要在這裡復活一份手抄的 `src/lib/tpass-auth.ts`**。
 - 「誰能管選舉」auth 不管，全在 `src/config/admin.ts` 的消費端白名單（env 種子 ∪ DB）。
+- 資料庫走 Prisma 7 + `@prisma/adapter-pg`（`src/lib/db.ts`），client 生成在 `src/generated/`（不進 git，`pnpm install` 的 postinstall 會產）；schema 改動只透過 `prisma migrate dev` 產 migration。準則見 tpass-ops `docs/handbook/01-new-service.md`〈資料庫〉。
 - 開票私鑰永不落地：`Election.tallyPublicKeyJwk` 只存公鑰；`sealedBox` 是彌封（去識別、洗牌）後的密文快照。細節與紅線見 `AGENTS.md`。
 - 檔案儲存 `src/lib/storage.ts` 預設 `local` driver（寫 `./.uploads`，本機 demo 用）；
   上線把 `STORAGE_DRIVER=s3` 接 Supabase Storage / S3，URL 全 env 驅動。

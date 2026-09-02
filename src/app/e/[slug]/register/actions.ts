@@ -5,7 +5,7 @@
 //    needs_fix 狀態允許編輯重送（同一筆覆寫，狀態轉回 pending）。
 // 3. 附件一律驗證屬於本場選舉、且是本人上傳，擋別人 upload id 被拿來冒用。
 
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { z } from "zod";
 import { requireSession } from "@/lib/guard";
 import { prisma } from "@/lib/db";

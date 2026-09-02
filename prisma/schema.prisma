@@ -1,11 +1,11 @@
 // tpass-vote 資料模型。開票私鑰不落地：只存公鑰；sealedBox 為彌封後（去識別、洗牌）的密文快照。
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // 選舉主檔。開票私鑰不落地：只存公鑰；sealedBox 為彌封後（去識別、洗牌）的密文快照。

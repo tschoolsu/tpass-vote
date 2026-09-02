@@ -3,7 +3,7 @@
 // sourceElectionId / termValidCount 不開放手動改（那是罷免門檻母數，由選舉公告自動落地），
 // 避免選委手滑破壞 2/5 門檻。自動落地邏輯見 src/lib/office-upsert.ts。
 import { revalidatePath } from "next/cache";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { buildDiff } from "@/lib/office-upsert";

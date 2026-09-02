@@ -6,7 +6,7 @@
 // 非 approved 一律 number=null，不佔號、不留空號。任何會改變 status 的 action 成功後都要
 // 呼叫 renumberApproved 重算一次。
 import { revalidatePath } from "next/cache";
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { LOCKED_STATUSES } from "@/lib/election-status";
