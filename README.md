@@ -12,8 +12,8 @@ TSchool 數位服務平台的學生會選舉子模組（消費端）。公告、
 
 ## 本機啟動
 
-1. **環境變數**：`cp .env.example .env.local`，填上 `DATABASE_URL`（本機慣例見下）、
-   `SUPER_ADMIN_EMAILS`。其餘 SSO / 網域變數已有本機預設值。
+1. **環境變數**：`cp .env.example .env.local`，填上 `DATABASE_URL`（本機慣例見下）。
+   其餘 SSO / 網域變數已有本機預設值。管理員名單不在 env——在 auth 的 `/admin` panel 給角色。
 
 2. **資料庫建表**：
    ```bash
@@ -28,7 +28,7 @@ TSchool 數位服務平台的學生會選舉子模組（消費端）。公告、
    pnpm dev   # https://vote.lvh.me:3006（package.json 已設好 HTTPS + NODE_TLS_REJECT_UNAUTHORIZED=0）
    ```
 
-5. **登入**：用學校 Google 帳號（`auth` 服務需同時在跑）。`SUPER_ADMIN_EMAILS` 內的帳號視同管理員。
+5. **登入**：用學校 Google 帳號（`auth` 服務需同時在跑）。管理權限來自通行證的 `permissions` claim（auth 的 `/admin` panel 設定）。
 
 ## 檢查
 
@@ -71,8 +71,8 @@ envelope 加密，沒開票私鑰誰都打不開）、**外信封＝你的身分
 
 | 動作 | 誰能做 |
 | --- | --- |
-| 管理 Admin 名單 | 超管（`SUPER_ADMIN_EMAILS`） |
-| 開設選舉 / 狀態推進 / 名冊 / 審核候選人 / 公告 / 彌封 | 管理員（超管 ∪ DB Admin 表） |
+| 管理誰是管理員 | auth 的 `/admin` panel（本服務不自維護名單） |
+| 開設選舉 / 狀態推進 / 名冊 / 審核候選人 / 公告 / 彌封 | `permissions.role` 不是 `default` 的人（admin／moderator） |
 | 登記候選人 | 登入使用者（消極資格由選委會人工審） |
 | 投票 | 選舉人名冊內的使用者（選委會逐場上傳 email） |
 | 開票（解密計票） | 持有開票金鑰檔者（管理員頁面＋本地金鑰檔） |
@@ -84,7 +84,7 @@ envelope 加密，沒開票私鑰誰都打不開）、**外信封＝你的身分
   （`algorithms:['EdDSA']` / issuer / audience=`tpass:vote` / exp）在那裡且有測試守著。
   本 repo 只在 `src/config/auth.ts` 綁 env，callback / logout 兩條 route 各一行；
   要改驗章邏輯去那個 repo 改，**不要在這裡復活一份手抄的 `src/lib/tpass-auth.ts`**。
-- 「誰能管選舉」auth 不管，全在 `src/config/admin.ts` 的消費端白名單（env 種子 ∪ DB）。
+- 「誰能管選舉」只讀通行證的 `permissions` claim（`src/config/admin.ts` 的 `isAdmin`／`isSuperAdmin`），不查 DB、不讀 env；名單在 auth 的 `/admin` panel 管（2026-07-27 起，Admin 表已由 migration 砍掉）。
 - 資料庫走 Prisma 7 + `@prisma/adapter-pg`（`src/lib/db.ts`），client 生成在 `src/generated/`（不進 git，`pnpm install` 的 postinstall 會產）；schema 改動只透過 `prisma migrate dev` 產 migration。準則見 tpass-ops `docs/handbook/01-new-service.md`〈資料庫〉。
 - 開票私鑰永不落地：`Election.tallyPublicKeyJwk` 只存公鑰；`sealedBox` 是彌封（去識別、洗牌）後的密文快照。細節與紅線見 `AGENTS.md`。
 - 檔案儲存 `src/lib/storage.ts` 預設 `local` driver（寫 `./.uploads`，本機 demo 用）；
