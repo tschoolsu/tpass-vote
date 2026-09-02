@@ -27,5 +27,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
   已洗牌，不得殘留可追溯投票人的順序或索引。
 - **mutation 一律 server action，且函式內部重新呼叫對應的 `require*` guard**——不能假設呼叫方
   已經在別處驗證過身分/權限，尤其是候選人審核、名冊上傳、彌封、開票這幾個高風險動作。
+- 公告／政見的 Markdown 一律走 `src/components/public/Markdown.tsx`（切字串組 React element，天生免疫 XSS）——
+  **不用 `dangerouslySetInnerHTML`、不引入 `react-markdown`**。
 - 選舉狀態機（`Election.status`：draft → registration → campaigning → voting → closed → sealed →
   published）只能單向前進，不得由一般 mutation 任意回撥；狀態轉換要集中管理，不要散落在各頁面。
