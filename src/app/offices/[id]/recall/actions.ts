@@ -82,7 +82,7 @@ export async function initiateRecall(officeId: string, reason: string): Promise<
       });
 
       return election;
-    });
+    }, { timeout: 10_000 });
 
     return { ok: true, slug: created.slug };
   } catch (e) {

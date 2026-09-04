@@ -83,7 +83,7 @@ export async function createOffice(input: OfficeInput): Promise<OfficeActionResu
       },
     });
     return created;
-  });
+  }, { timeout: 10_000 });
 
   revalidatePath("/admin/offices");
   return { ok: true, officeId: office.id };
@@ -131,7 +131,7 @@ export async function updateOffice(id: string, input: OfficeInput): Promise<Offi
         diff: diff as Prisma.InputJsonValue,
       },
     });
-  });
+  }, { timeout: 10_000 });
 
   revalidatePath("/admin/offices");
   revalidatePath(`/admin/offices/${id}`);

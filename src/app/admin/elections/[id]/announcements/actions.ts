@@ -143,7 +143,7 @@ export async function publishAnnouncement(
         }
       }
       return saved.id;
-    });
+    }, { timeout: 10_000 });
   } catch (e) {
     if (e instanceof Error && e.message === "CONFLICT") {
       return { ok: false, error: "選舉狀態已被其他選委變更，請重新整理頁面" };

@@ -36,15 +36,21 @@ export async function importRoster(electionId: string, raw: string): Promise<Ros
   const rows = [...byEmail.values()];
   if (rows.length === 0) return { ok: false, error: "沒有格式正確的 email" };
 
-  await prisma.$transaction(
-    rows.map((r) =>
-      prisma.voter.upsert({
-        where: { electionId_email: { electionId, email: r.email } },
-        update: { name: r.name },
-        create: { electionId, email: r.email, name: r.name },
-      }),
-    ),
-  );
+  // 大量 upsert 一次塞進單一交易會撐爆預設 timeout；每 500 筆分一批、各批各自一個交易。
+  const BATCH_SIZE = 500;
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const batch = rows.slice(i, i + BATCH_SIZE);
+    await prisma.$transaction(
+      batch.map((r) =>
+        prisma.voter.upsert({
+          where: { electionId_email: { electionId, email: r.email } },
+          update: { name: r.name },
+          create: { electionId, email: r.email, name: r.name },
+        }),
+      ),
+      { timeout: 30_000 },
+    );
+  }
 
   revalidatePath(`/admin/elections/${electionId}/roster`);
   revalidatePath(`/admin/elections/${electionId}`);

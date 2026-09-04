@@ -40,7 +40,7 @@ export async function sealElection(electionId: string): Promise<ActionResult> {
 
   const sealedHash = createHash("sha256").update(JSON.stringify(box)).digest("hex");
 
-  await prisma.election.update({
+  const sealed = await prisma.election.updateMany({
     where: { id: electionId, status: "closed" }, // 樂觀鎖：防兩個選委同時彌封
     data: {
       sealedBox: box,
@@ -50,6 +50,9 @@ export async function sealElection(electionId: string): Promise<ActionResult> {
       status: "sealed",
     },
   });
+  if (sealed.count === 0) {
+    return { ok: false, error: "選舉狀態已被其他選委變更，請重新整理頁面" };
+  }
 
   return { ok: true };
 }
@@ -159,7 +162,7 @@ export async function submitResults(electionId: string, results: unknown): Promi
         }
       }
     }
-  });
+  }, { timeout: 10_000 });
 
   return { ok: true };
 }

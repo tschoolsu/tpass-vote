@@ -121,7 +121,7 @@ export async function advanceStatus(electionId: string): Promise<ActionResult> {
       data: { status: next, ...(ballotMode ? { ballotMode } : {}) },
     });
     return { updatedCount: updated.count };
-  });
+  }, { timeout: 10_000 });
 
   if ("empty" in result) {
     return { ok: false, error: "原選舉選區名冊為空，無法開放罷免投票，請選委手動上傳名冊" };
@@ -184,6 +184,7 @@ export async function createRunoff(
       copyRoster: true,
       tiedCandidateIds: tiedIds,
     }),
+    { timeout: 10_000 },
   );
 
   revalidatePath("/admin");
@@ -204,6 +205,7 @@ export async function createByElection(sourceId: string): Promise<ElectionCloneR
       copyCandidates: "none",
       copyRoster: true,
     }),
+    { timeout: 10_000 },
   );
 
   revalidatePath("/admin");
@@ -226,7 +228,7 @@ export async function redoElection(electionId: string): Promise<ElectionCloneRes
     });
     await tx.election.update({ where: { id: source.id }, data: { hiddenAt: new Date() } });
     return created;
-  });
+  }, { timeout: 10_000 });
 
   revalidatePath("/admin");
   revalidatePath(`/admin/elections/${electionId}`);

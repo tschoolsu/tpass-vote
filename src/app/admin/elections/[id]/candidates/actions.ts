@@ -45,7 +45,7 @@ export async function approveCandidate(electionId: string, candidateId: string):
   await prisma.$transaction(async (tx) => {
     await tx.candidate.update({ where: { id: candidateId }, data: { status: "approved" } });
     await renumberApproved(tx, electionId);
-  });
+  }, { timeout: 10_000 });
   revalidatePath(`/admin/elections/${electionId}/candidates`);
   revalidatePath(`/admin/elections/${electionId}`);
   return { ok: true };
@@ -72,7 +72,7 @@ export async function sendBackForFix(
       data: { status: "needs_fix", reviewNote: note },
     });
     await renumberApproved(tx, electionId);
-  });
+  }, { timeout: 10_000 });
   revalidatePath(`/admin/elections/${electionId}/candidates`);
   return { ok: true };
 }
@@ -95,7 +95,7 @@ export async function rejectCandidate(
       data: { status: "rejected", reviewNote: reviewNote?.trim() || null },
     });
     await renumberApproved(tx, electionId);
-  });
+  }, { timeout: 10_000 });
   revalidatePath(`/admin/elections/${electionId}/candidates`);
   revalidatePath(`/admin/elections/${electionId}`);
   return { ok: true };

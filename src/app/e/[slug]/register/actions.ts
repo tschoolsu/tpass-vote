@@ -86,40 +86,42 @@ export async function registerCandidate(
     return { ok: false, error: "大頭照無效或不屬於你，請重新上傳" };
   }
 
-  const existing = await prisma.candidate.findFirst({
-    where: { electionId: election.id, createdBy: session.email },
-    orderBy: { createdAt: "desc" },
+  // electionId+createdBy 有 DB 唯一索引（一人一場一筆），下面用 upsert 原子性地新增/覆寫，
+  // 不再靠「先查後寫」判斷——避免同一人雙擊送出時 race 出兩筆重複登記。
+  const existing = await prisma.candidate.findUnique({
+    where: { electionId_createdBy: { electionId: election.id, createdBy: session.email } },
   });
 
   const membersJson = data.members as unknown as Prisma.InputJsonValue;
   const attachmentsJson = data.attachmentIds as unknown as Prisma.InputJsonValue;
 
-  if (existing && existing.status !== "rejected" && existing.status !== "withdrawn") {
-    if (existing.status !== "needs_fix") {
-      return { ok: false, error: "你已經登記過這場選舉了" };
-    }
-    // needs_fix：編輯重送，覆寫同一筆，狀態轉回 pending 重新排審。
-    await prisma.candidate.update({
-      where: { id: existing.id },
-      data: {
-        members: membersJson,
-        platform: data.platform,
-        attachments: attachmentsJson,
-        status: "pending",
-        reviewNote: null,
-      },
-    });
-    return { ok: true, status: "pending" };
+  // 只有 needs_fix（編輯重送）與 rejected/withdrawn（重新登記，覆寫舊紀錄）允許寫入；
+  // 其餘狀態（pending/approved）視為「已經登記過」擋掉。
+  if (
+    existing &&
+    existing.status !== "needs_fix" &&
+    existing.status !== "rejected" &&
+    existing.status !== "withdrawn"
+  ) {
+    return { ok: false, error: "你已經登記過這場選舉了" };
   }
 
-  await prisma.candidate.create({
-    data: {
+  await prisma.candidate.upsert({
+    where: { electionId_createdBy: { electionId: election.id, createdBy: session.email } },
+    create: {
       electionId: election.id,
       members: membersJson,
       platform: data.platform,
       attachments: attachmentsJson,
       status: "pending",
       createdBy: session.email,
+    },
+    update: {
+      members: membersJson,
+      platform: data.platform,
+      attachments: attachmentsJson,
+      status: "pending",
+      reviewNote: null,
     },
   });
 

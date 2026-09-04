@@ -85,6 +85,7 @@ model Candidate {
   updatedAt   DateTime @updatedAt
 
   @@unique([electionId, number])
+  @@unique([electionId, createdBy])
   @@index([electionId, status])
 }
 
