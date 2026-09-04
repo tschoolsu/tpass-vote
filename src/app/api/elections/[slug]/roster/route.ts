@@ -1,0 +1,39 @@
+// 投票暨未投票選舉人名冊（§26-1 Ⅴ）的下載端點。
+//
+// 與明細不同，名冊是具名的，所以**要登入才給**——法規要求向會員公開，不是向全網公開。
+// 同樣不塞進結果頁：幾千筆 <tr> 乘上結果公告後的併發，記憶體會很難看。
+import { NextResponse, type NextRequest } from "next/server";
+import { tpass } from "@/config/auth";
+import { prisma } from "@/lib/db";
+
+export async function GET(_req: NextRequest, ctx: RouteContext<"/api/elections/[slug]/roster">) {
+  const session = await tpass.getSession();
+  if (!session) return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+
+  const { slug } = await ctx.params;
+  const election = await prisma.election.findFirst({
+    where: { slug, hiddenAt: null, status: "published" },
+    select: { id: true },
+  });
+  if (!election) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  const voters = await prisma.voter.findMany({
+    where: { electionId: election.id },
+    select: { name: true, email: true, votedAt: true },
+    orderBy: [{ name: "asc" }, { email: "asc" }],
+  });
+
+  const rows = [
+    "選舉人,投票狀態",
+    ...voters.map((v) => {
+      const label = (v.name?.trim() || v.email.split("@")[0]).replace(/"/g, '""');
+      return `"${label}",${v.votedAt ? "已投票" : "未投票"}`;
+    }),
+  ];
+  return new NextResponse(`﻿${rows.join("\n")}\n`, {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="roster-${slug}.csv"`,
+    },
+  });
+}

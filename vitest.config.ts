@@ -6,6 +6,8 @@ export default defineConfig({
     alias: { "@": path.resolve(__dirname, "src") },
   },
   test: {
-    include: ["tests/**/*.test.ts"],
+    // 只收頂層的純函式測試；tests/integration/ 需要資料庫與 build，走
+    // vitest.integration.config.ts（pnpm test:integration）。
+    include: ["tests/*.test.ts"],
   },
 });

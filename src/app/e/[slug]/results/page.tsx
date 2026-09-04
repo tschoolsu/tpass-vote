@@ -20,6 +20,10 @@ import type { TallyResult } from "@/lib/tally";
 import { recallPassed } from "@/lib/recall";
 import { KIND_LABEL, candidateDisplayName, formatDateTime } from "@/components/public/shared";
 
+// 明細與名冊在頁面上只列這麼多筆，其餘走 CSV 下載端點。
+// 這個數字直接決定結果頁的大小上限——調大之前先跑 pnpm stress。
+const PREVIEW_ROWS = 50;
+
 export async function generateMetadata({
   params,
 }: {
@@ -41,9 +45,29 @@ export default async function ResultsPage({
 }) {
   const { slug } = await params;
   const session = await tpass.getSession();
+  // 明確 select：**絕對不要把 sealedBox 撈進來**。它是整個票匭的密文（每張票約 600 bytes），
+  // 這一頁只需要張數，而張數在 resultsJson 裡。撈了它會讓每個請求多吃幾百 KB，
+  // 結果公告後全校同時來看時直接把記憶體推到 pm2 的重啟門檻——壓力測試量過。
+  // 要驗算票匭的人走 /api/elections/[slug]/sealed-box 下載。
   const election = await prisma.election.findFirst({
     where: { slug, hiddenAt: null },
-    include: { candidates: { where: { status: "approved" }, orderBy: { number: "asc" } } },
+    select: {
+      id: true,
+      slug: true,
+      title: true,
+      kind: true,
+      status: true,
+      seats: true,
+      resultsJson: true,
+      disclosuresJson: true,
+      sealedHash: true,
+      sealedAt: true,
+      candidates: {
+        where: { status: "approved" },
+        orderBy: { number: "asc" },
+        select: { id: true, number: true, members: true },
+      },
+    },
   });
   if (!election || election.status === "draft") notFound();
 
@@ -71,8 +95,9 @@ export default async function ResultsPage({
   }
 
   const results = election.resultsJson as unknown as TallyResult | null;
-  const sealedBox = (election.sealedBox as string[] | null) ?? [];
   const disclosures = (election.disclosuresJson as unknown as DisclosureEntry[] | null) ?? [];
+  // 票匭張數取自已提交的計票結果——submitResults 驗過它等於 sealedBox 長度。
+  const ballotCount = results?.totalBallots ?? 0;
 
   const candidateById = new Map(election.candidates.map((c) => [c.id, c]));
   // 明細表用的「id → 顯示名稱」對照：號次在前，方便對照選票。
@@ -87,19 +112,31 @@ export default async function ResultsPage({
   );
 
   // §26-1 Ⅴ 的名冊：只給登入會員看，未登入者只看得到統計數字。
-  const rosterRows: RosterRow[] | null =
+  // 頁面只撈前 PREVIEW_ROWS 筆——完整名冊走 /api/elections/[slug]/roster 下載。
+  // 全撈會讓每個請求的記憶體與 HTML 隨選舉人數線性成長，公告後的併發尖峰扛不住。
+  const roster: { preview: RosterRow[]; total: number; votedCount: number } | null =
     session === null
       ? null
-      : (
-          await prisma.voter.findMany({
-            where: { electionId: election.id },
-            select: { name: true, email: true, votedAt: true },
-            orderBy: [{ name: "asc" }, { email: "asc" }],
-          })
-        ).map((v) => ({
-          label: v.name?.trim() || v.email.split("@")[0],
-          voted: v.votedAt !== null,
-        }));
+      : await (async () => {
+          const [rows, total, votedCount] = await Promise.all([
+            prisma.voter.findMany({
+              where: { electionId: election.id },
+              select: { name: true, email: true, votedAt: true },
+              orderBy: [{ name: "asc" }, { email: "asc" }],
+              take: PREVIEW_ROWS,
+            }),
+            prisma.voter.count({ where: { electionId: election.id } }),
+            prisma.voter.count({ where: { electionId: election.id, votedAt: { not: null } } }),
+          ]);
+          return {
+            preview: rows.map((v) => ({
+              label: v.name?.trim() || v.email.split("@")[0],
+              voted: v.votedAt !== null,
+            })),
+            total,
+            votedCount,
+          };
+        })();
   const isRecall = election.kind === "recall";
   const recallTarget = results?.candidates[0];
   const recallResultPassed = recallTarget ? recallPassed(recallTarget.votes, recallTarget.disagree) : false;
@@ -234,18 +271,28 @@ export default async function ResultsPage({
           </section>
 
           <section className="mt-6">
-            <ReceiptLookup entries={disclosures} candidateLabels={candidateLabels} />
+            <ReceiptLookup slug={slug} />
           </section>
 
           {disclosures.length > 0 && (
             <section className="mt-6">
-              <DisclosureTable entries={disclosures} candidateLabels={candidateLabels} />
+              <DisclosureTable
+                slug={slug}
+                preview={disclosures.slice(0, PREVIEW_ROWS)}
+                total={disclosures.length}
+                candidateLabels={candidateLabels}
+              />
             </section>
           )}
 
           <section className="mt-6">
-            {rosterRows ? (
-              <RosterDisclosure rows={rosterRows} />
+            {roster ? (
+              <RosterDisclosure
+                slug={slug}
+                preview={roster.preview}
+                total={roster.total}
+                votedCount={roster.votedCount}
+              />
             ) : (
               <Card>
                 <h2 className="font-extrabold text-base">投票暨未投票選舉人名冊</h2>
@@ -268,7 +315,7 @@ export default async function ResultsPage({
             </h2>
             <Card className="mt-3">
               <p className="text-sm font-medium">
-                票匭張數：<span className="font-mono font-bold">{sealedBox.length}</span> 張・彌封於{" "}
+                票匭張數：<span className="font-mono font-bold">{ballotCount}</span> 張・彌封於{" "}
                 {formatDateTime(election.sealedAt)}
               </p>
               <p className="mt-2 break-all font-mono text-xs text-muted-foreground">

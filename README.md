@@ -37,7 +37,43 @@ TSchool 數位服務平台的學生會選舉子模組（消費端）。公告、
 pnpm lint
 pnpm exec tsc --noEmit
 pnpm build
+pnpm test            # 純函式單元測試（計票、明細、罷免門檻…），不需要資料庫
 ```
+
+## 整合、資安與壓力測試
+
+需要本機 PostgreSQL 與一次 `pnpm build`（打的是 production server，不是 dev）。
+第一次要先建測試庫：
+
+```bash
+psql "postgresql://t_vote@localhost:5432/postgres" -c "CREATE DATABASE t_vote_test OWNER t_vote"
+DATABASE_URL="postgresql://t_vote@localhost:5432/t_vote_test" pnpm exec prisma migrate deploy
+```
+
+之後：
+
+```bash
+pnpm build
+pnpm test:integration                    # 程序測試 + 法規約束 + 資安（74 項）
+pnpm stress --reporter=verbose           # 壓力測試，數字印在 console
+BURST_VOTERS=3000 BURST_CONCURRENCY=500 pnpm stress   # 加大灌爆規模
+```
+
+測試怎麼繞過 Google 登入：`tests/helpers/` 起一個 JWKS stub，用**測試專用金鑰**
+（`tests/helpers/test-keys.ts`，不是 auth 的真私鑰）簽出 `aud=tpass:vote` 的通行證。
+驗章、授權、資料庫全部是真的在跑，只有 Next 的 `cookies()`／`redirect()` 換成替身。
+
+- `tests/integration/flow.test.ts`：一場選舉從建立走到結果公告
+- `tests/integration/legal.test.ts`：法規約束的負面案例（48 小時、SNTV、名單鎖定…）
+- `tests/integration/security.test.ts`：驗章四鐵則、授權分級、IDOR、選票完整性
+- `tests/integration/http.test.ts`：黑箱 HTTP（未登入、API 邊界、XSS、安全標頭）
+- `tests/stress/load.test.ts`：各階段吞吐與延遲
+- `tests/stress/burst.test.ts`：同時灌爆——瞬間併發遠超連線池上限、砍光 DB 連線、
+  截止瞬間的競態、以及**盯著 server 的 RSS**（2026-09-02 事故的根因之一是記憶體上限
+  被觸發後 pm2 進入重啟迴圈，這裡就是為了不再重演）
+
+⚠️ 這些測試會清空 `t_vote_test`。`tests/helpers/db.ts` 有雙重防護（檢查連線字串與
+`current_database()`），連錯庫會直接拒絕執行而不是清掉開發資料。
 
 ## 匿名投票機制：雙信封制
 

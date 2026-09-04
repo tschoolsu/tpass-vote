@@ -1,32 +1,47 @@
 "use client";
 // 收據查詢。選罷法 §26-1 Ⅳ 要求「去識別化之會員個別意思應於選舉人投票時提供予各該選舉人」——
-// 投票時發的 12 碼代碼，開票後要能在這裡查回「那張票的內容」，而不只是「有沒有入匭」。
-// 明細由 server 端傳下來（已是去識別化資料），這個元件不打任何 API、不接觸原始密文。
+// 投票時發的 12 碼代碼，開票後要能查回「那張票的內容」，而不只是「有沒有入匭」。
+//
+// 查詢打 API 而不是把整份明細載進頁面：明細動輒上千筆，每個看結果的人都下載一份會把
+// 服務的記憶體推到重啟門檻（壓力測試量過）。伺服器本來就持有完整明細，而代碼與選舉人的
+// 連結已在彌封時銷毀，所以「伺服器看得到你查了哪個代碼」不會多洩漏誰投了什麼。
 import * as React from "react";
-import { CheckCircle2, Search, XCircle } from "lucide-react";
-import { Button, Input, cn } from "tpass-ui";
-import { describeDisclosure } from "@/components/public/shared";
-import type { DisclosureEntry } from "@/lib/disclosure";
+import { CheckCircle2, Loader2, Search, XCircle } from "lucide-react";
+import { Button, Input } from "tpass-ui";
 
-export function ReceiptLookup({
-  entries,
-  candidateLabels,
-}: {
-  entries: DisclosureEntry[];
-  candidateLabels: Record<string, string>;
-}) {
+type State =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "found"; summary: string }
+  | { kind: "missing" }
+  | { kind: "error" };
+
+export function ReceiptLookup({ slug }: { slug: string }) {
   const [query, setQuery] = React.useState("");
-  const [checked, setChecked] = React.useState<string | null>(null);
+  const [state, setState] = React.useState<State>({ kind: "idle" });
 
-  const byCode = React.useMemo(
-    () => new Map(entries.map((e) => [e.code, e])),
-    [entries],
-  );
-  const found = checked !== null ? (byCode.get(checked) ?? null) : null;
-
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setChecked(query.trim().toLowerCase());
+    const code = query.trim().toLowerCase();
+    if (code === "") return;
+    setState({ kind: "loading" });
+    try {
+      const res = await fetch(
+        `/api/elections/${encodeURIComponent(slug)}/disclosures?code=${encodeURIComponent(code)}`,
+      );
+      if (res.status === 404) {
+        setState({ kind: "missing" });
+        return;
+      }
+      if (!res.ok) {
+        setState({ kind: "error" });
+        return;
+      }
+      const data = (await res.json()) as { summary: string };
+      setState({ kind: "found", summary: data.summary });
+    } catch {
+      setState({ kind: "error" });
+    }
   }
 
   return (
@@ -40,33 +55,39 @@ export function ReceiptLookup({
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
-            setChecked(null);
+            setState({ kind: "idle" });
           }}
           placeholder="輸入 12 碼收據"
           maxLength={12}
           className="font-mono"
         />
-        <Button type="submit" disabled={query.trim().length === 0}>
-          <Search className="h-4 w-4" />
+        <Button type="submit" disabled={query.trim().length === 0 || state.kind === "loading"}>
+          {state.kind === "loading" ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Search className="h-4 w-4" />
+          )}
           查詢
         </Button>
       </form>
-      {checked !== null &&
-        (found ? (
-          <div className="mt-3">
-            <p className="flex items-center gap-1.5 font-bold text-tone-green-text">
-              <CheckCircle2 className="h-4 w-4" /> 已入匭 ✓
-            </p>
-            <p className="mt-1.5 text-sm font-medium">
-              這張票被記為：
-              <span className="font-bold">{describeDisclosure(found, candidateLabels)}</span>
-            </p>
-          </div>
-        ) : (
-          <p className={cn("mt-3 flex items-center gap-1.5 font-bold", "text-destructive")}>
-            <XCircle className="h-4 w-4" /> 查無此收據
+      {state.kind === "found" && (
+        <div className="mt-3">
+          <p className="flex items-center gap-1.5 font-bold text-tone-green-text">
+            <CheckCircle2 className="h-4 w-4" /> 已入匭 ✓
           </p>
-        ))}
+          <p className="mt-1.5 text-sm font-medium">
+            這張票被記為：<span className="font-bold">{state.summary}</span>
+          </p>
+        </div>
+      )}
+      {state.kind === "missing" && (
+        <p className="mt-3 flex items-center gap-1.5 font-bold text-destructive">
+          <XCircle className="h-4 w-4" /> 查無此收據
+        </p>
+      )}
+      {state.kind === "error" && (
+        <p className="mt-3 font-bold text-destructive">查詢失敗，請稍後再試。</p>
+      )}
     </div>
   );
 }

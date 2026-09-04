@@ -16,11 +16,14 @@ export const ELECTION_KIND_LABEL: Record<ElectionKind, string> = {
 export const MIN_VOTING_HOURS = 48;
 const MIN_VOTING_MS = MIN_VOTING_HOURS * 3_600_000;
 
+// FormData.get() 對「表單裡沒有這個欄位」回傳 null，對「有欄位但沒填」回傳空字串。
+// 兩者都是「未設定」，但 zod 不這麼想：null 會落進 z.coerce.date() 變成 1970-01-01，
+// 落進 z.string() 則直接報型別錯。所以在 preprocess 就把兩者一起收斂成 undefined。
+const blankToUndefined = (v: unknown) =>
+  v === null || v === undefined || (typeof v === "string" && v.trim() === "") ? undefined : v;
+
 // datetime-local 的 <input> 值是空字串或 "YYYY-MM-DDTHH:mm"；空字串視為未設定。
-const optionalDatetimeLocal = z.preprocess(
-  (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
-  z.coerce.date().optional(),
-);
+const optionalDatetimeLocal = z.preprocess(blankToUndefined, z.coerce.date().optional());
 
 export const electionFormSchema = z
   .object({
@@ -44,7 +47,7 @@ export const electionFormSchema = z
     votingStartsAt: optionalDatetimeLocal,
     votingEndsAt: optionalDatetimeLocal,
     // 對應職務：空＝genesis（公告時自動新建職務並回填）；有值＝這場填既有職務（連任/補選換人）。
-    officeId: z.preprocess((v) => (typeof v === "string" && v.trim() === "" ? undefined : v), z.string().optional()),
+    officeId: z.preprocess(blankToUndefined, z.string().optional()),
   })
   .refine(
     (v) => !v.registrationStartsAt || !v.registrationEndsAt || v.registrationEndsAt > v.registrationStartsAt,
