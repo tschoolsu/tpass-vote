@@ -10,6 +10,7 @@ import { prisma } from "@/lib/db";
 import { nextStatus, type ElectionStatus } from "@/lib/election-status";
 import type { TallyResult } from "@/lib/tally";
 import { cloneElection, copyVotersInto } from "@/lib/clone-election";
+import { MIN_VOTING_HOURS } from "@/app/admin/elections/election-schema";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -78,6 +79,18 @@ export async function advanceStatus(electionId: string): Promise<ActionResult> {
   // 不需名冊）。來源＝罷免對象職務的原選舉。null 表非此情境。
   let copyRosterFromElectionId: string | null = null;
   if (next === "voting") {
+    // §26-1 Ⅱ：投票期間不得少於 48 小時。表單只擋「填了但太短」，這裡才是真正的閘門——
+    // 兩個時間都必須設定，否則等於沒有投票期間可言。一般鏈與罷免鏈都會經過這裡。
+    const { votingStartsAt, votingEndsAt } = election;
+    if (!votingStartsAt || !votingEndsAt) {
+      return { ok: false, error: "尚未設定投票開始與截止時間，無法開放投票" };
+    }
+    if (votingEndsAt.getTime() - votingStartsAt.getTime() < MIN_VOTING_HOURS * 3_600_000) {
+      return {
+        ok: false,
+        error: `投票期間不得少於 ${MIN_VOTING_HOURS} 小時（選罷法 §26-1 Ⅱ），請先修改時程`,
+      };
+    }
     if (!election.tallyPublicKeyJwk) return { ok: false, error: "尚未產生開票金鑰，無法開放投票" };
     if (election.kind === "recall") {
       // 罷免只有 1 位「候選人」（罷免對象本身），別讓 candidates.length>seats 的判定邏輯

@@ -31,6 +31,9 @@ model Election {
   sealedAt                DateTime?
   sealedBy                String?
   resultsJson             Json?
+  // §26-1 Ⅳ/Ⅴ：記載可回溯代碼之去識別化選舉人個別意思（DisclosureEntry[]，見 src/lib/disclosure.ts）。
+  // 開票時由選委瀏覽器產出、伺服器交叉驗證後落地，隨結果公告公開。
+  disclosuresJson         Json?
   hiddenAt                DateTime? // null=正常；非 null=管理員軟刪除（隱藏）。資料完全保留，不做實體刪除。
   recallReason            String? // 罷免理由（kind=recall 專用）
   recallDefense           String? // 被罷免人答辯書，選填（kind=recall 專用）
@@ -96,7 +99,8 @@ model Voter {
   election   Election  @relation(fields: [electionId], references: [id], onDelete: Cascade)
   email      String
   name       String?
-  votedAt    DateTime? // 最後一次投票時間；截止前可重投覆寫
+  // 最後一次投票時間；截止前可重投覆寫。彌封後保留——§26-1 Ⅴ 的「投票暨未投票選舉人名冊」靠它產生。
+  votedAt    DateTime?
 
   ballot EncryptedBallot?
 
@@ -104,6 +108,9 @@ model Voter {
 }
 
 // 內信封：無開票私鑰不可解。voterId 唯一＝一人一格，重投＝upsert 覆寫。
+// 這張表只是「投票期間的暫存格」：彌封時整場刪除（見 admin/elections/[id]/tally/actions.ts），
+// 密文改由 Election.sealedBox（已洗牌）保存。§26-1 Ⅳ 要求不得記錄代碼與個別選舉人之連結，
+// 任何讓這個連結在彌封後存活的改動都是違法，不是效能取捨。
 model EncryptedBallot {
   id         String   @id @default(cuid())
   electionId String

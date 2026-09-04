@@ -11,6 +11,11 @@ export const ELECTION_KIND_LABEL: Record<ElectionKind, string> = {
   other: "其他",
 };
 
+// 選罷法 §26-1 Ⅱ：數位選舉之投票期間不得少於四十八小時。這裡擋「填了但太短」，
+// 「根本沒填」則由 advanceStatus 在開放投票時擋（見 [id]/actions.ts）。
+export const MIN_VOTING_HOURS = 48;
+const MIN_VOTING_MS = MIN_VOTING_HOURS * 3_600_000;
+
 // datetime-local 的 <input> 值是空字串或 "YYYY-MM-DDTHH:mm"；空字串視為未設定。
 const optionalDatetimeLocal = z.preprocess(
   (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
@@ -48,6 +53,21 @@ export const electionFormSchema = z
   .refine((v) => !v.votingStartsAt || !v.votingEndsAt || v.votingEndsAt > v.votingStartsAt, {
     message: "投票截止時間須晚於開始時間",
     path: ["votingEndsAt"],
+  })
+  .refine(
+    (v) =>
+      !v.votingStartsAt ||
+      !v.votingEndsAt ||
+      v.votingEndsAt.getTime() - v.votingStartsAt.getTime() >= MIN_VOTING_MS,
+    {
+      message: `投票期間不得少於 ${MIN_VOTING_HOURS} 小時（選罷法 §26-1 Ⅱ）`,
+      path: ["votingEndsAt"],
+    },
+  )
+  // §13：學生代表為複數選區單記不可讓渡投票制——每人只有一票，不得連記。
+  .refine((v) => v.kind !== "grade_rep" || v.maxChoices === 1, {
+    message: "學生代表選舉採單記不可讓渡，可選人數只能是 1（選罷法 §13）",
+    path: ["maxChoices"],
   });
 
 export type ElectionFormValues = z.infer<typeof electionFormSchema>;

@@ -126,6 +126,9 @@ export function ElectionForm({
           {fe.maxChoices && (
             <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.maxChoices}</p>
           )}
+          <p className="mt-1 text-xs font-medium text-muted-foreground">
+            學生代表採單記不可讓渡（§13），只能填 1。
+          </p>
         </div>
       </div>
 
@@ -159,7 +162,10 @@ export function ElectionForm({
       </fieldset>
 
       <fieldset className="rounded-xl border-2 border-foreground p-3">
-        <legend className="px-1 font-bold text-sm">投票期間（選填）</legend>
+        <legend className="px-1 font-bold text-sm">投票期間</legend>
+        <p className="mb-2 text-xs font-medium text-muted-foreground">
+          開放投票前必須填妥，且不得少於 48 小時（§26-1 Ⅱ）。
+        </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <Label htmlFor="votingStartsAt">開始</Label>

@@ -173,8 +173,8 @@ export function VoteForm({
 
         <ul className="mx-auto mt-5 max-w-sm space-y-1.5 text-left text-sm font-medium text-muted-foreground">
           <li>・截止前可在任何裝置再次投票，以最後一次為準——舊選票會被覆蓋，不會重複計票。</li>
-          <li>・這張收據只證明「你投過」，不會透露你投給誰，不能拿去邀功或被脅迫展示。</li>
-          <li>・開票後可到結果頁用這張收據查詢你的票是否已入匭。</li>
+          <li>・開票後可到結果頁用這張收據查詢你的票是否入匭、以及被記為什麼內容（選罷法 §26-1 Ⅳ）。</li>
+          <li>・收據不會連結到你的身分——彌封時系統即刪除代碼與選舉人的對應。但拿到收據的人查得出該票內容，請自行保管。</li>
         </ul>
       </div>
     );

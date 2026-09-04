@@ -14,6 +14,21 @@ export interface ResultElectionInfo {
   title: string;
   kind: string; // leader | grade_rep | other
   seats: number;
+  resultsUrl?: string; // 結果頁絕對網址，附刊資料都在那裡（§26-1 Ⅴ）
+}
+
+/**
+ * §26-1 Ⅴ：數位選舉的第三份公告應附加刊載投票暨未投票選舉人名冊，
+ * 及去識別化之會員個別意思。兩者都在結果頁上，公告裡指過去即可。
+ */
+function disclosureNotice(resultsUrl?: string): string[] {
+  const lines = ["", "## 附刊資料（選罷法第二十六條之一第五項）", ""];
+  lines.push("本次選舉以數位方式辦理，依規定附加刊載投票暨未投票選舉人名冊，及記載可回溯代碼之去識別化選舉人個別意思。");
+  if (resultsUrl) {
+    lines.push("");
+    lines.push(`兩份資料與彌封快照皆公開於[開票結果頁](${resultsUrl})；名冊限本會會員登入後查閱。`);
+  }
+  return lines;
 }
 
 /** 候選人顯示名稱：leader 場次聯名顯示（候選人＋副手），其餘單人／多人以「、」相接。 */
@@ -82,6 +97,7 @@ export function resultAnnouncementDraft(
 
   lines.push("");
   lines.push(`本次選舉名額共 ${election.seats} 席，以上為完整計票結果。`);
+  lines.push(...disclosureNotice(election.resultsUrl));
 
   return { title, body: lines.join("\n") };
 }
@@ -128,6 +144,7 @@ function recallAnnouncementDraft(
   } else {
     lines.push("本罷免案否決，依規定同一事由於同一任期內不得再為罷免案之提出（§37）。");
   }
+  lines.push(...disclosureNotice(election.resultsUrl));
 
   return { title, body: lines.join("\n") };
 }

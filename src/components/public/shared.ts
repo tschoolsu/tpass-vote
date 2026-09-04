@@ -121,9 +121,10 @@ export function candidateDisplayName(kind: string, members: MemberInfo[]): strin
 }
 
 /**
- * 投票頁頂部情境說明：依《公職人員選舉罷免法》，候選組數 > 名額（超額競選）採相對多數決
- * （圈選候選人），候選組數 ≤ 名額（同額／不足額競選）改採同意／不同意投票。純文案，不參與
- * 任何送出/加密/計票判斷——ballotMode 本身仍由伺服器端 election-status 相關邏輯決定。
+ * 投票頁頂部情境說明：候選組數 > 名額（超額競選）採圈選投票——單一席次為相對多數決（§12），
+ * 複數席次且每人一票為單記不可讓渡（§13）；候選組數 ≤ 名額（同額／不足額競選）依 §26 Ⅲ
+ * 改採同意／不同意投票。純文案，不參與任何送出/加密/計票判斷——ballotMode 本身仍由伺服器端
+ * election-status 相關邏輯決定。
  */
 export function ballotModeExplainer(params: {
   ballotMode: "choose" | "approval";
@@ -133,6 +134,12 @@ export function ballotModeExplainer(params: {
 }): { label: string; body: string } {
   const { ballotMode, candidateCount, seats, maxChoices } = params;
   if (ballotMode === "choose") {
+    if (seats > 1 && maxChoices === 1) {
+      return {
+        label: "複數選區單記不可讓渡・圈選投票",
+        body: `本場選舉有 ${candidateCount} 組候選人競選 ${seats} 席。你只有一票，請圈選一組，得票最高的 ${seats} 組當選，或選擇投廢票。`,
+      };
+    }
     return {
       label: "超額競選・圈選投票",
       body: `本場選舉有 ${candidateCount} 組候選人競選 ${seats} 席。你有 ${maxChoices} 票，可從候選人中圈選最多 ${maxChoices} 組，或選擇投廢票。`,
@@ -140,8 +147,33 @@ export function ballotModeExplainer(params: {
   }
   return {
     label: "同額／不足額競選・同意投票",
-    body: `本場候選組數（${candidateCount}）未超過名額（${seats}），依《公職人員選舉罷免法》規定改採同意／不同意投票：請就每一組候選人表達同意或不同意，有效同意票數多於不同意票數者當選，或選擇投廢票。`,
+    body: `本場候選組數（${candidateCount}）未超過名額（${seats}），依選罷法 §26 Ⅲ 改採同意／不同意投票：請就每一組候選人表達同意或不同意，有效同意票數多於不同意票數者當選，或選擇投廢票。`,
   };
+}
+
+/**
+ * 把一筆去識別化選票明細（§26-1 Ⅳ）翻成人看得懂的一行。
+ * labels 是「候選人 id → 顯示名稱」的對照表，由頁面端從核准候選人組出來。
+ */
+export function describeDisclosure(
+  entry: { kind: string; candidateIds?: string[]; approvals?: Record<string, boolean> },
+  labels: Record<string, string>,
+): string {
+  const label = (id: string) => labels[id] ?? id;
+  switch (entry.kind) {
+    case "choose":
+      return (entry.candidateIds ?? []).map(label).join("、") || "（無）";
+    case "approval":
+      return (
+        Object.entries(entry.approvals ?? {})
+          .map(([id, agree]) => `${label(id)}：${agree ? "同意" : "不同意"}`)
+          .join("・") || "（無）"
+      );
+    case "blank":
+      return "廢票（不圈選）";
+    default:
+      return "無效票";
+  }
 }
 
 /** 供 <meta description> 用的純文字摘要：去掉常見 markdown 符號、截斷。 */

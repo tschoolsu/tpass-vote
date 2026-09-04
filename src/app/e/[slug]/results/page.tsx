@@ -1,18 +1,21 @@
 // 結果頁：status=published 才顯示完整結果，否則顯示「結果尚未公布」。
-// 收據查詢用的雜湊清單在這裡（server）算好只傳 12 碼前綴下去，原始密文不下發。
+// 依 §26-1 Ⅴ，這裡同時是第三份公告的附刊：去識別化選票明細（全體可見）與
+// 投票暨未投票選舉人名冊（登入會員可見）。原始密文不下發，只提供彌封快照下載端點。
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Trophy, ShieldCheck } from "lucide-react";
+import { Trophy, ShieldCheck, Download } from "lucide-react";
 import { PublicShell } from "@/components/public/Shell";
 import { StatusBadge } from "@/components/public/Badges";
 import { CopyLinkButton } from "@/components/public/CopyLinkButton";
 import { ReceiptLookup } from "@/components/public/ReceiptLookup";
+import { DisclosureTable } from "@/components/public/DisclosureTable";
+import { RosterDisclosure, type RosterRow } from "@/components/public/RosterDisclosure";
 import { Card, cn } from "tpass-ui";
-import { tpass, authConfig } from "@/config/auth";
+import { tpass, authConfig, loginUrlFor } from "@/config/auth";
 import { isAdmin } from "@/config/admin";
 import { prisma } from "@/lib/db";
-import { receiptOf } from "@/lib/ballot-crypto";
+import type { DisclosureEntry } from "@/lib/disclosure";
 import type { TallyResult } from "@/lib/tally";
 import { recallPassed } from "@/lib/recall";
 import { KIND_LABEL, candidateDisplayName, formatDateTime } from "@/components/public/shared";
@@ -69,9 +72,34 @@ export default async function ResultsPage({
 
   const results = election.resultsJson as unknown as TallyResult | null;
   const sealedBox = (election.sealedBox as string[] | null) ?? [];
-  const receipts = await Promise.all(sealedBox.map((ct) => receiptOf(ct)));
+  const disclosures = (election.disclosuresJson as unknown as DisclosureEntry[] | null) ?? [];
 
   const candidateById = new Map(election.candidates.map((c) => [c.id, c]));
+  // 明細表用的「id → 顯示名稱」對照：號次在前，方便對照選票。
+  const candidateLabels = Object.fromEntries(
+    election.candidates.map((c) => [
+      c.id,
+      `${c.number !== null ? `${c.number} 號・` : ""}${candidateDisplayName(
+        election.kind,
+        c.members as unknown as { name: string; email: string; grade: string }[],
+      )}`,
+    ]),
+  );
+
+  // §26-1 Ⅴ 的名冊：只給登入會員看，未登入者只看得到統計數字。
+  const rosterRows: RosterRow[] | null =
+    session === null
+      ? null
+      : (
+          await prisma.voter.findMany({
+            where: { electionId: election.id },
+            select: { name: true, email: true, votedAt: true },
+            orderBy: [{ name: "asc" }, { email: "asc" }],
+          })
+        ).map((v) => ({
+          label: v.name?.trim() || v.email.split("@")[0],
+          voted: v.votedAt !== null,
+        }));
   const isRecall = election.kind === "recall";
   const recallTarget = results?.candidates[0];
   const recallResultPassed = recallTarget ? recallPassed(recallTarget.votes, recallTarget.disagree) : false;
@@ -206,7 +234,32 @@ export default async function ResultsPage({
           </section>
 
           <section className="mt-6">
-            <ReceiptLookup receipts={receipts} />
+            <ReceiptLookup entries={disclosures} candidateLabels={candidateLabels} />
+          </section>
+
+          {disclosures.length > 0 && (
+            <section className="mt-6">
+              <DisclosureTable entries={disclosures} candidateLabels={candidateLabels} />
+            </section>
+          )}
+
+          <section className="mt-6">
+            {rosterRows ? (
+              <RosterDisclosure rows={rosterRows} />
+            ) : (
+              <Card>
+                <h2 className="font-extrabold text-base">投票暨未投票選舉人名冊</h2>
+                <p className="mt-1 text-sm font-medium text-muted-foreground">
+                  依選罷法 §26-1 Ⅴ 附刊，登入後可查看。
+                </p>
+                <Link
+                  href={loginUrlFor(`/e/${slug}/results`)}
+                  className="mt-3 inline-block font-bold text-sm text-accent hover:underline"
+                >
+                  以學校帳號登入
+                </Link>
+              </Card>
+            )}
           </section>
 
           <section className="mt-6">
@@ -222,8 +275,14 @@ export default async function ResultsPage({
                 sealedHash：{election.sealedHash}
               </p>
               <p className="mt-2 text-sm font-medium text-muted-foreground">
-                任何持有開票私鑰者皆可下載公開的彌封快照，重新驗算本次開票結果。
+                任何持有開票私鑰者皆可下載彌封快照，重新驗算本次開票結果。
               </p>
+              <a
+                href={`/api/elections/${slug}/sealed-box`}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-xl border-2 border-foreground bg-card px-3 py-1.5 font-bold text-sm shadow-[3px_3px_0_0_var(--color-foreground)]"
+              >
+                <Download className="h-4 w-4" /> 下載彌封快照
+              </a>
             </Card>
           </section>
         </>

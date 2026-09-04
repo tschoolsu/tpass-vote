@@ -21,9 +21,11 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - **開票私鑰永不上傳伺服器。** `Election.tallyPublicKeyJwk` 只存公鑰；私鑰只在選委會端本地產生、
   本地保管、開票時本地解密。任何 route / server action 都不得接收、儲存或記錄私鑰內容——
   收到看起來像私鑰的欄位要直接拒絕，不要「先存起來以後再說」。
-- **選票密文表（`EncryptedBallot`）不得新增身分關聯欄位。** 目前只有 `voterId`（一人一格，
-  用來擋重複/覆寫）與 `ciphertext`；不得加 `email`、`name`、`ip`、`userAgent` 或任何能回推
-  投票內容與身分對應的欄位。`sealedBox`（`Election.sealedBox`）同理——彌封後必須去識別、
+- **選票密文表（`EncryptedBallot`）只是投票期間的暫存格，彌封時必須整場刪除。**
+  選罷法 §26-1 Ⅳ 明文「本會不得記錄可回溯代碼與個別選舉人之連結」，而結果頁會公開
+  代碼↔選票內容，連結一旦留存就等於公開誰投給誰——**任何讓 `voterId`↔`ciphertext`
+  在彌封後存活的改動都是違法，不是效能取捨**。這張表也不得新增 `email`、`name`、`ip`、
+  `userAgent` 等欄位。`sealedBox`（`Election.sealedBox`）同理——彌封後必須去識別、
   已洗牌，不得殘留可追溯投票人的順序或索引。
 - **mutation 一律 server action，且函式內部重新呼叫對應的 `require*` guard**——不能假設呼叫方
   已經在別處驗證過身分/權限，尤其是候選人審核、名冊上傳、彌封、開票這幾個高風險動作。

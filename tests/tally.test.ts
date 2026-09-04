@@ -100,6 +100,35 @@ describe("choose（超額，相對多數）", () => {
     expect(r.candidates.find((c) => c.candidateId === "a")!.votes).toBe(1);
     expect(r.candidates.find((c) => c.candidateId === "b")!.votes).toBe(1);
   });
+
+  // §13：學生代表為複數選區單記不可讓渡——每人一票（maxChoices=1）、複數席次（seats>1），
+  // 得票前 N 名當選，票不移轉。
+  it("SNTV：seats=3、maxChoices=1，得票前三名當選", () => {
+    const r = tallyBallots(
+      base({
+        seats: 3,
+        maxChoices: 1,
+        candidateIds: ["a", "b", "c", "d", "e", "f", "g"],
+        plaintexts: [
+          choose("a"), choose("a"), choose("a"), choose("a"),
+          choose("b"), choose("b"), choose("b"),
+          choose("c"), choose("c"),
+          choose("d"),
+          choose("e"),
+        ],
+      }),
+    );
+    const elected = r.candidates.filter((c) => c.elected).map((c) => c.candidateId).sort();
+    expect(elected).toEqual(["a", "b", "c"]);
+    expect(r.hasTie).toBe(false);
+    expect(r.validCount).toBe(11);
+    // 單記：圈兩人即超過上限，算無效票
+    const over = tallyBallots(
+      base({ seats: 3, maxChoices: 1, plaintexts: [choose("a", "b")] }),
+    );
+    expect(over.invalidCount).toBe(1);
+    expect(over.validCount).toBe(0);
+  });
 });
 
 describe("approval（同額，同意/不同意）", () => {

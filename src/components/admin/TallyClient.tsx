@@ -18,6 +18,7 @@ import { Button, Card, Badge } from "tpass-ui";
 import type { TallyKeyFile } from "@/lib/ballot-crypto";
 import { decryptAndTally, type TallyMeta } from "@/lib/tally-client";
 import type { TallyResult } from "@/lib/tally";
+import type { DisclosureEntry } from "@/lib/disclosure";
 import { submitResults } from "@/app/admin/elections/[id]/tally/actions";
 import { createRunoff } from "@/app/admin/elections/[id]/actions";
 
@@ -46,6 +47,8 @@ export function TallyClient({
   const [stage, setStage] = useState<Stage>("idle");
   const [keyFiles, setKeyFiles] = useState<TallyKeyFile[]>([]);
   const [result, setResult] = useState<TallyResult | null>(null);
+  // §26-1 Ⅳ/Ⅴ 要公告的代碼↔意思明細，與 result 同時產生、同時提交。
+  const [disclosures, setDisclosures] = useState<DisclosureEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, startTransition] = useTransition();
   const [submitMsg, setSubmitMsg] = useState<string | null>(null);
@@ -70,7 +73,8 @@ export function TallyClient({
     startTransition(async () => {
       try {
         const r = await decryptAndTally(keyFiles, sealedBox, meta);
-        setResult(r);
+        setResult(r.results);
+        setDisclosures(r.disclosures);
         setStage("result");
       } catch (e) {
         setError(e instanceof Error ? e.message : "解密失敗，請確認金鑰檔正確且齊全");
@@ -81,15 +85,16 @@ export function TallyClient({
   function handleReset() {
     setKeyFiles([]);
     setResult(null);
+    setDisclosures(null);
     setError(null);
     setStage("idle");
   }
 
   function handleSubmit() {
-    if (!result) return;
+    if (!result || !disclosures) return;
     setSubmitMsg(null);
     startTransition(async () => {
-      const r = await submitResults(electionId, result);
+      const r = await submitResults(electionId, result, disclosures);
       if (!r.ok) {
         setSubmitMsg(`提交失敗：${r.error}`);
         return;
@@ -187,6 +192,9 @@ export function TallyClient({
           <p className="mb-3 font-mono text-xs text-muted-foreground">
             總票數 {result.totalBallots} · 有效 {result.validCount} · 廢票 {result.blankCount} · 無效{" "}
             {result.invalidCount} · 選舉人 {result.rosterCount} · 投票率 {result.turnoutPct}%
+          </p>
+          <p className="mb-3 font-mono text-xs text-muted-foreground">
+            將一併提交 {disclosures?.length ?? 0} 筆去識別化選票明細（代碼↔意思），隨結果公告公開（§26-1 Ⅳ、Ⅴ）。
           </p>
 
           {result.hasTie && (
