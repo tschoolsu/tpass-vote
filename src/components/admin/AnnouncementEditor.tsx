@@ -203,7 +203,7 @@ export function AnnouncementEditor({
       {publishDisabledReason && (
         <p className="text-xs font-medium text-muted-foreground">{publishDisabledReason}</p>
       )}
-      {fieldError && <p className="font-mono text-xs font-bold text-destructive">{fieldError}</p>}
+      {fieldError && <p role="alert" className="font-mono text-xs font-bold text-destructive">{fieldError}</p>}
       {error && (
         <p role="alert" className="font-mono text-xs font-bold text-destructive">
           {error}
