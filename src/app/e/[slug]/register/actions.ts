@@ -9,6 +9,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { z } from "zod";
 import { requireSession } from "@/lib/guard";
 import { prisma } from "@/lib/db";
+import { registrationDecision, REGISTRATION_REJECTION_MESSAGES } from "@/lib/registration-policy";
 
 const memberSchema = z.object({
   name: z.string().trim().min(1, "姓名必填").max(50),
@@ -42,8 +43,9 @@ export async function registerCandidate(
 
   const election = await prisma.election.findFirst({ where: { slug, hiddenAt: null } });
   if (!election) return { ok: false, error: "找不到這場選舉" };
-  if (election.status !== "registration") {
-    return { ok: false, error: "目前非候選人登記期間" };
+  const decision = registrationDecision(election, new Date());
+  if (!decision.ok) {
+    return { ok: false, error: REGISTRATION_REJECTION_MESSAGES[decision.reason] };
   }
 
   const expectedCount = election.kind === "leader" ? 2 : 1;

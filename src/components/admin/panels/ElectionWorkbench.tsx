@@ -9,6 +9,7 @@
 // mutation 一律呼叫既有 server action（各 panel 自己 import，這裡只 bind 需要 electionId 的
 // 狀態機按鈕：advanceStatus／sealElection）。
 import Link from "next/link";
+import { useRef } from "react";
 import {
   Settings2,
   UserCheck,
@@ -43,7 +44,11 @@ import { sealElection } from "@/app/admin/elections/[id]/tally/actions";
 import { StageProgress } from "@/components/admin/panels/StageProgress";
 import { CurrentStageCard } from "@/components/admin/panels/CurrentStageCard";
 import { AnnouncementsSection, type AnnouncementRow } from "@/components/admin/panels/AnnouncementsSection";
-import { WorkbenchAccordion, type StepPanelDef } from "@/components/admin/panels/WorkbenchAccordion";
+import {
+  WorkbenchAccordion,
+  type StepPanelDef,
+  type WorkbenchAccordionHandle,
+} from "@/components/admin/panels/WorkbenchAccordion";
 import { SettingsPanel } from "@/components/admin/panels/SettingsPanel";
 import { RegistrationPanel } from "@/components/admin/panels/RegistrationPanel";
 import { CampaignVotingPanel } from "@/components/admin/panels/CampaignVotingPanel";
@@ -124,6 +129,7 @@ export function ElectionWorkbench({
   const meta = STATUS_META[status] ?? STATUS_META.draft;
   const isRecall = election.kind === "recall";
   const next = nextStatus(status, election.kind);
+  const accordionRef = useRef<WorkbenchAccordionHandle>(null);
 
   const approvedCandidates = election.candidates.filter((c) => c.status === "approved");
   const rosterCount = election.voters.length;
@@ -432,6 +438,7 @@ export function ElectionWorkbench({
         previewBallotMode={previewBallotMode}
         resultsExist={resultsExist}
         onAdvance={advanceStatus.bind(null, election.id)}
+        onGoTo={(target) => accordionRef.current?.openAndScrollTo(target)}
         closingLabel={closingLabel}
         publishedLabel={publishedLabel}
       />
@@ -444,7 +451,7 @@ export function ElectionWorkbench({
         votingStartsAt={election.votingStartsAt}
       />
 
-      <WorkbenchAccordion steps={steps} currentStatus={currentUiStage} stages={uiStages} />
+      <WorkbenchAccordion ref={accordionRef} steps={steps} currentStatus={currentUiStage} stages={uiStages} />
     </div>
   );
 }

@@ -4,7 +4,7 @@
 // 成同一個 "closing" 階段；currentStatus 變化時（狀態推進，或提交計票結果後純呈現層提前推進
 // 到 published）自動展開新的當前階段，讓結果公告草稿提交後立即可見不必手動點開。stages 由
 // 呼叫端依 kind 傳入（一般鏈 6 步／罷免鏈 5 步），決定順序與鎖定判斷的基準。
-import { useState } from "react";
+import { forwardRef, useImperativeHandle, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Lock, type LucideIcon } from "lucide-react";
 import type { UiStage } from "@/components/admin/status";
 import { cn } from "tpass-ui";
@@ -17,15 +17,20 @@ export interface StepPanelDef {
   content: React.ReactNode;
 }
 
-export function WorkbenchAccordion({
-  steps,
-  currentStatus,
-  stages,
-}: {
-  steps: StepPanelDef[];
-  currentStatus: UiStage;
-  stages: readonly UiStage[];
-}) {
+// 讓外部（CurrentStageCard 的「前往…」按鈕）能展開指定階段並捲過去，
+// 不用把 open 狀態整個上提到父層——手風琴自己的展開/收合邏輯不用因此改寫。
+export interface WorkbenchAccordionHandle {
+  openAndScrollTo: (status: UiStage) => void;
+}
+
+export const WorkbenchAccordion = forwardRef<
+  WorkbenchAccordionHandle,
+  {
+    steps: StepPanelDef[];
+    currentStatus: UiStage;
+    stages: readonly UiStage[];
+  }
+>(function WorkbenchAccordion({ steps, currentStatus, stages }, ref) {
   const currentIndex = stages.indexOf(currentStatus);
   const [open, setOpen] = useState<Set<UiStage>>(() => new Set([currentStatus]));
   // currentStatus 往前推進時（真的狀態推進，或 resultsExist 讓結果公告提前解鎖），
@@ -37,6 +42,8 @@ export function WorkbenchAccordion({
     setOpen((prev) => (prev.has(currentStatus) ? prev : new Set(prev).add(currentStatus)));
   }
 
+  const nodeRefs = useRef(new Map<UiStage, HTMLDivElement>());
+
   function toggle(status: UiStage) {
     setOpen((prev) => {
       const next = new Set(prev);
@@ -45,6 +52,16 @@ export function WorkbenchAccordion({
       return next;
     });
   }
+
+  useImperativeHandle(ref, () => ({
+    openAndScrollTo(status: UiStage) {
+      setOpen((prev) => (prev.has(status) ? prev : new Set(prev).add(status)));
+      // 展開是下一輪 render 才會把內容長出來，用 rAF 讓 DOM 先更新完再捲過去。
+      requestAnimationFrame(() => {
+        nodeRefs.current.get(status)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    },
+  }));
 
   return (
     <div className="flex flex-col gap-3">
@@ -59,6 +76,10 @@ export function WorkbenchAccordion({
         return (
           <div
             key={step.status}
+            ref={(el) => {
+              if (el) nodeRefs.current.set(step.status, el);
+              else nodeRefs.current.delete(step.status);
+            }}
             className={cn(
               "rounded-2xl border-2 border-foreground overflow-hidden",
               locked ? "bg-muted/40 border-foreground/30" : "bg-card shadow-[3px_3px_0_0_var(--color-foreground)]",
@@ -95,4 +116,4 @@ export function WorkbenchAccordion({
       })}
     </div>
   );
-}
+});

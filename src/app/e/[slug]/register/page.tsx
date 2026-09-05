@@ -11,6 +11,7 @@ import { Card } from "tpass-ui";
 import { requireSession } from "@/lib/guard";
 import { isAdmin } from "@/config/admin";
 import { prisma } from "@/lib/db";
+import { registrationDecision, REGISTRATION_REJECTION_MESSAGES } from "@/lib/registration-policy";
 import {
   CANDIDATE_STATUS_LABEL,
   KIND_LABEL,
@@ -60,6 +61,7 @@ export default async function RegisterPage({
     existing && existing.status !== "rejected" && existing.status !== "withdrawn" ? existing : null;
   const editable = existing && existing.status === "needs_fix" ? existing : null;
   const canSubmitFresh = !blocking;
+  const registration = registrationDecision(election, new Date());
 
   return (
     <PublicShell isLoggedIn isAdmin={admin}>
@@ -130,9 +132,9 @@ export default async function RegisterPage({
         </Card>
       )}
 
-      {election.status !== "registration" ? (
+      {!registration.ok ? (
         <Card className="mt-6 text-center">
-          <p className="font-bold">目前非候選人登記期間</p>
+          <p className="font-bold">{REGISTRATION_REJECTION_MESSAGES[registration.reason]}</p>
           <p className="mt-1 text-sm font-medium text-muted-foreground">
             登記僅開放於「{formatDateTime(election.registrationStartsAt)} ～{" "}
             {formatDateTime(election.registrationEndsAt)}」。

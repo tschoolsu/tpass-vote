@@ -3,9 +3,9 @@
 // 發布，都不在這顆卡的推進按鈕範圍內——這兩段只給文字指引指向對應面板，不重複放操作按鈕，
 // 避免同一顆彌封按鈕在畫面上出現兩次讓選委看不懂該按哪個。
 import { CheckCircle2, XCircle } from "lucide-react";
-import { Card } from "tpass-ui";
+import { Button, Card } from "tpass-ui";
 import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
-import { STATUS_META, type ElectionStatus } from "@/components/admin/status";
+import { STATUS_META, type ElectionStatus, type UiStage } from "@/components/admin/status";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -17,6 +17,7 @@ export function CurrentStageCard({
   previewBallotMode,
   resultsExist,
   onAdvance,
+  onGoTo,
   closingLabel,
   publishedLabel,
 }: {
@@ -27,6 +28,8 @@ export function CurrentStageCard({
   previewBallotMode?: string;
   resultsExist?: boolean;
   onAdvance: () => Promise<Result>;
+  // 展開對應 accordion 面板並捲過去，讓「現在該做什麼」的純文字指路變成可直接點的按鈕。
+  onGoTo?: (status: UiStage) => void;
   // 「⑤截止與開票」「⑥結果公告」的階段編號一般鏈與罷免鏈不同（見 status.ts 的
   // UI_STAGE_LABEL／RECALL_UI_STAGE_LABEL），由呼叫端傳入正確編號的標籤，這裡不重複定義。
   closingLabel: string;
@@ -73,19 +76,40 @@ export function CurrentStageCard({
       )}
 
       {status === "closed" && (
-        <p className="mt-2 text-sm font-medium text-muted-foreground">
-          投票已截止，請到下方「{closingLabel}」完成彌封票匭。
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <p className="text-sm font-medium text-muted-foreground">
+            投票已截止，請到下方「{closingLabel}」完成彌封票匭。
+          </p>
+          {onGoTo && (
+            <Button type="button" size="sm" onClick={() => onGoTo("closing")}>
+              前往「{closingLabel}」
+            </Button>
+          )}
+        </div>
       )}
       {status === "sealed" && !resultsExist && (
-        <p className="mt-2 text-sm font-medium text-muted-foreground">
-          已彌封，請到下方「{closingLabel}」上傳金鑰檔、本地解密計票並提交結果。
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <p className="text-sm font-medium text-muted-foreground">
+            已彌封，請到下方「{closingLabel}」上傳金鑰檔、本地解密計票並提交結果。
+          </p>
+          {onGoTo && (
+            <Button type="button" size="sm" onClick={() => onGoTo("closing")}>
+              前往「{closingLabel}」
+            </Button>
+          )}
+        </div>
       )}
       {status === "sealed" && resultsExist && (
-        <p className="mt-2 text-sm font-medium text-muted-foreground">
-          計票結果已提交，請到下方「{publishedLabel}」小編後發布，完成整場選舉流程。
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <p className="text-sm font-medium text-muted-foreground">
+            計票結果已提交，請到下方「{publishedLabel}」小編後發布，完成整場選舉流程。
+          </p>
+          {onGoTo && (
+            <Button type="button" size="sm" onClick={() => onGoTo("published")}>
+              前往「{publishedLabel}」
+            </Button>
+          )}
+        </div>
       )}
       {status === "published" && (
         <p className="mt-2 text-sm font-medium text-muted-foreground">結果已公告，本場選舉流程結束。</p>
