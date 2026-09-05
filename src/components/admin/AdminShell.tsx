@@ -30,10 +30,10 @@ export function AdminShell({
             <span className="hidden sm:inline rounded-md border-2 border-foreground bg-card px-2 py-0.5 font-mono text-[11px] font-bold text-foreground">
               {email}
             </span>
-            <form method="post" action={authConfig.logoutUrl}>
+            <form method="post" action={authConfig.logoutUrl} className="ml-1">
               <button
                 type="submit"
-                className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors duration-200"
+                className="inline-flex h-11 items-center justify-center rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors duration-200 hover:bg-card hover:text-foreground"
               >
                 登出
               </button>
