@@ -13,7 +13,7 @@ import { CandidateInfo, type PublicCandidate } from "@/components/public/Candida
 import { CopyLinkButton } from "@/components/public/CopyLinkButton";
 import { Markdown } from "@/components/public/Markdown";
 import { candidateDisplayName, ballotModeExplainer } from "@/components/public/shared";
-import { encryptBallot, type BallotPlain } from "@/lib/ballot-crypto";
+import { encryptBallot, type BallotChoice } from "@/lib/ballot-crypto";
 import { castBallot, type CastResult } from "@/app/e/[slug]/vote/actions";
 
 interface Props {
@@ -52,6 +52,8 @@ export function VoteForm({
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [result, setResult] = React.useState<CastResult | null>(null);
+  // 可回溯代碼只在這一刻存在於瀏覽器裡：伺服器收不到它，重整頁面也拿不回來。
+  const [receipt, setReceipt] = React.useState<string | null>(null);
 
   function toggleCandidate(id: string) {
     setBlank(false);
@@ -118,20 +120,23 @@ export function VoteForm({
   async function handleConfirm() {
     setError(null);
 
-    const plain: BallotPlain = blank
-      ? { v: 1, electionId, choice: { type: "blank" } }
+    const choice: BallotChoice = blank
+      ? { type: "blank" }
       : ballotMode === "choose"
-        ? { v: 1, electionId, choice: { type: "choose", candidateIds: [...selected] } }
-        : { v: 1, electionId, choice: { type: "approval", approvals } };
+        ? { type: "choose", candidateIds: [...selected] }
+        : { type: "approval", approvals };
 
     setSubmitting(true);
     try {
-      const ciphertext = await encryptBallot(publicKeyJwk, plain);
+      // 代碼在這裡產生、封進密文一起送走。伺服器只拿得到密文，永遠算不出代碼——
+      // 這正是它擋不住的那件事（單一 DB 讀權限者自建 voterId↔代碼對照表）被拿掉的原因。
+      const { ciphertext, code } = await encryptBallot(publicKeyJwk, { electionId, choice });
       const res = await castBallot(slug, ciphertext);
       if (!res.ok) {
         setError(res.error);
         return;
       }
+      setReceipt(code);
       setResult(res);
     } catch {
       setError("投票失敗，請重新整理頁面再試");
@@ -158,7 +163,7 @@ export function VoteForm({
     </div>
   );
 
-  if (result?.ok) {
+  if (result?.ok && receipt !== null) {
     return (
       <div className={cn(OPTION_CARD, "text-center")}>
         <p className="font-extrabold text-lg">{result.revote ? "已更新你的選票" : "投票成功"}</p>
@@ -166,15 +171,19 @@ export function VoteForm({
         <p className="mt-5 font-mono text-[11px] font-bold text-muted-foreground">投票收據</p>
         <div className="mt-1.5 flex items-center justify-center gap-2">
           <span className="break-all font-mono text-2xl font-extrabold tracking-widest">
-            {result.receipt}
+            {receipt}
           </span>
-          <CopyLinkButton url={result.receipt} label="複製收據" iconOnly size="sm" />
+          <CopyLinkButton url={receipt} label="複製收據" iconOnly size="sm" />
         </div>
 
         <ul className="mx-auto mt-5 max-w-sm space-y-1.5 text-left text-sm font-medium text-muted-foreground">
           <li>・截止前可在任何裝置再次投票，以最後一次為準——舊選票會被覆蓋，不會重複計票。</li>
           <li>・開票後可到結果頁用這張收據查詢你的票是否入匭、以及被記為什麼內容（選罷法 §26-1 Ⅳ）。</li>
-          <li>・收據不會連結到你的身分——彌封時系統即刪除代碼與選舉人的對應。但拿到收據的人查得出該票內容，請自行保管。</li>
+          <li className="font-bold text-foreground">
+            ・這組代碼是你的瀏覽器產生的，封在加密選票裡送出，伺服器從頭到尾看不到它——
+            <span className="underline">這是唯一一次顯示，離開或重新整理就再也拿不回來</span>，請現在就複製保存。
+          </li>
+          <li>・拿到代碼的人查得出該票內容，請自行保管；代碼本身連結不到你的身分。</li>
         </ul>
       </div>
     );

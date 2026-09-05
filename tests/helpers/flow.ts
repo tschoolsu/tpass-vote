@@ -17,7 +17,6 @@ import {
   generateTallyKeyPair,
   makeKeyFiles,
   type BallotChoice,
-  type BallotPlain,
   type TallyKeyFile,
 } from "@/lib/ballot-crypto";
 import { decryptAndTally } from "@/lib/tally-client";
@@ -161,9 +160,20 @@ export async function voteAs(
   publicKeyJwk: JsonWebKey,
   choice: BallotChoice,
 ) {
-  const plain: BallotPlain = { v: 1, electionId, choice };
-  const ciphertext = await encryptBallot(publicKeyJwk, plain);
-  return as(identity, () => castBallot(slug, ciphertext));
+  const { ciphertext, code } = await encryptBallot(publicKeyJwk, { electionId, choice });
+  const result = await as(identity, () => castBallot(slug, ciphertext));
+  // 代碼由瀏覽器產生、伺服器看不到，所以要在這一層交還給測試——
+  // 就像真實流程裡投票人只有在送出那一刻能看到它。
+  return { ...result, code };
+}
+
+/** 壓測只在乎密文；代碼是投票人自己保管的東西，那邊用不到。 */
+export async function ciphertextFor(
+  publicKeyJwk: JsonWebKey,
+  electionId: string,
+  choice: BallotChoice,
+): Promise<string> {
+  return (await encryptBallot(publicKeyJwk, { electionId, choice })).ciphertext;
 }
 
 export async function seal(electionId: string) {

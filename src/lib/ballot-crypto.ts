@@ -14,14 +14,21 @@ export type BallotChoice =
   | { type: "blank" }; // 自主廢票
 
 export interface BallotPlain {
-  v: 1;
+  v: 2;
   electionId: string; // 綁定選舉，防止密文跨場重放
+  code: string; // §26-1 Ⅳ 的可回溯代碼。由投票人瀏覽器產生，只存在於加密後的明文裡
+  choice: BallotChoice;
+}
+
+/** encryptBallot 的輸入：代碼由它自己產生，呼叫端給不了也不必給。 */
+export interface BallotInput {
+  electionId: string;
   choice: BallotChoice;
 }
 
 /** 密文外層格式（存 DB 的字串就是這個 JSON）。 */
 interface CiphertextEnvelope {
-  v: 1;
+  v: 2;
   alg: "RSA-OAEP-256+A256GCM";
   ek: string; // base64：RSA-OAEP 包住的 AES-256 金鑰
   iv: string; // base64：AES-GCM IV（12 bytes）
@@ -60,6 +67,7 @@ function fromB64(b64: string): Uint8Array<ArrayBuffer> {
 }
 
 const B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+const BALLOT_CODE_RE = /^[0-9a-f]{12}$/;
 
 export async function sha256Hex(s: string): Promise<string> {
   const digest = await subtle().digest("SHA-256", new TextEncoder().encode(s));
@@ -68,9 +76,56 @@ export async function sha256Hex(s: string): Promise<string> {
     .join("");
 }
 
-/** 投票收據＝密文雜湊前 12 碼。只能證明「這張密文在票匭裡」，證明不了內容。 */
+/**
+ * 密文雜湊前 12 碼。**這不再是投票收據**——收據代碼改由投票人瀏覽器產生並封在
+ * 密文內部（見 newBallotCode），否則彌封前任何有 EncryptedBallot 讀權限者都能
+ * 自己算出全部代碼、與公告後的 disclosures CSV join 出「誰投給誰」。
+ *
+ * 這個函式只剩一個用途：解不開的票（毀損／亂造）沒有可讀的內部代碼，明細裡仍
+ * 需要一個代碼佔位，就用密文雜湊。那種票本來就對應不到任何選舉人的有效意思。
+ */
 export async function receiptOf(ciphertext: string): Promise<string> {
   return (await sha256Hex(ciphertext)).slice(0, 12);
+}
+
+/** 可回溯代碼：12 碼 hex，投票當下由瀏覽器產生（§26-1 Ⅳ 要求投票時就提供）。 */
+export function newBallotCode(): string {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(6));
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+// ---- 定長填充（消除密文長度側通道）----
+//
+// AES-GCM 密文長度 = 明文長度 + 16。不填充的話，光看密文長度就能 100% 分辨
+// 「這張是廢票還是有效票」與「圈了幾個人」。所有明文一律填到同一個長度。
+//
+// 2048 的邊際：approval 模式每位候選人約佔 34 bytes（cuid 25 + 引號冒號布林），
+// 骨架約 100 bytes ⇒ 50 位候選人約 1800 bytes。學生會選舉遠不會到這個量級。
+const PADDED_PLAIN_SIZE = 2048;
+const LENGTH_PREFIX = 4;
+
+function padPlaintext(json: string): Uint8Array<ArrayBuffer> {
+  const payload = new TextEncoder().encode(json);
+  if (payload.length + LENGTH_PREFIX > PADDED_PLAIN_SIZE) {
+    throw new Error(
+      `選票內容 ${payload.length} bytes，超出固定長度上限 ${PADDED_PLAIN_SIZE - LENGTH_PREFIX}`,
+    );
+  }
+  // 先整塊填隨機，再蓋上長度前綴與內容——尾端填充必須不可預測，否則等於沒填。
+  const out = globalThis.crypto.getRandomValues(new Uint8Array(PADDED_PLAIN_SIZE));
+  new DataView(out.buffer).setUint32(0, payload.length, false);
+  out.set(payload, LENGTH_PREFIX);
+  return out;
+}
+
+function unpadPlaintext(buf: ArrayBuffer): string | null {
+  const bytes = new Uint8Array(buf);
+  if (bytes.length !== PADDED_PLAIN_SIZE) return null;
+  const len = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0, false);
+  if (len > PADDED_PLAIN_SIZE - LENGTH_PREFIX) return null;
+  return new TextDecoder().decode(bytes.subarray(LENGTH_PREFIX, LENGTH_PREFIX + len));
 }
 
 // ---- 金鑰生命週期（只在選委瀏覽器執行）----
@@ -142,16 +197,22 @@ export function combineKeyFiles(files: TallyKeyFile[]): JsonWebKey {
 
 // ---- 信封加密（投票端：瀏覽器）----
 
+/**
+ * 回傳密文與代碼。代碼在這裡產生、封進密文，並交給呼叫端當場顯示給投票人——
+ * 伺服器全程看不到它，所以伺服器也無從建立「代碼↔選舉人」的對照表。
+ */
 export async function encryptBallot(
   publicKeyJwk: JsonWebKey,
-  plain: BallotPlain,
-): Promise<string> {
+  input: BallotInput,
+): Promise<{ ciphertext: string; code: string }> {
+  const code = newBallotCode();
+  const plain: BallotPlain = { v: 2, electionId: input.electionId, code, choice: input.choice };
   const aesKey = await subtle().generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
   const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
   const ct = await subtle().encrypt(
     { name: "AES-GCM", iv },
     aesKey,
-    new TextEncoder().encode(JSON.stringify(plain)),
+    padPlaintext(JSON.stringify(plain)),
   );
   const publicKey = await subtle().importKey(
     "jwk",
@@ -166,13 +227,13 @@ export async function encryptBallot(
     await subtle().exportKey("raw", aesKey),
   );
   const envelope: CiphertextEnvelope = {
-    v: 1,
+    v: 2,
     alg: "RSA-OAEP-256+A256GCM",
     ek: toB64(ek),
     iv: toB64(iv),
     ct: toB64(ct),
   };
-  return JSON.stringify(envelope);
+  return { ciphertext: JSON.stringify(envelope), code };
 }
 
 // ---- 解密（開票端：選委瀏覽器）----
@@ -184,7 +245,7 @@ export async function decryptBallot(
 ): Promise<BallotPlain | null> {
   try {
     const env = JSON.parse(ciphertext) as CiphertextEnvelope;
-    if (env.v !== 1 || env.alg !== "RSA-OAEP-256+A256GCM") return null;
+    if (env.v !== 2 || env.alg !== "RSA-OAEP-256+A256GCM") return null;
     const privateKey = await subtle().importKey(
       "jwk",
       privateKeyJwk,
@@ -201,8 +262,13 @@ export async function decryptBallot(
       aesKey,
       fromB64(env.ct),
     );
-    const plain = JSON.parse(new TextDecoder().decode(pt)) as BallotPlain;
-    if (plain.v !== 1 || typeof plain.electionId !== "string" || !plain.choice) return null;
+    const json = unpadPlaintext(pt);
+    if (json === null) return null;
+    const plain = JSON.parse(json) as BallotPlain;
+    if (plain.v !== 2 || typeof plain.electionId !== "string" || !plain.choice) return null;
+    // 代碼形狀不對的票一律當無效票：明細的代碼欄位有格式契約（disclosureSchema），
+    // 讓畸形代碼流進去會讓整份明細被伺服器拒收，全場開不了票。
+    if (typeof plain.code !== "string" || !BALLOT_CODE_RE.test(plain.code)) return null;
     return plain;
   } catch {
     return null;
@@ -224,7 +290,7 @@ export function isValidCiphertextShape(s: string): boolean {
   return (
     env !== null &&
     typeof env === "object" &&
-    env.v === 1 &&
+    env.v === 2 &&
     env.alg === "RSA-OAEP-256+A256GCM" &&
     typeof env.ek === "string" &&
     B64_RE.test(env.ek) &&
@@ -234,7 +300,9 @@ export function isValidCiphertextShape(s: string): boolean {
     fromB64Length(env.iv) === 12 &&
     typeof env.ct === "string" &&
     B64_RE.test(env.ct) &&
-    fromB64Length(env.ct) >= 16 // 至少要有 GCM tag
+    // 定長：AES-GCM 密文 = 填充後明文 + 16 bytes tag。長度不變量在伺服器這一關就
+    // 強制，否則有人繞過前端送不等長密文，長度側通道就從那條路回來了。
+    fromB64Length(env.ct) === PADDED_PLAIN_SIZE + 16
   );
 }
 

@@ -216,9 +216,9 @@ describe("選票完整性", () => {
   it("不是合法密文形狀的東西一律拒收", async () => {
     const junk = [
       "not json",
-      JSON.stringify({ v: 2, alg: "RSA-OAEP-256+A256GCM", ek: "a", iv: "b", ct: "c" }),
-      JSON.stringify({ v: 1, alg: "AES-CBC", ek: "a", iv: "b", ct: "c" }),
-      JSON.stringify({ v: 1, alg: "RSA-OAEP-256+A256GCM", ek: "short", iv: "x", ct: "y" }),
+      JSON.stringify({ v: 3, alg: "RSA-OAEP-256+A256GCM", ek: "a", iv: "b", ct: "c" }),
+      JSON.stringify({ v: 2, alg: "AES-CBC", ek: "a", iv: "b", ct: "c" }),
+      JSON.stringify({ v: 2, alg: "RSA-OAEP-256+A256GCM", ek: "short", iv: "x", ct: "y" }),
       "",
       "x".repeat(20000),
     ];
@@ -239,8 +239,7 @@ describe("選票完整性", () => {
   });
 
   it("別場選舉的密文重放進來會被計為無效票（electionId 綁在明文裡）", async () => {
-    const replay = await encryptBallot(publicKeyJwk, {
-      v: 1,
+    const { ciphertext: replay } = await encryptBallot(publicKeyJwk, {
       electionId: "another-election",
       choice: { type: "choose", candidateIds: [candidateId] },
     });

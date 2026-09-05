@@ -2,12 +2,17 @@
 //
 // 法條要求「分別記錄投票暨未投票選舉人名冊，及記載可回溯代碼之去識別化選舉人個別意思」，
 // 且「本會不得記錄其與個別選舉人之連結」。這裡負責後半段：
-// - 代碼＝投票當下就發給選舉人的收據（密文 SHA-256 前 12 碼，見 ballot-crypto.receiptOf）；
+// - 代碼＝投票人瀏覽器在投票當下產生、封在加密選票內部的隨機 12 碼；
 // - 意思＝那張票解密後的內容，只有候選人 id，不帶任何身分資訊。
-// 連結的斷開不在這個檔案，而是彌封時刪掉 EncryptedBallot（tally/actions.ts）。
+// 連結的斷開有兩層：代碼只有持鑰者解得出來（伺服器算不出），加上彌封時刪掉
+// EncryptedBallot（tally/actions.ts）。
 //
-// verifyDisclosures 讓「沒有私鑰的伺服器」也能驗證選委提交的明細與計票結果自洽：
-// 張數、代碼集合、各類票張數、逐票加總的得票數全部要對得上，任一不符就拒收。
+// ⚠️ 代碼改由瀏覽器產生之後，伺服器「失去了『代碼集合與票匭相符』這項對帳」——
+// 它看不到密文裡的代碼，無從現算。保留下來的是張數相符，以及明細內部的自洽
+// （代碼不重複、各類票張數與逐票加總的得票數與計票結果對得上）。
+// 這是刻意的取捨：換掉的是「彌封前任何有 EncryptedBallot 讀權限者，單獨一人即可
+// 建 voterId↔代碼對照表、與公告後的 disclosures CSV join 出誰投給誰」。
+// 造假結果的防線因此完全落在「兩位選委各自獨立開票比對」（docs/election-sop.md）。
 
 import type { BallotPlain } from "@/lib/ballot-crypto";
 import type { TallyResult } from "@/lib/tally";
@@ -85,25 +90,22 @@ export type DisclosureMismatch =
   | "max-choices";
 
 /**
- * 交叉驗證：明細必須與票匭代碼集合、以及選委提交的計票結果完全自洽。
+ * 交叉驗證：明細必須與票匭張數、以及選委提交的計票結果完全自洽。
  * 回傳 null 代表通過，否則回傳第一個對不上的項目。
  */
 export function verifyDisclosures(
   entries: DisclosureEntry[],
-  boxCodes: string[],
+  boxSize: number,
   results: TallyResult,
   maxChoices: number,
 ): DisclosureMismatch | null {
-  if (entries.length !== boxCodes.length) return "count";
+  if (entries.length !== boxSize) return "count";
 
   const seen = new Set<string>();
   for (const e of entries) {
     if (seen.has(e.code)) return "duplicate-code";
     seen.add(e.code);
   }
-  const boxSet = new Set(boxCodes);
-  if (boxSet.size !== seen.size) return "duplicate-code"; // 票匭本身出現重複代碼
-  for (const code of seen) if (!boxSet.has(code)) return "codes";
 
   let blank = 0;
   let invalid = 0;
@@ -150,7 +152,7 @@ export function verifyDisclosures(
 
 export const DISCLOSURE_MISMATCH_MESSAGE: Record<DisclosureMismatch, string> = {
   count: "選票明細張數與票匭不符",
-  codes: "選票明細的代碼與票匭不符",
+  codes: "選票明細出現不在本場核准名單內的候選人",
   "duplicate-code": "選票明細出現重複代碼",
   "class-count": "選票明細的有效／廢票／無效票張數與計票結果不符",
   votes: "選票明細逐票加總的得票數與計票結果不符",

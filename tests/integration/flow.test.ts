@@ -80,12 +80,12 @@ describe("完整選舉流程（超額競選 → 相對多數）", () => {
         candidateIds: [pick.id],
       });
       expect(r.ok, `${voter.email} 投票失敗`).toBe(true);
-      if (r.ok) receipts[voter.email] = r.receipt;
+      if (r.ok) receipts[voter.email] = r.code;
     }
     // 第四位投廢票
     const blank = await voteAs(slug, electionId, CANDIDATE_2, publicKeyJwk, { type: "blank" });
     expect(blank.ok).toBe(true);
-    if (blank.ok) receipts[CANDIDATE_2.email] = blank.receipt;
+    if (blank.ok) receipts[CANDIDATE_2.email] = blank.code;
 
     for (const code of Object.values(receipts)) expect(code).toMatch(/^[0-9a-f]{12}$/);
     expect(new Set(Object.values(receipts)).size).toBe(4);
@@ -104,7 +104,7 @@ describe("完整選舉流程（超額競選 → 相對多數）", () => {
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.revote).toBe(true);
-      receipts[VOTER_B.email] = r.receipt;
+      receipts[VOTER_B.email] = r.code;
     }
     expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(before);
   });
@@ -153,10 +153,17 @@ describe("完整選舉流程（超額競選 → 相對多數）", () => {
     }
     expect(byCode.get(receipts[CANDIDATE_2.email])!.kind).toBe("blank");
 
-    // 代碼確實是票匭密文的雜湊：任何人都能自己重算一次驗證
+    // 代碼封在密文內部（投票人瀏覽器產生），沒有開票私鑰就算不出來。
+    // 這條斷言的方向是刻意反過來的：如果有人能從公開的票匭密文重算出代碼，
+    // 就能與這份公開明細 join 出「誰投給誰」——那正是彌封前的去匿名化破口。
     const box = e.sealedBox as string[];
     const recomputed = new Set(await Promise.all(box.map((c) => receiptOf(c))));
-    for (const entry of entries) expect(recomputed.has(entry.code)).toBe(true);
+    for (const entry of entries) {
+      expect(
+        recomputed.has(entry.code),
+        "代碼可以從票匭密文重算出來，去匿名化防線破了",
+      ).toBe(false);
+    }
   });
 
   it("發布結果公告後狀態進 published，職務登記表落地", async () => {
@@ -187,6 +194,32 @@ describe("完整選舉流程（超額競選 → 相對多數）", () => {
     });
     expect(ann.body).toContain("第二十六條之一第五項");
     expect(ann.body).toContain("投票暨未投票選舉人名冊");
+  });
+
+  it("ElectionAuditLog 留下這場選舉關鍵動作的稽核紀錄，且都掛正確的操作者", async () => {
+    const logs = await prisma.electionAuditLog.findMany({
+      where: { electionId },
+      orderBy: { createdAt: "asc" },
+    });
+    const actions = logs.map((l) => l.action);
+
+    expect(actions).toContain("save_public_key");
+    expect(actions).toContain("import_roster");
+    expect(actions).toContain("advance_status");
+    expect(actions).toContain("submit_results");
+    expect(actions).toContain("publish_announcement");
+    // 上一個 it 裡失敗的 redoElection（已公告結果不能重辦）不應留下紀錄——只記真的發生的事。
+    expect(actions).not.toContain("redo_election");
+
+    for (const log of logs) {
+      expect(log.actorEmail, `${log.action} 的操作者不對`).toBe(ADMIN.email);
+    }
+
+    const submit = logs.find((l) => l.action === "submit_results");
+    expect(submit?.diff).toMatchObject({ resubmit: false, totalBallots: 4, validCount: 3 });
+
+    const publish = logs.find((l) => l.action === "publish_announcement");
+    expect(publish?.diff).toMatchObject({ legalTag: "result", isFirstPublish: true });
   });
 });
 
@@ -238,5 +271,13 @@ describe("同額競選（approval）", () => {
 
     const after = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
     expect(after.hiddenAt).not.toBeNull();
+
+    const redoLog = await prisma.electionAuditLog.findFirst({
+      where: { electionId, action: "redo_election" },
+    });
+    expect(redoLog?.actorEmail).toBe(ADMIN.email);
+    if (redone.ok) {
+      expect(redoLog?.diff).toMatchObject({ newElectionId: redone.electionId });
+    }
   }, 60_000);
 });

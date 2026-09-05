@@ -7,11 +7,11 @@
 import { requireSession } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { castDecision, CAST_REJECTION_MESSAGES, type CastRejection } from "@/lib/vote-policy";
-import { isValidCiphertextShape, receiptOf } from "@/lib/ballot-crypto";
+import { isValidCiphertextShape } from "@/lib/ballot-crypto";
 
-export type CastResult =
-  | { ok: true; receipt: string; revote: boolean }
-  | { ok: false; error: string };
+// 沒有 receipt：可回溯代碼由投票人瀏覽器產生並封在密文裡，伺服器看不到它。
+// 代碼由前端在送出成功後自己顯示（見 VoteForm）。
+export type CastResult = { ok: true; revote: boolean } | { ok: false; error: string };
 
 /** 鎖內判定失敗：靠 throw 讓交易回滾，不能只 return——否則後面的寫入會照跑。 */
 class CastRejected extends Error {
@@ -47,9 +47,9 @@ export async function castBallot(slug: string, ciphertext: string): Promise<Cast
   const revote = voter!.votedAt !== null;
   try {
     await prisma.$transaction(async (tx) => {
-      // 關票（advanceStatus）與彌封（sealElection）都會改這一列，取得的是
-      // FOR NO KEY UPDATE；這裡取 FOR SHARE 與它們互斥，但收票彼此之間相容——
-      // 用 FOR UPDATE 會把所有收票序列化，大規模投票會塞死。
+      // 關票（advanceStatus）的 UPDATE 隱含取 FOR NO KEY UPDATE，彌封
+      // （sealElection）顯式取 FOR UPDATE。這裡取 FOR SHARE 與兩者都互斥，
+      // 但收票彼此之間相容——用 FOR UPDATE 會把所有收票序列化，大規模投票會塞死。
       //
       // 一般 SELECT 不鎖列：Postgres 預設 READ COMMITTED 下，光把查詢搬進
       // $transaction 擋不住關票插隊，必須顯式取鎖後「在鎖裡」重新判定一次。
@@ -77,5 +77,5 @@ export async function castBallot(slug: string, ciphertext: string): Promise<Cast
     throw e;
   }
 
-  return { ok: true, receipt: await receiptOf(ciphertext), revote };
+  return { ok: true, revote };
 }

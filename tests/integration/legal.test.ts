@@ -196,12 +196,17 @@ describe("§26-1 Ⅳ／Ⅴ 明細與名冊", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain("明細");
 
-    // 代碼對不上票匭也要被拒
+    // ⚠️ 代碼對不上票匭「不再」被拒——這是刻意的取捨，不是退步。
+    // 代碼改由投票人瀏覽器產生、封在加密選票內部之後，伺服器沒有開票私鑰就算不出
+    // 代碼，無從比對。換到的是：彌封前任何有 EncryptedBallot 讀權限者，再也不能
+    // 單獨一人建出 voterId↔代碼對照表、與公告後的公開明細 join 出「誰投給誰」。
+    // 這條斷言方向是反的，好讓日後有人改壞時會紅在這裡而不是默默恢復對帳。
+    // 結果造假的防線改為兩位選委各自獨立開票比對（docs/election-sop.md）。
     const wrongCodes: DisclosureEntry[] = disclosures.map((d, i) =>
       i === 0 ? { ...d, code: "ffffffffffff" } : d,
     );
     const r2 = await as(ADMIN, () => submitResults(electionId, results, wrongCodes));
-    expect(r2.ok).toBe(false);
+    expect(r2.ok, "代碼對帳應已隨『代碼封進密文』一併取消").toBe(true);
 
     // 原始明細仍可正常提交
     const ok = await as(ADMIN, () => submitResults(electionId, results, disclosures));

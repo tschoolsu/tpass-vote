@@ -21,10 +21,10 @@ import {
   registerAs,
   seal,
   tallyAndSubmit,
+  ciphertextFor,
 } from "../helpers/flow";
 import { importRoster } from "@/app/admin/elections/[id]/roster/actions";
 import { castBallot } from "@/app/e/[slug]/vote/actions";
-import { encryptBallot, type BallotPlain } from "@/lib/ballot-crypto";
 
 const N = Number(process.env.K6_VOTERS ?? 150);
 const VOTE_SLUG = "k6-vote";
@@ -96,11 +96,10 @@ describe("k6 前置資料", () => {
 
     // 實際灌票，讓結果頁不是空的。
     for (let i = 0; i < voters.length; i++) {
-      const ciphertext = await encryptBallot(keys.publicKeyJwk, {
-        v: 1,
-        electionId: resultsElectionId,
-        choice: { type: "choose", candidateIds: [approved[i % approved.length].id] },
-      } satisfies BallotPlain);
+      const ciphertext = await ciphertextFor(keys.publicKeyJwk, resultsElectionId, {
+        type: "choose",
+        candidateIds: [approved[i % approved.length].id],
+      });
       const r = await as(voters[i], () => castBallot(RESULTS_SLUG, ciphertext));
       expect(r.ok, r.ok ? "" : r.error).toBe(true);
     }

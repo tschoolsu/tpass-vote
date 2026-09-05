@@ -43,7 +43,11 @@ export async function decryptAndTally(
     plaintexts,
     rosterCount: meta.rosterCount,
   });
-  const codes = await Promise.all(sealedBox.map((ciphertext) => receiptOf(ciphertext)));
+  // 代碼取自解密後的明文（投票人瀏覽器當初產生的那個）。解不開的票沒有內部代碼，
+  // 退回密文雜湊當佔位——那種票本來就對應不到任何有效意思。
+  const codes = await Promise.all(
+    sealedBox.map(async (ciphertext, i) => plaintexts[i]?.code ?? (await receiptOf(ciphertext))),
+  );
   const disclosures = buildDisclosures(
     codes,
     plaintexts,

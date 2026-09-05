@@ -4,16 +4,18 @@ import type { BallotPlain } from "@/lib/ballot-crypto";
 
 const E = "election-1";
 const choose = (...ids: string[]): BallotPlain => ({
-  v: 1,
+  v: 2,
   electionId: E,
+  code: "000000000000",
   choice: { type: "choose", candidateIds: ids },
 });
 const approval = (approvals: Record<string, boolean>): BallotPlain => ({
-  v: 1,
+  v: 2,
   electionId: E,
+  code: "000000000000",
   choice: { type: "approval", approvals },
 });
-const blank: BallotPlain = { v: 1, electionId: E, choice: { type: "blank" } };
+const blank: BallotPlain = { v: 2, electionId: E, code: "000000000000", choice: { type: "blank" } };
 
 function base(overrides: Partial<TallyInput>): TallyInput {
   return {
@@ -84,7 +86,7 @@ describe("choose（超額，相對多數）", () => {
           choose("a", "b"), // 超過 maxChoices=1
           choose("a", "a"), // 重複（也超額，雙重不合規）
           choose("ghost"), // 不存在
-          { v: 1, electionId: "wrong", choice: { type: "choose", candidateIds: ["a"] } },
+          { v: 2, electionId: "wrong", code: "000000000000", choice: { type: "choose", candidateIds: ["a"] } },
         ],
       }),
     );

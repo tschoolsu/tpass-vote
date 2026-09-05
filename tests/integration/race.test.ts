@@ -76,8 +76,7 @@ describe("收票與關票／彌封的競態", () => {
         electionId,
       ]);
 
-      const ciphertext = await encryptBallot(publicKeyJwk, {
-        v: 1,
+      const { ciphertext } = await encryptBallot(publicKeyJwk, {
         electionId,
         choice: { type: "choose", candidateIds: [candidateId] },
       });
@@ -99,8 +98,7 @@ describe("收票與關票／彌封的競態", () => {
 
   it("彌封期間才落地的票，不會被刪掉卻沒進票匭", async () => {
     // 先正常收一張票，再關票。
-    const early = await encryptBallot(publicKeyJwk, {
-      v: 1,
+    const { ciphertext: early } = await encryptBallot(publicKeyJwk, {
       electionId,
       choice: { type: "choose", candidateIds: [candidateId] },
     });
@@ -110,8 +108,7 @@ describe("收票與關票／彌封的競態", () => {
     const voterB = await prisma.voter.findUniqueOrThrow({
       where: { electionId_email: { electionId, email: VOTER_B.email } },
     });
-    const late = await encryptBallot(publicKeyJwk, {
-      v: 1,
+    const { ciphertext: late } = await encryptBallot(publicKeyJwk, {
       electionId,
       choice: { type: "choose", candidateIds: [candidateId] },
     });

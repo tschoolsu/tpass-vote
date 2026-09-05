@@ -22,11 +22,11 @@ import {
   registerAs,
   seal,
   tallyAndSubmit,
+  ciphertextFor,
 } from "../helpers/flow";
 import { importRoster } from "@/app/admin/elections/[id]/roster/actions";
 import { castBallot } from "@/app/e/[slug]/vote/actions";
 import { advanceStatus } from "@/app/admin/elections/[id]/actions";
-import { encryptBallot, type BallotPlain } from "@/lib/ballot-crypto";
 import { timed } from "../helpers/metrics";
 import { appAlive, appLog, appRssMb } from "../helpers/proc";
 
@@ -82,11 +82,7 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const jobs = await Promise.all(
       voters.map(async (v, i) => ({
         voter: v,
-        ciphertext: await encryptBallot(publicKeyJwk, {
-          v: 1,
-          electionId,
-          choice: { type: "choose", candidateIds: [candidateIds[i % candidateIds.length]] },
-        } satisfies BallotPlain),
+        ciphertext: await ciphertextFor(publicKeyJwk, electionId, { type: "choose", candidateIds: [candidateIds[i % candidateIds.length]] }),
       })),
     );
 
@@ -120,11 +116,7 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const victim = voters[0];
     const jobs = await Promise.all(
       Array.from({ length: SAME_PERSON_BURST }, (_, i) =>
-        encryptBallot(publicKeyJwk, {
-          v: 1,
-          electionId,
-          choice: { type: "choose", candidateIds: [candidateIds[i % candidateIds.length]] },
-        } satisfies BallotPlain),
+        ciphertextFor(publicKeyJwk, electionId, { type: "choose", candidateIds: [candidateIds[i % candidateIds.length]] }),
       ),
     );
     const start = performance.now();
@@ -174,11 +166,7 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     expect(appAlive(), "砍 DB 連線之後 server process 死了").toBe(true);
 
     const survivor = voters[1];
-    const ct = await encryptBallot(publicKeyJwk, {
-      v: 1,
-      electionId,
-      choice: { type: "blank" },
-    } satisfies BallotPlain);
+    const ct = await ciphertextFor(publicKeyJwk, electionId, { type: "blank" });
 
     // 重連可能需要一兩次嘗試，但不該永久失敗。
     let ok = false;
@@ -206,11 +194,7 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const jobs = await Promise.all(
       latecomers.map(async (v) => ({
         voter: v,
-        ciphertext: await encryptBallot(publicKeyJwk, {
-          v: 1,
-          electionId,
-          choice: { type: "choose", candidateIds: [candidateIds[0]] },
-        } satisfies BallotPlain),
+        ciphertext: await ciphertextFor(publicKeyJwk, electionId, { type: "choose", candidateIds: [candidateIds[0]] }),
       })),
     );
 

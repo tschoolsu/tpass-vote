@@ -20,10 +20,10 @@ import {
   registerAs,
   seal,
   tallyAndSubmit,
+  ciphertextFor,
 } from "../helpers/flow";
 import { importRoster } from "@/app/admin/elections/[id]/roster/actions";
 import { castBallot } from "@/app/e/[slug]/vote/actions";
-import { encryptBallot, type BallotPlain } from "@/lib/ballot-crypto";
 import { runPool, summarize, timed, report } from "../helpers/metrics";
 
 const VOTERS = Number(process.env.STRESS_VOTERS ?? 500);
@@ -89,12 +89,11 @@ describe(`壓力測試（${VOTERS} 位選舉人、併發 ${CONCURRENCY}）`, () 
     const prep = await timed(async () =>
       Promise.all(
         voters.map(async (v, i) => {
-          const plain: BallotPlain = {
-            v: 1,
-            electionId,
-            choice: { type: "choose", candidateIds: [candidateIds[i % candidateIds.length]] },
-          };
-          return { voter: v, ciphertext: await encryptBallot(publicKeyJwk, plain) };
+          const ciphertext = await ciphertextFor(publicKeyJwk, electionId, {
+            type: "choose",
+            candidateIds: [candidateIds[i % candidateIds.length]],
+          });
+          return { voter: v, ciphertext };
         }),
       ),
     );
@@ -125,11 +124,7 @@ describe(`壓力測試（${VOTERS} 位選舉人、併發 ${CONCURRENCY}）`, () 
     const jobs = await Promise.all(
       revoters.map(async (v) => ({
         voter: v,
-        ciphertext: await encryptBallot(publicKeyJwk, {
-          v: 1,
-          electionId,
-          choice: { type: "blank" },
-        } satisfies BallotPlain),
+        ciphertext: await ciphertextFor(publicKeyJwk, electionId, { type: "blank" }),
       })),
     );
     const { samplesMs, errors } = await runPool(jobs, CONCURRENCY, async (job) => {

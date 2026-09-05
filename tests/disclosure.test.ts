@@ -5,16 +5,18 @@ import type { BallotPlain } from "@/lib/ballot-crypto";
 
 const E = "election-1";
 const choose = (...ids: string[]): BallotPlain => ({
-  v: 1,
+  v: 2,
   electionId: E,
+  code: "000000000000",
   choice: { type: "choose", candidateIds: ids },
 });
 const approval = (approvals: Record<string, boolean>): BallotPlain => ({
-  v: 1,
+  v: 2,
   electionId: E,
+  code: "000000000000",
   choice: { type: "approval", approvals },
 });
-const blank: BallotPlain = { v: 1, electionId: E, choice: { type: "blank" } };
+const blank: BallotPlain = { v: 2, electionId: E, code: "000000000000", choice: { type: "blank" } };
 
 // 代碼實際上是密文雜湊，測試裡只要求「12 碼、彼此不同」即可。
 const code = (n: number) => `${n}`.padStart(12, "0");
@@ -48,7 +50,7 @@ describe("buildDisclosures", () => {
   });
 
   it("分類與 tally 一致：超額圈選、跨場密文、非本場候選人都算無效票", () => {
-    const foreign: BallotPlain = { v: 1, electionId: "other", choice: { type: "blank" } };
+    const foreign: BallotPlain = { v: 2, electionId: "other", code: "000000000000", choice: { type: "blank" } };
     const plaintexts = [choose("a", "b"), foreign, choose("zzz")];
     const codes = [code(1), code(2), code(3)];
     const entries = buildDisclosures(codes, plaintexts, E, "choose", ["a", "b", "c"], 1);
@@ -78,41 +80,49 @@ describe("verifyDisclosures", () => {
   const entries = buildDisclosures(codes, plaintexts, E, "choose", ["a", "b", "c"], 1);
 
   it("開票端產出的明細與計票結果自洽", () => {
-    expect(verifyDisclosures(entries, codes, results, 1)).toBeNull();
+    expect(verifyDisclosures(entries, codes.length, results, 1)).toBeNull();
   });
 
   it("張數不符", () => {
-    expect(verifyDisclosures(entries.slice(1), codes, results, 1)).toBe("count");
+    expect(verifyDisclosures(entries.slice(1), codes.length, results, 1)).toBe("count");
   });
 
-  it("代碼不符", () => {
+  // 代碼改由投票人瀏覽器產生、封在密文內部之後，伺服器沒有私鑰就算不出代碼，
+  // 「代碼集合與票匭相符」這項對帳已經不存在。這條測試把失去的東西寫清楚，
+  // 免得日後有人以為伺服器還擋得住。防線改為兩位選委各自獨立開票比對。
+  it("代碼被換掉伺服器察覺不到（放棄代碼對帳的刻意取捨）", () => {
+    const tampered = entries.map((e) => (e.code === code(1) ? { ...e, code: code(9) } : e));
+    expect(verifyDisclosures(tampered, codes.length, results, 1)).toBeNull();
+  });
+
+  it("明細出現不在本場核准名單內的候選人", () => {
     const tampered = entries.map((e) =>
-      e.code === code(1) ? { ...e, code: code(9) } : e,
+      e.kind === "choose" ? { ...e, candidateIds: ["not-a-candidate"] } : e,
     );
-    expect(verifyDisclosures(tampered, codes, results, 1)).toBe("codes");
+    expect(verifyDisclosures(tampered, codes.length, results, 1)).toBe("codes");
   });
 
   it("重複代碼", () => {
     const dup: DisclosureEntry[] = [...entries.slice(1), { ...entries[1] }];
-    expect(verifyDisclosures(dup, codes, results, 1)).toBe("duplicate-code");
+    expect(verifyDisclosures(dup, codes.length, results, 1)).toBe("duplicate-code");
   });
 
   it("各類票張數對不上", () => {
     const tampered = entries.map((e) => (e.kind === "blank" ? { ...e, kind: "invalid" as const } : e));
-    expect(verifyDisclosures(tampered, codes, results, 1)).toBe("class-count");
+    expect(verifyDisclosures(tampered, codes.length, results, 1)).toBe("class-count");
   });
 
   it("逐票加總的得票數對不上", () => {
     const tampered = entries.map((e) =>
       e.kind === "choose" && e.candidateIds?.[0] === "a" ? { ...e, candidateIds: ["b"] } : e,
     );
-    expect(verifyDisclosures(tampered, codes, results, 1)).toBe("votes");
+    expect(verifyDisclosures(tampered, codes.length, results, 1)).toBe("votes");
   });
 
   it("明細出現超過可圈選人數的選票", () => {
     const tampered = entries.map((e) =>
       e.kind === "choose" ? { ...e, candidateIds: ["a", "b"] } : e,
     );
-    expect(verifyDisclosures(tampered, codes, results, 1)).toBe("max-choices");
+    expect(verifyDisclosures(tampered, codes.length, results, 1)).toBe("max-choices");
   });
 });

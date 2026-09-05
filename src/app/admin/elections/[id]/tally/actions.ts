@@ -16,7 +16,6 @@ import { authConfig } from "@/config/auth";
 import { resultAnnouncementDraft, type ResultCandidateInfo } from "@/lib/result-announcement";
 import { cloneElection } from "@/lib/clone-election";
 import { recallPassed } from "@/lib/recall";
-import { receiptOf } from "@/lib/ballot-crypto";
 import { verifyDisclosures, DISCLOSURE_MISMATCH_MESSAGE } from "@/lib/disclosure";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -156,10 +155,11 @@ export async function submitResults(
     return { ok: false, error: "候選人清單與本場核准名單不符" };
   }
 
-  // 伺服器沒有私鑰、看不到任何一張選票內容，但可以就公開的彌封快照現算代碼，
-  // 再用明細與計票結果互相對帳——不自洽就拒收，不靠信任單一提交。
-  const boxCodes = await Promise.all(box.map((ciphertext) => receiptOf(ciphertext)));
-  const mismatch = verifyDisclosures(parsedDisclosures.data, boxCodes, r, election.maxChoices);
+  // 代碼封在密文內部（投票人瀏覽器產生），伺服器沒有私鑰就算不出來——「代碼集合與
+  // 票匭相符」這項對帳已經不成立，換到的是「單一 DB 讀權限者無法自建對照表」。
+  // 剩下的自洽檢查照舊：張數、代碼不重複、各類票張數、逐票加總的得票數。
+  // 造假結果的防線在「兩位選委各自獨立開票比對」（docs/election-sop.md）。
+  const mismatch = verifyDisclosures(parsedDisclosures.data, boxSize, r, election.maxChoices);
   if (mismatch) {
     return { ok: false, error: `${DISCLOSURE_MISMATCH_MESSAGE[mismatch]}，已拒絕提交` };
   }
