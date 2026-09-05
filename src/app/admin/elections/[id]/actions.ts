@@ -231,6 +231,9 @@ export async function redoElection(electionId: string): Promise<ElectionCloneRes
 
   const source = await prisma.election.findUnique({ where: { id: electionId } });
   if (!source) return { ok: false, error: "找不到選舉" };
+  if (source.status === "published") {
+    return { ok: false, error: "已公告結果的選舉不能重辦，請聯絡技術負責人循其他程序處理" };
+  }
 
   const redone = await prisma.$transaction(async (tx) => {
     const created = await cloneElection(tx, source, {

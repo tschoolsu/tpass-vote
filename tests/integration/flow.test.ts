@@ -2,7 +2,8 @@
 // 真正的授權檢查與真正的資料庫。斷言集中在「法規要求的東西有沒有真的發生」。
 import { describe, it, expect, beforeAll } from "vitest";
 import { prisma, resetDb } from "../helpers/db";
-import { VOTER_A, VOTER_B, OUTSIDER } from "../helpers/session";
+import { VOTER_A, VOTER_B, OUTSIDER, ADMIN, as } from "../helpers/session";
+import { redoElection } from "@/app/admin/elections/[id]/actions";
 import {
   advanceTo,
   approveAll,
@@ -168,6 +169,18 @@ describe("完整選舉流程（超額競選 → 相對多數）", () => {
     expect(offices[0].isVacant).toBe(false);
   });
 
+  it("redoElection：已公告結果的選舉不能重辦，原場次不受影響", async () => {
+    const before = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(before.status).toBe("published");
+
+    const r = await as(ADMIN, () => redoElection(electionId));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("不能重辦");
+
+    const after = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(after.hiddenAt).toBeNull();
+  });
+
   it("結果公告草稿含 §26-1 Ⅴ 的附刊聲明", async () => {
     const ann = await prisma.announcement.findFirstOrThrow({
       where: { electionId, legalTag: "result" },
@@ -215,5 +228,15 @@ describe("同額競選（approval）", () => {
     expect(submitted.ok).toBe(true);
     expect(results.mode).toBe("approval");
     expect(results.candidates[0]).toMatchObject({ votes: 2, disagree: 1, elected: true });
+
+    // §1-1：金鑰遺失重辦的正當時機正是彌封後、開票當下——sealed 狀態必須仍能重辦。
+    const before = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(before.status).toBe("sealed");
+
+    const redone = await as(ADMIN, () => redoElection(electionId));
+    expect(redone.ok, redone.ok ? "" : redone.error).toBe(true);
+
+    const after = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(after.hiddenAt).not.toBeNull();
   }, 60_000);
 });
