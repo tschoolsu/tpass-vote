@@ -204,7 +204,11 @@ export function AnnouncementEditor({
         <p className="text-xs font-medium text-muted-foreground">{publishDisabledReason}</p>
       )}
       {fieldError && <p className="font-mono text-xs font-bold text-destructive">{fieldError}</p>}
-      {error && <p className="font-mono text-xs font-bold text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="font-mono text-xs font-bold text-destructive">
+          {error}
+        </p>
+      )}
       <ConfirmDialog
         open={confirmPublishOpen}
         title={legalTag === "result" ? "確定要發布結果公告嗎？" : "確定要發布這則公告嗎？"}
