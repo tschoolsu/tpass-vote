@@ -57,7 +57,13 @@ function manifestPath(): string {
   return path.join(process.cwd(), ".next", "server", "server-reference-manifest.json");
 }
 
+// manifest 在一次 build 內不會變，module-level 快取一份，不然壓測 jobs.map(callAction)
+// 會在任何 fetch 發出去之前，把幾千次 readFileSync + JSON.parse 同步跑完，反而拖慢
+// 「瞬間併發」這件事本身要量的東西。
+let manifestCache: ServerReferenceManifest | null = null;
+
 function readManifest(): ServerReferenceManifest {
+  if (manifestCache) return manifestCache;
   const p = manifestPath();
   let raw: string;
   try {
@@ -67,7 +73,8 @@ function readManifest(): ServerReferenceManifest {
       `讀不到 ${p}——action-http 打的是 production build 的 server action，請先 \`pnpm build\`。`,
     );
   }
-  return JSON.parse(raw) as ServerReferenceManifest;
+  manifestCache = JSON.parse(raw) as ServerReferenceManifest;
+  return manifestCache;
 }
 
 /** 把 Next 內部路由字串（如 "app/e/[slug]/vote/page"）拆成片段，去掉 app/ 前綴與尾端的 page|route。 */
