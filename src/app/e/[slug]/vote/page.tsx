@@ -14,6 +14,7 @@ import { isAdmin } from "@/config/admin";
 import { authConfig } from "@/config/auth";
 import { prisma } from "@/lib/db";
 import { formatDateTime, type MemberInfo } from "@/components/public/shared";
+import { castDecision } from "@/lib/vote-policy";
 
 export async function generateMetadata({
   params,
@@ -79,6 +80,38 @@ export default async function VotePage({
           <p className="mt-1 text-sm font-medium text-muted-foreground">
             投票開放時間：{formatDateTime(election.votingStartsAt)} ～{" "}
             {formatDateTime(election.votingEndsAt)}
+          </p>
+        </Card>
+      </PublicShell>
+    );
+  }
+
+  // 狀態機說「投票中」不代表時程也到了——status 與 votingStartsAt/EndsAt 是兩套獨立真相，
+  // 送出時 castDecision 一定會再擋一次，所以這裡進頁面就先用同一套判斷，不要讓選民走完全程才被拒。
+  const timeDecision = castDecision(
+    { status: election.status, votingStartsAt: election.votingStartsAt, votingEndsAt: election.votingEndsAt },
+    true,
+    new Date(),
+  );
+  if (!timeDecision.ok) {
+    const notStarted = timeDecision.reason === "not-started";
+    return (
+      <PublicShell isLoggedIn isAdmin={admin}>
+        <Link href={`/e/${slug}`} className="text-sm font-bold text-accent hover:underline">
+          ← {election.title}
+        </Link>
+        <h1 className="mt-3 font-extrabold text-2xl">投票</h1>
+        <div className="mt-3">
+          <StatusBadge status={election.status} />
+        </div>
+        <Card className="mt-6 text-center">
+          <p className="font-bold">
+            {notStarted
+              ? `投票將於 ${formatDateTime(election.votingStartsAt)} 開放`
+              : "投票已截止，請等待選委會公告後續"}
+          </p>
+          <p className="mt-1 text-sm font-medium text-muted-foreground">
+            投票期間：{formatDateTime(election.votingStartsAt)} ～ {formatDateTime(election.votingEndsAt)}
           </p>
         </Card>
       </PublicShell>

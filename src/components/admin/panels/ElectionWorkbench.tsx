@@ -18,6 +18,7 @@ import {
   Trash2,
   FileSignature,
   Gavel,
+  History,
 } from "lucide-react";
 import { Badge } from "tpass-ui";
 import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
@@ -36,6 +37,7 @@ import {
   type UiStage,
 } from "@/components/admin/status";
 import { ELECTION_KIND_LABEL, type ElectionKind } from "@/app/admin/elections/election-schema";
+import { formatDateTime, describeRemaining } from "@/components/public/shared";
 import { advanceStatus, hideElection, restoreElection } from "@/app/admin/elections/[id]/actions";
 import { sealElection } from "@/app/admin/elections/[id]/tally/actions";
 import { StageProgress } from "@/components/admin/panels/StageProgress";
@@ -131,6 +133,10 @@ export function ElectionWorkbench({
   // 選舉基本資料／候選人審核在投票開始（voting 及之後）鎖定，判準集中在 lib/election-status。
   const registrationLocked = LOCKED_STATUSES.has(status);
 
+  // 狀態機的 status 與時程（votingStartsAt）是兩套獨立真相：推進到 voting 只代表選委按了按鈕，
+  // 不代表投票時間到了——選民端 vote/page.tsx 用同一套 castDecision 擋，這裡也要在前置檢查列出來，
+  // 不要讓選委推了狀態卻以為選民已經能投票。
+  const votingStartReached = !election.votingStartsAt || new Date() >= election.votingStartsAt;
   const votingPrecheck = [
     { label: "已產生開票金鑰", ok: hasKey },
     isRecall
@@ -141,6 +147,13 @@ export function ElectionWorkbench({
           detail: `目前 ${approvedCandidates.length} 組`,
         },
     { label: "已上傳選舉人名冊", ok: rosterCount > 0, detail: `目前 ${rosterCount} 人` },
+    {
+      label: "投票開始時間已到",
+      ok: votingStartReached,
+      detail: votingStartReached
+        ? undefined
+        : `${formatDateTime(election.votingStartsAt)}（${describeRemaining(election.votingStartsAt, new Date())}）`,
+    },
   ];
   const votingBlocked = next === "voting" && votingPrecheck.some((c) => !c.ok);
   const previewBallotMode = isRecall
@@ -377,6 +390,12 @@ export function ElectionWorkbench({
               </>
             )}
           </p>
+          <Link
+            href={`/admin/elections/${election.id}/audit-log`}
+            className="mt-1 inline-flex items-center gap-1 text-xs font-bold text-muted-foreground hover:text-foreground"
+          >
+            <History className="h-3.5 w-3.5" /> 稽核紀錄
+          </Link>
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-2">
