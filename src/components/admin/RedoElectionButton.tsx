@@ -6,26 +6,21 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCcw } from "lucide-react";
-import { Button } from "tpass-ui";
+import { Button, ConfirmDialog } from "tpass-ui";
 import { redoElection } from "@/app/admin/elections/[id]/actions";
 
 export function RedoElectionButton({ electionId, className }: { electionId: string; className?: string }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
-  function handleClick() {
-    const confirmed = window.confirm(
-      "確定要作廢本場並重辦嗎？\n\n" +
-        "本場將被軟刪除（資料保留但從列表消失，可還原但無法復原到「未作廢」的流程狀態）；" +
-        "系統會建立一個新場次，複製名冊與已核准候選人，新場次需要重新產生開票金鑰。\n\n" +
-        "僅在金鑰確定遺失、真的無法開票時才使用此功能。",
-    );
-    if (!confirmed) return;
+  function runAction() {
     setError(null);
     startTransition(async () => {
       const result = await redoElection(electionId);
       if (!result.ok) {
+        setConfirmOpen(false);
         setError(result.error);
         return;
       }
@@ -35,10 +30,32 @@ export function RedoElectionButton({ electionId, className }: { electionId: stri
 
   return (
     <div className="inline-flex flex-col gap-1">
-      <Button type="button" variant="destructive" size="sm" className={className} disabled={pending} onClick={handleClick}>
+      <Button
+        type="button"
+        variant="destructive"
+        size="sm"
+        className={className}
+        disabled={pending}
+        onClick={() => setConfirmOpen(true)}
+      >
         <RotateCcw className="h-3.5 w-3.5" /> {pending ? "處理中…" : "作廢並重辦"}
       </Button>
       {error && <p className="font-mono text-xs font-bold text-destructive">{error}</p>}
+      <ConfirmDialog
+        open={confirmOpen}
+        title="確定要作廢本場並重辦嗎？"
+        description={
+          <div className="whitespace-pre-wrap">
+            {"本場將被軟刪除（資料保留但從列表消失，可還原但無法復原到「未作廢」的流程狀態）；" +
+              "系統會建立一個新場次，複製名冊與已核准候選人，新場次需要重新產生開票金鑰。\n\n" +
+              "僅在金鑰確定遺失、真的無法開票時才使用此功能。"}
+          </div>
+        }
+        confirmLabel={pending ? "處理中…" : "確定作廢"}
+        pending={pending}
+        onConfirm={runAction}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </div>
   );
 }

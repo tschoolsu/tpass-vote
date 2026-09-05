@@ -3,7 +3,7 @@
 // 給狀態機推進 / 彌封 / 移除名冊 這類單一 server action 呼叫共用，避免每頁各寫一份。
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Button, type ButtonProps } from "tpass-ui";
+import { Button, ConfirmDialog, type ButtonProps } from "tpass-ui";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -29,18 +29,27 @@ export function ConfirmActionButton({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
-  function handleClick() {
-    if (confirmMessage && !window.confirm(confirmMessage)) return;
+  function runAction() {
     setError(null);
     startTransition(async () => {
       const result = await action();
+      setConfirmOpen(false);
       if (!result.ok) {
         setError(result.error);
         return;
       }
       router.refresh();
     });
+  }
+
+  function handleClick() {
+    if (confirmMessage) {
+      setConfirmOpen(true);
+      return;
+    }
+    runAction();
   }
 
   return (
@@ -56,6 +65,16 @@ export function ConfirmActionButton({
         {pending ? (pendingLabel ?? "處理中…") : label}
       </Button>
       {error && <p className="font-mono text-xs font-bold text-destructive">{error}</p>}
+      {confirmMessage && (
+        <ConfirmDialog
+          open={confirmOpen}
+          title="請確認"
+          description={<div className="whitespace-pre-wrap">{confirmMessage}</div>}
+          pending={pending}
+          onConfirm={runAction}
+          onCancel={() => setConfirmOpen(false)}
+        />
+      )}
     </div>
   );
 }
