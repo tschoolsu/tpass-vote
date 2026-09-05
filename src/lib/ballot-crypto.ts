@@ -76,18 +76,6 @@ export async function sha256Hex(s: string): Promise<string> {
     .join("");
 }
 
-/**
- * 密文雜湊前 12 碼。**這不再是投票收據**——收據代碼改由投票人瀏覽器產生並封在
- * 密文內部（見 newBallotCode），否則彌封前任何有 EncryptedBallot 讀權限者都能
- * 自己算出全部代碼、與公告後的 disclosures CSV join 出「誰投給誰」。
- *
- * 這個函式只剩一個用途：解不開的票（毀損／亂造）沒有可讀的內部代碼，明細裡仍
- * 需要一個代碼佔位，就用密文雜湊。那種票本來就對應不到任何選舉人的有效意思。
- */
-export async function receiptOf(ciphertext: string): Promise<string> {
-  return (await sha256Hex(ciphertext)).slice(0, 12);
-}
-
 /** 可回溯代碼：12 碼 hex，投票當下由瀏覽器產生（§26-1 Ⅳ 要求投票時就提供）。 */
 export function newBallotCode(): string {
   const bytes = globalThis.crypto.getRandomValues(new Uint8Array(6));
@@ -237,6 +225,31 @@ export async function encryptBallot(
 }
 
 // ---- 解密（開票端：選委瀏覽器）----
+
+/**
+ * 解不開的票（毀損／亂造）沒有內部代碼，但明細仍需要代碼欄位。
+ *
+ * **絕對不能用密文雜湊當這個 fallback**：那樣彌封前有 DB 讀權限的人就能自己算出來，
+ * 與公告後的公開明細 join 回 voterId——正是整套設計要擋的事。更糟的是，有寫權限的人
+ * 只要把某張票改壞一個 byte，就能把「特定一個人」推進這條路徑再精準反查。
+ *
+ * 改用開票私鑰派生的 HMAC：兩位選委各自開票算得出同一個值（明細才對得起來，
+ * 見 docs/election-sop.md 的雙人比對），沒有私鑰的人算不出來。
+ */
+export async function fallbackCodeFor(
+  privateKeyJwk: JsonWebKey,
+  ciphertext: string,
+): Promise<string> {
+  const seed = await subtle().digest("SHA-256", new TextEncoder().encode(privateKeyJwk.d ?? ""));
+  const key = await subtle().importKey("raw", seed, { name: "HMAC", hash: "SHA-256" }, false, [
+    "sign",
+  ]);
+  const mac = await subtle().sign("HMAC", key, new TextEncoder().encode(ciphertext));
+  return Array.from(new Uint8Array(mac))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 12);
+}
 
 /** 解不開（毀損/亂造/拿錯鑰匙）一律回 null，由計票端計為無效票。 */
 export async function decryptBallot(

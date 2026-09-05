@@ -17,7 +17,7 @@ import {
   voteAs,
 } from "../helpers/flow";
 import type { DisclosureEntry } from "@/lib/disclosure";
-import { receiptOf } from "@/lib/ballot-crypto";
+import { sha256Hex } from "@/lib/ballot-crypto";
 
 const CANDIDATE_1 = { email: "cand1@test.local", name: "候選人一" };
 const CANDIDATE_2 = { email: "cand2@test.local", name: "候選人二" };
@@ -157,7 +157,9 @@ describe("完整選舉流程（超額競選 → 相對多數）", () => {
     // 這條斷言的方向是刻意反過來的：如果有人能從公開的票匭密文重算出代碼，
     // 就能與這份公開明細 join 出「誰投給誰」——那正是彌封前的去匿名化破口。
     const box = e.sealedBox as string[];
-    const recomputed = new Set(await Promise.all(box.map((c) => receiptOf(c))));
+    const recomputed = new Set(
+      await Promise.all(box.map(async (c) => (await sha256Hex(c)).slice(0, 12))),
+    );
     for (const entry of entries) {
       expect(
         recomputed.has(entry.code),

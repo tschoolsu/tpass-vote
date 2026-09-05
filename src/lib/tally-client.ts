@@ -1,7 +1,12 @@
 // 開票端組合流程：金鑰檔 → 本地解密 → 計票。只准在「選委瀏覽器」執行。
 // UI 層（開票頁）只需要呼叫這一個函式，不碰任何密碼學細節。
 
-import { combineKeyFiles, decryptBallot, receiptOf, type TallyKeyFile } from "@/lib/ballot-crypto";
+import {
+  combineKeyFiles,
+  decryptBallot,
+  fallbackCodeFor,
+  type TallyKeyFile,
+} from "@/lib/ballot-crypto";
 import { tallyBallots, type TallyResult } from "@/lib/tally";
 import { buildDisclosures, type DisclosureEntry } from "@/lib/disclosure";
 
@@ -44,9 +49,12 @@ export async function decryptAndTally(
     rosterCount: meta.rosterCount,
   });
   // 代碼取自解密後的明文（投票人瀏覽器當初產生的那個）。解不開的票沒有內部代碼，
-  // 退回密文雜湊當佔位——那種票本來就對應不到任何有效意思。
+  // 退回私鑰派生的 HMAC——不能用密文雜湊，那會讓 DB 讀取者算得出來（見 fallbackCodeFor）。
   const codes = await Promise.all(
-    sealedBox.map(async (ciphertext, i) => plaintexts[i]?.code ?? (await receiptOf(ciphertext))),
+    sealedBox.map(
+      async (ciphertext, i) =>
+        plaintexts[i]?.code ?? (await fallbackCodeFor(privateKeyJwk, ciphertext)),
+    ),
   );
   const disclosures = buildDisclosures(
     codes,

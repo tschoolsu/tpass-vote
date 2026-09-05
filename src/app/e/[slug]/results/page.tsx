@@ -45,7 +45,8 @@ export default async function ResultsPage({
 }) {
   const { slug } = await params;
   const session = await tpass.getSession();
-  // 明確 select：**絕對不要把 sealedBox 撈進來**。它是整個票匭的密文（每張票約 600 bytes），
+  // 明確 select：**絕對不要把 sealedBox 撈進來**。它是整個票匭的密文（每張票約 3.2 KB——
+  // 選票加了定長填充消除長度側通道之後，比舊格式大約 5 倍），
   // 這一頁只需要張數，而張數在 resultsJson 裡。撈了它會讓每個請求多吃幾百 KB，
   // 結果公告後全校同時來看時直接把記憶體推到 pm2 的重啟門檻——壓力測試量過。
   // 要驗算票匭的人走 /api/elections/[slug]/sealed-box 下載。

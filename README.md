@@ -119,9 +119,9 @@ envelope 加密，沒開票私鑰誰都打不開）、**外信封＝你的身分
 | §12 單一選區相對多數決 / §13 複數選區單記不可讓渡 | `seats` + `maxChoices`（`grade_rep` 強制 `maxChoices=1`，見 `election-schema.ts`）、`src/lib/tally.ts` |
 | §26 相對多數、同票由選委會裁決、同額改同意投票 | `src/lib/tally.ts`（`tied` 只標示不裁決） |
 | §26-1 Ⅱ 投票期間 ≥ 48 小時 | `election-schema.ts` 表單驗證 ＋ `advanceStatus()` 開放投票時的閘門 |
-| §26-1 Ⅳ 不記名、可回溯代碼於投票時提供 | `receiptOf()`（密文 SHA-256 前 12 碼），投票成功即顯示 |
+| §26-1 Ⅳ 不記名、可回溯代碼於投票時提供 | `newBallotCode()`：投票人瀏覽器產生 12 碼 hex，封在加密選票內部，投票成功當下顯示（伺服器看不到它） |
 | §26-1 Ⅳ 記錄去識別化個別意思 | `src/lib/disclosure.ts`、`Election.disclosuresJson` |
-| §26-1 Ⅳ **不得記錄代碼與選舉人之連結** | 彌封時刪除 `EncryptedBallot`（`tally/actions.ts` 的 `sealElection`） |
+| §26-1 Ⅳ **不得記錄代碼與選舉人之連結** | 兩層：代碼只存在於密文內部（無開票私鑰算不出來，含伺服器與 DB 讀取者）＋ 彌封時刪除 `EncryptedBallot`（`sealElection`）。投票期間另將 `t_vote` 排除在每日備份外 |
 | §26-1 Ⅴ 第三份公告附刊名冊與個別意思 | 結果頁的名冊區塊（登入會員可見）與去識別化明細表 |
 | §26-1 Ⅵ 程式碼與運作資訊公開 | 本 repo 為 public；彌封快照 `/api/elections/<slug>/sealed-box` |
 | §26-1 Ⅶ 選票載明號次、姓名、相片 | 候選人登記時相片必填（`register/actions.ts`），選票與候選卡皆顯示 |

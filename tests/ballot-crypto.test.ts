@@ -6,8 +6,9 @@ import {
   encryptBallot,
   decryptBallot,
   isValidCiphertextShape,
-  receiptOf,
+  fallbackCodeFor,
   newBallotCode,
+  sha256Hex,
   type BallotInput,
 } from "@/lib/ballot-crypto";
 
@@ -185,16 +186,36 @@ describe("可回溯代碼", () => {
     for (const c of codes) expect(c).toMatch(/^[0-9a-f]{12}$/);
   });
 
-  it("receiptOf 仍是密文 sha256 前 12 碼（只用於解不開的票）", async () => {
-    const { publicKeyJwk } = await generateTallyKeyPair();
-    const { ciphertext } = await encryptBallot(publicKeyJwk, input);
-    expect(await receiptOf(ciphertext)).toMatch(/^[0-9a-f]{12}$/);
-  });
-
-  it("伺服器拿不到代碼：代碼不出現在密文字串裡", async () => {
+  it("伺服器拿不到代碼：代碼不在密文字串裡，也算不出來", async () => {
     const { publicKeyJwk } = await generateTallyKeyPair();
     const { ciphertext, code } = await encryptBallot(publicKeyJwk, input);
     expect(ciphertext).not.toContain(code);
-    expect(await receiptOf(ciphertext)).not.toBe(code);
+    // 密文雜湊是彌封前 DB 讀取者唯一算得出來的東西，它不等於代碼。
+    expect((await sha256Hex(ciphertext)).slice(0, 12)).not.toBe(code);
+  });
+
+  // 解不開的票沒有內部代碼，明細仍需要代碼欄位。如果那個 fallback 是密文雜湊，
+  // 有 DB 讀權限的人就能算出來反查回 voterId——而且只要有寫權限、把某張票改壞
+  // 一個 byte，就能把「特定一個人」推進這條路徑再精準反查。
+  it("解不開的票：代碼靠私鑰派生，沒有私鑰的人算不出來", async () => {
+    const a = await generateTallyKeyPair();
+    const b = await generateTallyKeyPair();
+    const { ciphertext } = await encryptBallot(a.publicKeyJwk, input);
+
+    const code = await fallbackCodeFor(a.privateKeyJwk, ciphertext);
+    expect(code).toMatch(/^[0-9a-f]{12}$/);
+    expect(
+      (await sha256Hex(ciphertext)).slice(0, 12),
+      "fallback 代碼可以用純雜湊算出來，去匿名化防線破了",
+    ).not.toBe(code);
+    expect(await fallbackCodeFor(b.privateKeyJwk, ciphertext)).not.toBe(code);
+  });
+
+  it("解不開的票：兩位選委拿同一把私鑰會算出同一個代碼（明細才對得起來）", async () => {
+    const { publicKeyJwk, privateKeyJwk } = await generateTallyKeyPair();
+    const { ciphertext } = await encryptBallot(publicKeyJwk, input);
+    expect(await fallbackCodeFor(privateKeyJwk, ciphertext)).toBe(
+      await fallbackCodeFor(privateKeyJwk, ciphertext),
+    );
   });
 });
