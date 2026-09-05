@@ -4,7 +4,7 @@
 // 面板會用到；本編輯器已無 legalTag 選擇 UI，兩種入口的差異只在呼叫端傳的 legalTag 值）。
 // 存草稿/發布都靠 id 認目標：第一次存檔後用伺服器回的 id 記住自己是誰，之後儲存變成更新
 // 而不是重複新建。markdown 內文一律用 Markdown.tsx 預覽，不用 dangerouslySetInnerHTML。
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Save, Megaphone, Pencil, Eye } from "lucide-react";
 import { Input, Textarea, Button, Badge, Label, cn, ConfirmDialog } from "tpass-ui";
@@ -50,6 +50,9 @@ export function AnnouncementEditor({
   const [error, setError] = useState<string | null>(null);
   const [publishedAtState, setPublishedAtState] = useState(publishedAt);
   const [confirmPublishOpen, setConfirmPublishOpen] = useState(false);
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
 
   function run(fn: () => Promise<ActionResult>) {
     setError(null);
@@ -74,6 +77,25 @@ export function AnnouncementEditor({
     });
   }
 
+  // 「儲存草稿」允許空白（先佔位、之後再補都合理），只有「發布」需要擋——空白發布過去會
+  // 靜默失敗（後端回錯但前端沒地方顯示），現在先在前端擋下並聚焦到有問題的欄位。
+  function handlePublishClick() {
+    if (title.trim() === "") {
+      setFieldError("標題不可留白，請先輸入標題再發布");
+      titleRef.current?.focus();
+      return;
+    }
+    if (body.trim() === "") {
+      setFieldError("內文不可留白，請先輸入內文再發布");
+      setMode("write");
+      // 若目前在「預覽」分頁，textarea 要等這次 render 完成才會掛上 DOM，下一輪事件迴圈再 focus。
+      setTimeout(() => bodyRef.current?.focus(), 0);
+      return;
+    }
+    setFieldError(null);
+    setConfirmPublishOpen(true);
+  }
+
   const fieldId = id ?? "new";
 
   return (
@@ -94,9 +116,13 @@ export function AnnouncementEditor({
       <div>
         <Label htmlFor={`${fieldId}-title`}>標題</Label>
         <Input
+          ref={titleRef}
           id={`${fieldId}-title`}
           value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          onChange={(e) => {
+            setTitle(e.target.value);
+            setFieldError(null);
+          }}
           className="mt-1"
         />
       </div>
@@ -129,9 +155,13 @@ export function AnnouncementEditor({
         </div>
         {mode === "write" ? (
           <Textarea
+            ref={bodyRef}
             id={`${fieldId}-body`}
             value={body}
-            onChange={(e) => setBody(e.target.value)}
+            onChange={(e) => {
+              setBody(e.target.value);
+              setFieldError(null);
+            }}
             rows={8}
             className="mt-1 font-mono text-sm"
           />
@@ -150,7 +180,7 @@ export function AnnouncementEditor({
         <Button
           type="button"
           size="sm"
-          disabled={pending || title.trim() === ""}
+          disabled={pending}
           onClick={() => run(() => saveAnnouncementDraft(electionId, id, legalTag, title, body))}
         >
           <Save className="h-4 w-4" /> 儲存草稿
@@ -159,8 +189,8 @@ export function AnnouncementEditor({
           type="button"
           size="sm"
           variant="primary"
-          disabled={pending || title.trim() === "" || Boolean(publishDisabledReason)}
-          onClick={() => setConfirmPublishOpen(true)}
+          disabled={pending || Boolean(publishDisabledReason)}
+          onClick={handlePublishClick}
         >
           {publishedAtState ? "更新已發布內容" : "發布"}
         </Button>
@@ -173,6 +203,7 @@ export function AnnouncementEditor({
       {publishDisabledReason && (
         <p className="text-xs font-medium text-muted-foreground">{publishDisabledReason}</p>
       )}
+      {fieldError && <p className="font-mono text-xs font-bold text-destructive">{fieldError}</p>}
       {error && <p className="font-mono text-xs font-bold text-destructive">{error}</p>}
       <ConfirmDialog
         open={confirmPublishOpen}
