@@ -61,7 +61,11 @@ export function ReceiptLookup({ slug }: { slug: string }) {
           maxLength={12}
           className="font-mono"
         />
-        <Button type="submit" disabled={query.trim().length === 0 || state.kind === "loading"}>
+        <Button
+          type="submit"
+          disabled={query.trim().length === 0 || state.kind === "loading"}
+          className="shrink-0 whitespace-nowrap"
+        >
           {state.kind === "loading" ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
