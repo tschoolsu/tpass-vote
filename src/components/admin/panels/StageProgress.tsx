@@ -34,14 +34,15 @@ export function StageProgress({
                 "inline-flex items-center gap-1 rounded-md border-2 border-foreground px-2 py-0.5",
                 current && "bg-primary text-primary-foreground",
                 done && "bg-tone-green-badge text-tone-green-text",
-                !current && !done && "bg-card text-muted-foreground/50 border-foreground/30",
+                !current && !done && "bg-card text-muted-foreground border-foreground/30",
               )}
             >
               {done && <CheckCircle2 className="h-3 w-3" />}
               {labels[s]}
               {current && s === "closing" && closingNote && <span className="opacity-80">（{closingNote}）</span>}
             </span>
-            {i < stages.length - 1 && <span className="text-muted-foreground/40">─</span>}
+            {/* 純裝飾連接線，非文字內容，3:1 即可（WCAG 非文字對比）：/75 實測 ≈3.4:1。 */}
+            {i < stages.length - 1 && <span className="text-muted-foreground/75">─</span>}
           </span>
         );
       })}
