@@ -37,11 +37,12 @@ export function Header({ isLoggedIn, loginUrl, logoutUrl, portalUrl, isAdmin }: 
             <span className="rounded-md border-2 border-foreground bg-card px-2 py-0.5 font-mono text-[11px] font-bold text-foreground">
               已登入
             </span>
-            {/* 登出：POST 到自己的 route，清掉本服務 cookie 後鏈到 auth 登出。 */}
-            <form method="post" action={logoutUrl}>
+            {/* 登出：POST 到自己的 route，清掉本服務 cookie 後鏈到 auth 登出。
+                點擊區加大到 44px 高並留出間距，降低跟旁邊「管理後台」/badge 的誤觸機率。 */}
+            <form method="post" action={logoutUrl} className="ml-1">
               <button
                 type="submit"
-                className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors duration-200"
+                className="inline-flex h-11 items-center justify-center rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors duration-200 hover:bg-card hover:text-foreground"
               >
                 登出
               </button>
