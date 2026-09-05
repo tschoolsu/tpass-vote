@@ -1,7 +1,7 @@
 "use client";
 // 選舉建立／編輯共用表單。new/page.tsx 與 [id]/edit/page.tsx 都用這份，
 // 差別只在傳入的 server action 與初始值——驗證規則集中在 election-schema.ts，這裡不重寫規則。
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { Input, Select, Label, Button } from "tpass-ui";
 import {
   ELECTION_KINDS,
@@ -10,6 +10,25 @@ import {
   type ElectionFormResult,
   type ElectionFormValues,
 } from "@/app/admin/elections/election-schema";
+
+// slug 建議規則：標題裡有可用的英數字就轉成 slug；中文標題轉不出英文，
+// 退回「年份 + 類型」的樣板（例如 2026-leader）。只在新增模式、且使用者
+// 還沒手動編輯過 slug 欄位時套用，不覆蓋既有選舉或使用者已打的字。
+const KIND_SLUG_PART: Record<ElectionFormValues["kind"], string> = {
+  leader: "leader",
+  grade_rep: "grade-rep",
+  other: "election",
+};
+
+function suggestSlug(title: string, kind: ElectionFormValues["kind"]): string {
+  const year = new Date().getFullYear();
+  const latinPart = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const base = latinPart.length >= 2 ? `${year}-${latinPart}` : `${year}-${KIND_SLUG_PART[kind]}`;
+  return base.slice(0, 50).replace(/-+$/, "");
+}
 
 export interface ElectionFormInitial {
   title?: string;
@@ -50,31 +69,64 @@ export function ElectionForm({
   const fe = state?.fieldErrors ?? {};
   const sv = state?.values;
 
+  // slug 自動建議：edit 模式或已有初始 slug 就當作「使用者已決定」，不自動改動（會動到既有網址）。
+  const slugRef = useRef<HTMLInputElement>(null);
+  const [slugEdited, setSlugEdited] = useState(mode === "edit" || Boolean(initial?.slug));
+  const [titleValue, setTitleValue] = useState(sv?.title ?? initial?.title ?? "");
+  const [kindValue, setKindValue] = useState<ElectionFormValues["kind"]>(
+    (sv?.kind as ElectionFormValues["kind"] | undefined) ?? initial?.kind ?? "leader",
+  );
+
+  useEffect(() => {
+    if (mode !== "create" || slugEdited || !titleValue.trim()) return;
+    if (slugRef.current) slugRef.current.value = suggestSlug(titleValue, kindValue);
+  }, [mode, slugEdited, titleValue, kindValue]);
+
   return (
     <form action={formAction} className="flex flex-col gap-4">
       <div>
         <Label htmlFor="title">選舉名稱</Label>
-        <Input id="title" name="title" required defaultValue={sv?.title ?? initial?.title} className="mt-1" />
+        <Input
+          id="title"
+          name="title"
+          required
+          defaultValue={sv?.title ?? initial?.title}
+          onChange={(e) => setTitleValue(e.target.value)}
+          className="mt-1"
+        />
         {fe.title && <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.title}</p>}
       </div>
 
       <div>
         <Label htmlFor="slug">slug（網址代稱）</Label>
         <Input
+          ref={slugRef}
           id="slug"
           name="slug"
           required
           defaultValue={sv?.slug ?? initial?.slug}
+          onChange={() => setSlugEdited(true)}
           placeholder="2026-student-leader"
           className="mt-1 font-mono"
         />
-        <p className="mt-1 text-xs text-muted-foreground">只能是小寫英數與連字號，需唯一，投票網址為 /e/&lt;slug&gt;。</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {mode === "create"
+            ? "只能是小寫英數與連字號，需唯一，投票網址為 /e/<slug>。已依標題預填建議值，可直接改。"
+            : "只能是小寫英數與連字號，需唯一，投票網址為 /e/<slug>。"}
+        </p>
         {fe.slug && <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.slug}</p>}
       </div>
 
       <div>
         <Label htmlFor="kind">類型</Label>
-        <Select id="kind" name="kind" required defaultValue={sv?.kind ?? initial?.kind ?? "leader"} className="mt-1">
+        <Select
+          id="kind"
+          name="kind"
+          required
+          defaultValue={sv?.kind ?? initial?.kind ?? "leader"}
+          onChange={(e) => setKindValue(e.target.value as ElectionFormValues["kind"])}
+          className="mt-1"
+        >
           {ELECTION_KINDS.map((k) => (
             <option key={k} value={k}>
               {ELECTION_KIND_LABEL[k]}
