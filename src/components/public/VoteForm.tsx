@@ -249,6 +249,7 @@ export function VoteForm({
                 type="button"
                 disabled={blank}
                 variant={approvals[target.id] === true ? "primary" : "default"}
+                aria-pressed={approvals[target.id] === true}
                 onClick={() => setApproval(target.id, true)}
               >
                 同意罷免
@@ -257,6 +258,7 @@ export function VoteForm({
                 type="button"
                 disabled={blank}
                 variant={approvals[target.id] === false ? "destructive" : "default"}
+                aria-pressed={approvals[target.id] === false}
                 onClick={() => setApproval(target.id, false)}
               >
                 不同意罷免
@@ -305,6 +307,7 @@ export function VoteForm({
                     size="sm"
                     disabled={blank}
                     variant={value === true ? "primary" : "default"}
+                    aria-pressed={value === true}
                     onClick={() => setApproval(c.id, true)}
                   >
                     同意
@@ -314,6 +317,7 @@ export function VoteForm({
                     size="sm"
                     disabled={blank}
                     variant={value === false ? "destructive" : "default"}
+                    aria-pressed={value === false}
                     onClick={() => setApproval(c.id, false)}
                   >
                     不同意
