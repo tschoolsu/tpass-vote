@@ -44,21 +44,24 @@ export default async function HomePage({
 
   const admin = isAdmin(session);
 
-  const elections = isLoggedIn
-    ? await prisma.election.findMany({
-        where: { status: { not: "draft" }, hiddenAt: null },
-        select: {
-          slug: true,
-          title: true,
-          kind: true,
-          status: true,
-          registrationStartsAt: true,
-          registrationEndsAt: true,
-          votingStartsAt: true,
-          votingEndsAt: true,
-        },
-      })
-    : [];
+  // 未登入只列「已公告結果」的選舉：卡片一律連到選舉詳情頁，該頁對 published 狀態
+  // 只給「查看結果」CTA（不給登記／投票入口），見 src/app/e/[slug]/page.tsx 的 CTA()。
+  // 進行中（registration/campaigning/voting/closed/sealed）的選舉不對未登入者列出。
+  const elections = await prisma.election.findMany({
+    where: isLoggedIn
+      ? { status: { not: "draft" }, hiddenAt: null }
+      : { status: "published", hiddenAt: null },
+    select: {
+      slug: true,
+      title: true,
+      kind: true,
+      status: true,
+      registrationStartsAt: true,
+      registrationEndsAt: true,
+      votingStartsAt: true,
+      votingEndsAt: true,
+    },
+  });
   elections.sort(
     (a, b) => (STATUS_PRIORITY[a.status] ?? 99) - (STATUS_PRIORITY[b.status] ?? 99),
   );
@@ -91,7 +94,7 @@ export default async function HomePage({
         </section>
 
         <section className="max-w-6xl mx-auto px-4 sm:px-6 pb-16">
-          {!isLoggedIn ? (
+          {!isLoggedIn && (
             <div className="rounded-2xl border-2 border-dashed border-foreground/30 p-10 text-center">
               <div className="flex flex-wrap items-center justify-center gap-3">
                 <a
@@ -125,57 +128,66 @@ export default async function HomePage({
                 </a>
               </p>
             </div>
-          ) : elections.length === 0 ? (
+          )}
+
+          {isLoggedIn && elections.length === 0 && (
             <div className="rounded-2xl border-2 border-dashed border-foreground/30 p-12 text-center">
               <VoteIcon className="mx-auto h-10 w-10 text-muted-foreground" />
               <p className="mt-3 font-bold">目前沒有公告中的選舉</p>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {elections.map((e) => {
-                const relevantDate =
-                  e.status === "registration"
-                    ? e.registrationEndsAt
-                    : e.status === "voting"
-                      ? e.votingEndsAt
-                      : e.status === "campaigning"
-                        ? e.votingStartsAt
-                        : null;
-                return (
-                  <div
-                    key={e.slug}
-                    className="group relative flex flex-col gap-3 rounded-2xl border-2 border-foreground bg-card p-5 shadow-[4px_4px_0_0_var(--color-foreground)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[6px_6px_0_0_var(--color-foreground)] focus-within:-translate-y-0.5 focus-within:shadow-[6px_6px_0_0_var(--color-foreground)]"
-                  >
-                    <Link
-                      href={`/e/${e.slug}`}
-                      aria-label={`查看 ${e.title}`}
-                      className="absolute inset-0 z-0 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    />
+          )}
 
-                    <div className="flex items-center justify-between">
-                      <StatusBadge status={e.status} />
-                      <span className="font-mono text-[11px] font-bold text-muted-foreground">
-                        {KIND_LABEL[e.kind] ?? e.kind}
-                      </span>
+          {elections.length > 0 && (
+            <div className={!isLoggedIn ? "mt-8" : undefined}>
+              {!isLoggedIn && (
+                <h2 className="mb-3 font-extrabold text-lg">已公告結果的選舉</h2>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {elections.map((e) => {
+                  const relevantDate =
+                    e.status === "registration"
+                      ? e.registrationEndsAt
+                      : e.status === "voting"
+                        ? e.votingEndsAt
+                        : e.status === "campaigning"
+                          ? e.votingStartsAt
+                          : null;
+                  return (
+                    <div
+                      key={e.slug}
+                      className="group relative flex flex-col gap-3 rounded-2xl border-2 border-foreground bg-card p-5 shadow-[4px_4px_0_0_var(--color-foreground)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[6px_6px_0_0_var(--color-foreground)] focus-within:-translate-y-0.5 focus-within:shadow-[6px_6px_0_0_var(--color-foreground)]"
+                    >
+                      <Link
+                        href={`/e/${e.slug}`}
+                        aria-label={`查看 ${e.title}`}
+                        className="absolute inset-0 z-0 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      />
+
+                      <div className="flex items-center justify-between">
+                        <StatusBadge status={e.status} />
+                        <span className="font-mono text-[11px] font-bold text-muted-foreground">
+                          {KIND_LABEL[e.kind] ?? e.kind}
+                        </span>
+                      </div>
+
+                      <h2 className="font-extrabold text-lg leading-tight">{e.title}</h2>
+
+                      {relevantDate && (
+                        <p className="text-sm font-medium text-foreground/70">
+                          {e.status === "registration" && `登記截止 ${formatDateTime(relevantDate)}`}
+                          {e.status === "voting" && `投票截止 ${formatDateTime(relevantDate)}`}
+                          {e.status === "campaigning" && `投票將於 ${formatDateTime(relevantDate)} 開始`}
+                        </p>
+                      )}
+
+                      <div className="mt-auto flex items-center justify-between font-bold">
+                        <span>{CTA_LABEL[e.status] ?? "查看詳情"}</span>
+                        <ArrowUpRight className="h-5 w-5 transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+                      </div>
                     </div>
-
-                    <h2 className="font-extrabold text-lg leading-tight">{e.title}</h2>
-
-                    {relevantDate && (
-                      <p className="text-sm font-medium text-foreground/70">
-                        {e.status === "registration" && `登記截止 ${formatDateTime(relevantDate)}`}
-                        {e.status === "voting" && `投票截止 ${formatDateTime(relevantDate)}`}
-                        {e.status === "campaigning" && `投票將於 ${formatDateTime(relevantDate)} 開始`}
-                      </p>
-                    )}
-
-                    <div className="mt-auto flex items-center justify-between font-bold">
-                      <span>{CTA_LABEL[e.status] ?? "查看詳情"}</span>
-                      <ArrowUpRight className="h-5 w-5 transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           )}
         </section>
