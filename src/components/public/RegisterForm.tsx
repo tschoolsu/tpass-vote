@@ -372,7 +372,7 @@ export function RegisterForm({
 
       <Button type="submit" variant="primary" disabled={submitting || uploading}>
         {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-        送出登記
+        {submitting ? "送出中…" : "送出登記"}
       </Button>
     </form>
   );
