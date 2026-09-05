@@ -1,6 +1,7 @@
 // 頂部導覽列。Server Component：登入/登出都是純連結與表單，不需 client 互動。
 import Link from "next/link";
 import { PortalLink } from "@/components/common/PortalLink";
+import { tpass } from "@/config/auth";
 
 interface HeaderProps {
   isLoggedIn: boolean;
@@ -10,7 +11,12 @@ interface HeaderProps {
   isAdmin?: boolean;
 }
 
-export function Header({ isLoggedIn, loginUrl, logoutUrl, portalUrl, isAdmin }: HeaderProps) {
+export async function Header({ isLoggedIn, loginUrl, logoutUrl, portalUrl, isAdmin }: HeaderProps) {
+  // 呼叫端只傳 isLoggedIn/isAdmin 兩個布林值，這裡自己再讀一次 session 取 email——
+  // 投票是身分敏感的行為，共用裝置上要讓使用者確認自己現在是哪個帳號，不能只顯示「已登入」。
+  // 本地驗章是純運算（EdDSA + JWKS 快取），多讀一次成本可忽略；比起把 email 一路
+  // 從 9 個呼叫端 prop-drill 進來，這樣改動範圍小很多。
+  const session = isLoggedIn ? await tpass.getSession() : null;
   return (
     <header className="sticky top-0 z-50 h-16 bg-background/90 backdrop-blur-md border-b-2 border-foreground/20">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 h-full flex items-center justify-between">
@@ -34,8 +40,11 @@ export function Header({ isLoggedIn, loginUrl, logoutUrl, portalUrl, isAdmin }: 
                 管理後台
               </Link>
             )}
-            <span className="rounded-md border-2 border-foreground bg-card px-2 py-0.5 font-mono text-[11px] font-bold text-foreground">
-              已登入
+            <span
+              className="max-w-[8rem] truncate rounded-md border-2 border-foreground bg-card px-2 py-0.5 font-mono text-[11px] font-bold text-foreground sm:max-w-[16rem]"
+              title={session?.email}
+            >
+              {session?.email ?? "已登入"}
             </span>
             {/* 登出：POST 到自己的 route，清掉本服務 cookie 後鏈到 auth 登出。
                 點擊區加大到 44px 高並留出間距，降低跟旁邊「管理後台」/badge 的誤觸機率。 */}
