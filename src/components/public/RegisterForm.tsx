@@ -365,7 +365,7 @@ export function RegisterForm({
       </Card>
 
       {error && (
-        <p className="rounded-xl border-2 border-destructive bg-card px-4 py-3 font-bold text-destructive">
+        <p role="alert" className="rounded-xl border-2 border-destructive bg-card px-4 py-3 font-bold text-destructive">
           {error}
         </p>
       )}

@@ -54,7 +54,7 @@ export function InitiateRecallForm({ officeId }: { officeId: string }) {
       </label>
 
       {error && (
-        <p className="flex items-start gap-1.5 rounded-xl border-2 border-destructive bg-card p-3 text-sm font-bold text-destructive">
+        <p role="alert" className="flex items-start gap-1.5 rounded-xl border-2 border-destructive bg-card p-3 text-sm font-bold text-destructive">
           <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" /> {error}
         </p>
       )}

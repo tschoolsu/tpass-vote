@@ -64,7 +64,7 @@ export function ConfirmActionButton({
       >
         {pending ? (pendingLabel ?? "處理中…") : label}
       </Button>
-      {error && <p className="font-mono text-xs font-bold text-destructive">{error}</p>}
+      {error && <p role="alert" className="font-mono text-xs font-bold text-destructive">{error}</p>}
       {confirmMessage && (
         <ConfirmDialog
           open={confirmOpen}

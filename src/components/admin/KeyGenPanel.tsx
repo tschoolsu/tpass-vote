@@ -182,7 +182,7 @@ export function KeyGenPanel({
         </>
       )}
 
-      {error && <p className="mt-3 font-mono text-xs font-bold text-destructive">{error}</p>}
+      {error && <p role="alert" className="mt-3 font-mono text-xs font-bold text-destructive">{error}</p>}
     </div>
   );
 }

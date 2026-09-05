@@ -40,7 +40,7 @@ export function RedoElectionButton({ electionId, className }: { electionId: stri
       >
         <RotateCcw className="h-3.5 w-3.5" /> {pending ? "處理中…" : "作廢並重辦"}
       </Button>
-      {error && <p className="font-mono text-xs font-bold text-destructive">{error}</p>}
+      {error && <p role="alert" className="font-mono text-xs font-bold text-destructive">{error}</p>}
       <ConfirmDialog
         open={confirmOpen}
         title="確定要作廢本場並重辦嗎？"

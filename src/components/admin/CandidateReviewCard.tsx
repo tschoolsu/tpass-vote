@@ -172,7 +172,7 @@ export function CandidateReviewCard({
             </div>
           </div>
 
-          {error && <p className="font-mono text-xs font-bold text-destructive">{error}</p>}
+          {error && <p role="alert" className="font-mono text-xs font-bold text-destructive">{error}</p>}
         </div>
       )}
 

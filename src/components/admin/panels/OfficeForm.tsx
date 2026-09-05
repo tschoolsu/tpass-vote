@@ -149,7 +149,7 @@ export function OfficeForm({
         <Textarea id="office-note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={2000} className="mt-1 min-h-20" />
       </div>
 
-      {error && <p className="font-mono text-sm font-bold text-destructive">{error}</p>}
+      {error && <p role="alert" className="font-mono text-sm font-bold text-destructive">{error}</p>}
 
       <Button type="submit" variant="primary" disabled={submitting}>
         {submitting && <Loader2 className="h-4 w-4 animate-spin" />}

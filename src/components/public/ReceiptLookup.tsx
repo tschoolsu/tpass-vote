@@ -85,12 +85,12 @@ export function ReceiptLookup({ slug }: { slug: string }) {
         </div>
       )}
       {state.kind === "missing" && (
-        <p className="mt-3 flex items-center gap-1.5 font-bold text-destructive">
+        <p role="alert" className="mt-3 flex items-center gap-1.5 font-bold text-destructive">
           <XCircle className="h-4 w-4" /> 查無此收據
         </p>
       )}
       {state.kind === "error" && (
-        <p className="mt-3 font-bold text-destructive">查詢失敗，請稍後再試。</p>
+        <p role="alert" className="mt-3 font-bold text-destructive">查詢失敗，請稍後再試。</p>
       )}
     </div>
   );

@@ -50,7 +50,10 @@ export function RosterImportForm({ electionId }: { electionId: string }) {
         <Upload className="h-4 w-4" /> {pending ? "匯入中…" : "匯入名冊"}
       </Button>
       {message && (
-        <p className={`font-mono text-xs font-bold ${message.ok ? "text-primary" : "text-destructive"}`}>
+        <p
+          role={message.ok ? undefined : "alert"}
+          className={`font-mono text-xs font-bold ${message.ok ? "text-primary" : "text-destructive"}`}
+        >
           {message.text}
         </p>
       )}

@@ -113,7 +113,7 @@ export function RecallSignaturePanel({
               </Button>
             </div>
           )}
-          {error && <p className="mt-2 text-sm font-bold text-destructive">{error}</p>}
+          {error && <p role="alert" className="mt-2 text-sm font-bold text-destructive">{error}</p>}
         </div>
       ) : (
         <p className="mt-3 text-sm font-medium text-muted-foreground">

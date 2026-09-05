@@ -51,7 +51,7 @@ export function TallyPanel({
 
   if (!ballotMode || !Array.isArray(sealedBox)) {
     return (
-      <p className="font-bold text-sm text-destructive">
+      <p role="alert" className="font-bold text-sm text-destructive">
         選舉資料不完整（缺少投票模式或票匭快照），無法開票，請聯絡開發團隊確認資料狀態。
       </p>
     );

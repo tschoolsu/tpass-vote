@@ -177,7 +177,7 @@ export function TallyClient({
             <RefreshCcw className="h-4 w-4" /> 清除金鑰檔
           </Button>
         </div>
-        {error && <p className="mt-2 font-mono text-xs font-bold text-destructive">{error}</p>}
+        {error && <p role="alert" className="mt-2 font-mono text-xs font-bold text-destructive">{error}</p>}
         <p className="mt-2 font-mono text-[11px] text-muted-foreground">選舉 slug：{slug}</p>
       </Card>
 
@@ -212,7 +212,7 @@ export function TallyClient({
                 >
                   建立重選場次
                 </Button>
-                {runoffMsg && <p className="mt-1 font-mono text-xs font-bold">{runoffMsg}</p>}
+                {runoffMsg && <p role="alert" className="mt-1 font-mono text-xs font-bold">{runoffMsg}</p>}
               </div>
             </div>
           )}
@@ -256,7 +256,7 @@ export function TallyClient({
             <Button type="button" variant="primary" disabled={busy} onClick={handleSubmit}>
               <Send className="h-4 w-4" /> {busy ? "提交中…" : "提交計票結果"}
             </Button>
-            {submitMsg && <p className="mt-2 font-mono text-xs font-bold">{submitMsg}</p>}
+            {submitMsg && <p role="alert" className="mt-2 font-mono text-xs font-bold">{submitMsg}</p>}
           </div>
         </Card>
       )}

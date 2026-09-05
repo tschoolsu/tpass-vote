@@ -94,7 +94,7 @@ export function ElectionForm({
           onChange={(e) => setTitleValue(e.target.value)}
           className="mt-1"
         />
-        {fe.title && <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.title}</p>}
+        {fe.title && <p role="alert" className="mt-1 font-mono text-xs font-bold text-destructive">{fe.title}</p>}
       </div>
 
       <div>
@@ -114,7 +114,7 @@ export function ElectionForm({
             ? "只能是小寫英數與連字號，需唯一，投票網址為 /e/<slug>。已依標題預填建議值，可直接改。"
             : "只能是小寫英數與連字號，需唯一，投票網址為 /e/<slug>。"}
         </p>
-        {fe.slug && <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.slug}</p>}
+        {fe.slug && <p role="alert" className="mt-1 font-mono text-xs font-bold text-destructive">{fe.slug}</p>}
       </div>
 
       <div>
@@ -133,7 +133,7 @@ export function ElectionForm({
             </option>
           ))}
         </Select>
-        {fe.kind && <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.kind}</p>}
+        {fe.kind && <p role="alert" className="mt-1 font-mono text-xs font-bold text-destructive">{fe.kind}</p>}
       </div>
 
       <div>
@@ -163,7 +163,7 @@ export function ElectionForm({
             defaultValue={sv?.seats ?? initial?.seats ?? 1}
             className="mt-1"
           />
-          {fe.seats && <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.seats}</p>}
+          {fe.seats && <p role="alert" className="mt-1 font-mono text-xs font-bold text-destructive">{fe.seats}</p>}
         </div>
         <div>
           <Label htmlFor="maxChoices">每票最多可選（多選模式用）</Label>
@@ -177,7 +177,7 @@ export function ElectionForm({
             className="mt-1"
           />
           {fe.maxChoices && (
-            <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.maxChoices}</p>
+            <p role="alert" className="mt-1 font-mono text-xs font-bold text-destructive">{fe.maxChoices}</p>
           )}
           <p className="mt-1 text-xs font-medium text-muted-foreground">
             學生代表採單記不可讓渡（§13），只能填 1。
@@ -208,7 +208,7 @@ export function ElectionForm({
               className="mt-1"
             />
             {fe.registrationEndsAt && (
-              <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.registrationEndsAt}</p>
+              <p role="alert" className="mt-1 font-mono text-xs font-bold text-destructive">{fe.registrationEndsAt}</p>
             )}
           </div>
         </div>
@@ -240,14 +240,14 @@ export function ElectionForm({
               className="mt-1"
             />
             {fe.votingEndsAt && (
-              <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.votingEndsAt}</p>
+              <p role="alert" className="mt-1 font-mono text-xs font-bold text-destructive">{fe.votingEndsAt}</p>
             )}
           </div>
         </div>
       </fieldset>
 
       {state?.error && !state.ok && (
-        <p className="font-mono text-sm font-bold text-destructive">{state.error}</p>
+        <p role="alert" className="font-mono text-sm font-bold text-destructive">{state.error}</p>
       )}
 
       <Button type="submit" variant="primary" disabled={pending}>
