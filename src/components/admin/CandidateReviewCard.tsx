@@ -2,9 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, RotateCcw, XCircle, Paperclip } from "lucide-react";
+import { CheckCircle2, RotateCcw, XCircle, Paperclip, User } from "lucide-react";
 import { Badge, Button, Textarea, ConfirmDialog } from "tpass-ui";
 import { CANDIDATE_STATUS_META } from "@/components/admin/status";
+import { Markdown } from "@/components/public/Markdown";
 import {
   approveCandidate,
   sendBackForFix,
@@ -16,6 +17,8 @@ interface CandidateMember {
   name: string;
   email: string;
   grade?: string;
+  // 大頭照的 Upload id（走 /api/photos/[id]），見 src/components/public/shared.ts 的 MemberInfo。
+  photo?: string | null;
 }
 
 export function CandidateReviewCard({
@@ -71,12 +74,26 @@ export function CandidateReviewCard({
 
       <div>
         <p className="font-bold text-sm mb-1">候選人</p>
-        <ul className="flex flex-col gap-0.5">
+        <ul className="flex flex-col gap-1.5">
           {members.map((m, i) => (
-            <li key={i} className="text-sm font-medium">
-              {m.name}
-              {m.grade && <span className="text-muted-foreground"> · {m.grade}</span>}
-              <span className="font-mono text-[11px] text-muted-foreground"> · {m.email}</span>
+            <li key={i} className="flex items-center gap-2 text-sm font-medium">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-foreground bg-muted">
+                {m.photo ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- 來自我方 /api/photos，不是外部圖，不需要 next/image。
+                  <img
+                    src={`/api/photos/${m.photo}`}
+                    alt={`${m.name}大頭照`}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <User className="h-4 w-4 text-muted-foreground" aria-label={`${m.name}無大頭照`} />
+                )}
+              </div>
+              <span>
+                {m.name}
+                {m.grade && <span className="text-muted-foreground"> · {m.grade}</span>}
+                <span className="font-mono text-[11px] text-muted-foreground"> · {m.email}</span>
+              </span>
             </li>
           ))}
         </ul>
@@ -84,7 +101,9 @@ export function CandidateReviewCard({
 
       <div>
         <p className="font-bold text-sm mb-1">政見</p>
-        <p className="text-sm font-medium whitespace-pre-wrap">{candidate.platform}</p>
+        <div className="text-sm font-medium">
+          <Markdown text={candidate.platform} />
+        </div>
       </div>
 
       {attachmentFiles.length > 0 && (
