@@ -46,6 +46,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "election not found" }, { status: 404 });
   }
 
+  // 上傳只在候選人登記期開放（registration／campaigning）；其餘狀態（含 draft、投票中、
+  // 結束多年的 closed/sealed/published）一律拒絕，避免被當免費圖床（見 kind=photo 公開路徑）。
+  if (election.status !== "registration" && election.status !== "campaigning") {
+    return NextResponse.json({ error: "這場選舉目前的階段不開放上傳" }, { status: 403 });
+  }
+
   if (file.size > MAX_UPLOAD_BYTES) {
     return NextResponse.json({ error: "file too large" }, { status: 413 });
   }

@@ -100,6 +100,29 @@ describe("檔案端點的邊界", () => {
     const res = await fetch(`${APP_URL}/api/upload`, { method: "POST", body: new FormData() });
     expect(res.status).toBe(401);
   });
+
+  it("上傳端點依選舉狀態把關：registration 期間放行，published 之後拒絕", async () => {
+    const upload = async (targetElectionId: string) => {
+      const form = new FormData();
+      form.set("electionId", targetElectionId);
+      form.set("file", new File([new Uint8Array([1, 2, 3])], "a.png", { type: "image/png" }));
+      return fetch(`${APP_URL}/api/upload`, {
+        method: "POST",
+        headers: { Cookie: cookieHeader(await signTestToken(CAND)) },
+        body: form,
+      });
+    };
+
+    await prisma.election.update({ where: { id: electionId }, data: { status: "registration" } });
+    const ok = await upload(electionId);
+    expect(ok.status).toBe(200);
+
+    await prisma.election.update({ where: { id: electionId }, data: { status: "published" } });
+    const rejected = await upload(electionId);
+    expect(rejected.status).toBe(403);
+    const body = await rejected.json();
+    expect(body.error).toContain("階段不開放上傳");
+  });
 });
 
 describe("彌封快照端點（§26-1 Ⅵ）", () => {
