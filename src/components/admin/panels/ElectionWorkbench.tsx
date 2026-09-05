@@ -420,7 +420,9 @@ export function ElectionWorkbench({
                   <Trash2 className="h-3.5 w-3.5" /> 刪除此投票
                 </>
               }
-              variant="destructive"
+              // 軟刪除、可還原，不需要跟「現在該做什麼」搶視覺權重——降級為 ghost，
+              // 破壞性語氣留給 ConfirmDialog 的確認文案去講。
+              variant="ghost"
               size="sm"
               confirmMessage={`確定要刪除「${election.title}」嗎？\n\n這是軟刪除：資料完全保留、隨時可還原，但會從首頁與所有列表消失。`}
             />
