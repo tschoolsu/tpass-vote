@@ -48,12 +48,13 @@ export function ElectionForm({
   }, [state]);
 
   const fe = state?.fieldErrors ?? {};
+  const sv = state?.values;
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
       <div>
         <Label htmlFor="title">選舉名稱</Label>
-        <Input id="title" name="title" required defaultValue={initial?.title} className="mt-1" />
+        <Input id="title" name="title" required defaultValue={sv?.title ?? initial?.title} className="mt-1" />
         {fe.title && <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.title}</p>}
       </div>
 
@@ -63,7 +64,7 @@ export function ElectionForm({
           id="slug"
           name="slug"
           required
-          defaultValue={initial?.slug}
+          defaultValue={sv?.slug ?? initial?.slug}
           placeholder="2026-student-leader"
           className="mt-1 font-mono"
         />
@@ -73,7 +74,7 @@ export function ElectionForm({
 
       <div>
         <Label htmlFor="kind">類型</Label>
-        <Select id="kind" name="kind" required defaultValue={initial?.kind ?? "leader"} className="mt-1">
+        <Select id="kind" name="kind" required defaultValue={sv?.kind ?? initial?.kind ?? "leader"} className="mt-1">
           {ELECTION_KINDS.map((k) => (
             <option key={k} value={k}>
               {ELECTION_KIND_LABEL[k]}
@@ -85,7 +86,7 @@ export function ElectionForm({
 
       <div>
         <Label htmlFor="officeId">對應職務（選填）</Label>
-        <Select id="officeId" name="officeId" defaultValue={initial?.officeId ?? ""} className="mt-1">
+        <Select id="officeId" name="officeId" defaultValue={sv?.officeId ?? initial?.officeId ?? ""} className="mt-1">
           <option value="">新職務（公告結果時自動建立）</option>
           {offices.map((o) => (
             <option key={o.id} value={o.id}>
@@ -107,7 +108,7 @@ export function ElectionForm({
             type="number"
             min={1}
             required
-            defaultValue={initial?.seats ?? 1}
+            defaultValue={sv?.seats ?? initial?.seats ?? 1}
             className="mt-1"
           />
           {fe.seats && <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.seats}</p>}
@@ -120,7 +121,7 @@ export function ElectionForm({
             type="number"
             min={1}
             required
-            defaultValue={initial?.maxChoices ?? 1}
+            defaultValue={sv?.maxChoices ?? initial?.maxChoices ?? 1}
             className="mt-1"
           />
           {fe.maxChoices && (
@@ -141,7 +142,7 @@ export function ElectionForm({
               id="registrationStartsAt"
               name="registrationStartsAt"
               type="datetime-local"
-              defaultValue={toDatetimeLocalValue(initial?.registrationStartsAt)}
+              defaultValue={sv?.registrationStartsAt ?? toDatetimeLocalValue(initial?.registrationStartsAt)}
               className="mt-1"
             />
           </div>
@@ -151,7 +152,7 @@ export function ElectionForm({
               id="registrationEndsAt"
               name="registrationEndsAt"
               type="datetime-local"
-              defaultValue={toDatetimeLocalValue(initial?.registrationEndsAt)}
+              defaultValue={sv?.registrationEndsAt ?? toDatetimeLocalValue(initial?.registrationEndsAt)}
               className="mt-1"
             />
             {fe.registrationEndsAt && (
@@ -173,7 +174,7 @@ export function ElectionForm({
               id="votingStartsAt"
               name="votingStartsAt"
               type="datetime-local"
-              defaultValue={toDatetimeLocalValue(initial?.votingStartsAt)}
+              defaultValue={sv?.votingStartsAt ?? toDatetimeLocalValue(initial?.votingStartsAt)}
               className="mt-1"
             />
           </div>
@@ -183,7 +184,7 @@ export function ElectionForm({
               id="votingEndsAt"
               name="votingEndsAt"
               type="datetime-local"
-              defaultValue={toDatetimeLocalValue(initial?.votingEndsAt)}
+              defaultValue={sv?.votingEndsAt ?? toDatetimeLocalValue(initial?.votingEndsAt)}
               className="mt-1"
             />
             {fe.votingEndsAt && (

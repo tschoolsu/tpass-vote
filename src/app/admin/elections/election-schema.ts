@@ -81,6 +81,32 @@ export interface ElectionFormResult {
   fieldErrors?: Partial<Record<keyof ElectionFormValues, string>>;
   electionId?: string;
   slug?: string;
+  // 送出失敗時，把使用者原始輸入帶回去，讓表單用它回填而不是清空
+  // （React 19 的 <form action> 在 action 結束後會用當下的 defaultValue reset 表單）。
+  values?: Record<string, string>;
+}
+
+const FORM_FIELD_KEYS = [
+  "title",
+  "slug",
+  "kind",
+  "seats",
+  "maxChoices",
+  "registrationStartsAt",
+  "registrationEndsAt",
+  "votingStartsAt",
+  "votingEndsAt",
+  "officeId",
+] as const;
+
+// 從 FormData 撈出使用者原始輸入（字串形式，未經 zod 轉換），供送出失敗時回填表單。
+export function extractFormValues(formData: FormData): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const key of FORM_FIELD_KEYS) {
+    const v = formData.get(key);
+    if (typeof v === "string") values[key] = v;
+  }
+  return values;
 }
 
 export function parseElectionForm(
@@ -107,7 +133,12 @@ export function parseElectionForm(
     }
     return {
       ok: false,
-      result: { ok: false, error: "表單有欄位不正確，請檢查後再送出", fieldErrors },
+      result: {
+        ok: false,
+        error: "表單有欄位不正確，請檢查後再送出",
+        fieldErrors,
+        values: extractFormValues(formData),
+      },
     };
   }
   return { ok: true, data: parsed.data };

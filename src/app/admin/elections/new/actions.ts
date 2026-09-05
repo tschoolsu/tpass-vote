@@ -2,7 +2,11 @@
 
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
-import { parseElectionForm, type ElectionFormResult } from "@/app/admin/elections/election-schema";
+import {
+  parseElectionForm,
+  extractFormValues,
+  type ElectionFormResult,
+} from "@/app/admin/elections/election-schema";
 
 export async function createElection(
   _prev: ElectionFormResult | null,
@@ -16,12 +20,23 @@ export async function createElection(
 
   const existing = await prisma.election.findUnique({ where: { slug: v.slug }, select: { id: true } });
   if (existing) {
-    return { ok: false, error: "這個 slug 已被使用", fieldErrors: { slug: "已被使用" } };
+    return {
+      ok: false,
+      error: "這個 slug 已被使用",
+      fieldErrors: { slug: "已被使用" },
+      values: extractFormValues(formData),
+    };
   }
 
   if (v.officeId) {
     const office = await prisma.office.findUnique({ where: { id: v.officeId }, select: { id: true } });
-    if (!office) return { ok: false, error: "選定的對應職務不存在，請重新選擇" };
+    if (!office) {
+      return {
+        ok: false,
+        error: "選定的對應職務不存在，請重新選擇",
+        values: extractFormValues(formData),
+      };
+    }
   }
 
   const created = await prisma.election.create({
