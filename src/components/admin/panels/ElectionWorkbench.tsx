@@ -163,10 +163,10 @@ export function ElectionWorkbench({
   ];
   const votingBlocked = next === "voting" && votingPrecheck.some((c) => !c.ok);
   const previewBallotMode = isRecall
-    ? "approval（同意／不同意）"
+    ? "同意／不同意模式"
     : approvedCandidates.length > election.seats
-      ? "choose（超額，相對多數）"
-      : "approval（同額，同意/不同意）";
+      ? "多選模式（超額，相對多數）"
+      : "同意／不同意模式（同額）";
 
   const resultAnnouncement = election.announcements.find((a) => a.legalTag === "result") ?? null;
   const resultsExist = election.resultsJson !== null;
