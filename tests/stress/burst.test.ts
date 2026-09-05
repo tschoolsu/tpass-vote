@@ -124,8 +124,8 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
 
     expect(rejected, "有票在連線池排隊時直接爆掉——投票尖峰會掉票").toHaveLength(0);
     expect(httpFailed, "有票被伺服器用非 200 拒絕，但這些人都在名冊內").toHaveLength(0);
-    // 請求真的打到伺服器的證據：HTTP 回應數＝送出數，且 DB 票數與名冊人數對得上。
-    expect(settled, "HTTP 回應數與送出的請求數對不上").toHaveLength(jobs.length);
+    // 請求真的打到伺服器的證據：DB 票數剛好等於名冊人數。settled.length 恆等於
+    // jobs.length（Promise.allSettled 的定義），拿它斷言證明不了任何事，這裡不寫。
     expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(VOTERS);
     console.log(`  ▸ RSS 灌爆前後：${rssBefore ?? "?"}MB → ${appRssMb() ?? "?"}MB`);
     trackRss("投票灌爆");
@@ -192,18 +192,22 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
 
     // 重連可能需要一兩次嘗試，但不該永久失敗。HTTP 200 只代表 action 正常返回、不代表票真的
     // 進了 DB（castBallot 對業務拒絕也回 200），所以每次都直接查 DB 當作真正的判準。
+    //
+    // 判準不能用 votedAt：survivor 在第一個 case（全員投票）就已經投過票，votedAt 早非
+    // null，拿它當迴圈條件會讓迴圈直接跳過、一次 HTTP 都沒送出也能通過斷言。改成比對
+    // 「這次砍線後送出的這張新密文」有沒有真的覆寫進他的票位——這才是「砍線後還能收票」。
     let lastStatus = -1;
-    let voter = await prisma.voter.findUniqueOrThrow({
-      where: { electionId_email: { electionId, email: survivor.email } },
-    });
-    for (let i = 0; i < 5 && voter.votedAt === null; i++) {
+    let stored = false;
+    for (let i = 0; i < 5 && !stored; i++) {
       const res = await castViaHttp(survivor, ct);
       lastStatus = res.status;
-      voter = await prisma.voter.findUniqueOrThrow({
+      const voter = await prisma.voter.findUniqueOrThrow({
         where: { electionId_email: { electionId, email: survivor.email } },
       });
+      const ballot = await prisma.encryptedBallot.findUnique({ where: { voterId: voter.id } });
+      stored = ballot?.ciphertext === ct;
     }
-    expect(voter.votedAt, `PG 連線被砍後再也收不到票（最後一次 HTTP ${lastStatus}）`).not.toBeNull();
+    expect(stored, `PG 連線被砍後再也收不到票（最後一次 HTTP ${lastStatus}）`).toBe(true);
 
     // HTTP server 也要能自己回來。連線池裡其他沒被上面那次收票用到的閒置連線，可能還沒被
     // 伺服器發現已經斷線——要等它真的被拿去用一次才會踢掉重建，所以這裡跟上面一樣重試幾次，
@@ -227,6 +231,18 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
       })),
     );
 
+    // 這批人在第一個 case（全員投票）就已經投過一次，票位不是空的——先記下競速前的舊密文，
+    // 之後才分得清「密文沒變＝被拒絕、維持舊票」（正常）跟「密文變成別的東西＝被寫壞」（不正常）。
+    const raceVoters = await prisma.voter.findMany({
+      where: { electionId, email: { in: latecomers.map((v) => v.email) } },
+      select: { id: true, email: true },
+    });
+    const beforeBallots = await prisma.encryptedBallot.findMany({
+      where: { voterId: { in: raceVoters.map((v) => v.id) } },
+      select: { voterId: true, ciphertext: true },
+    });
+    const beforeCtByVoterId = new Map(beforeBallots.map((b) => [b.voterId, b.ciphertext]));
+
     // 同時發動：一半的票（HTTP，打真正的伺服器）、以及「推進到 closed」（選委在後台按的
     // in-process admin action——這不是投票尖峰的一部分，不必跟著改走 HTTP）。
     const rssBefore = appRssMb();
@@ -247,12 +263,30 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const total = await prisma.encryptedBallot.count({ where: { electionId } });
     expect(total, "票匭張數超過名冊人數＝有人投了不只一張").toBeLessThanOrEqual(VOTERS);
 
-    // 不解析 Flight body，所以逐張比對改成直接查 DB：這批競速密文裡，票匭真的收下幾張。
-    const raceCts = jobs.map((j) => j.ciphertext);
-    const storedRace = await prisma.encryptedBallot.count({
-      where: { electionId, ciphertext: { in: raceCts } },
+    // 不解析 Flight body，所以分不出誰的請求被伺服器判定 ok、誰被拒——但不管輸贏，票位的
+    // 密文只能是兩種值之一：這次送出的新密文（被接受覆寫），或競速前的舊密文（被拒絕、
+    // 原封不動）。出現第三種值＝關票競態把票位寫壞了（例如竄進了別人的密文）。
+    const ctByVoterId = new Map(
+      jobs.map((j) => [raceVoters.find((v) => v.email === j.voter.email)!.id, j.ciphertext]),
+    );
+    const raceBallots = await prisma.encryptedBallot.findMany({
+      where: { voterId: { in: raceVoters.map((v) => v.id) } },
+      select: { voterId: true, ciphertext: true },
     });
-    console.log(`  ▸ ${raceCts.length} 張競速密文裡，票匭收下 ${storedRace} 張`);
+    const emailByVoterId = new Map(raceVoters.map((v) => [v.id, v.email]));
+    let accepted = 0;
+    for (const b of raceBallots) {
+      const submitted = ctByVoterId.get(b.voterId);
+      const beforeCt = beforeCtByVoterId.get(b.voterId) ?? null;
+      if (b.ciphertext === submitted) accepted++;
+      expect(
+        [submitted, beforeCt],
+        `${emailByVoterId.get(b.voterId)} 的票位密文既不是這次送出的、也不是競速前的舊值——被關票競態寫壞了`,
+      ).toContain(b.ciphertext);
+    }
+    console.log(
+      `  ▸ ${latecomers.length} 位競速投票人裡，這次請求被接受覆寫 ${accepted} 張，其餘維持舊票或未投過`,
+    );
 
     // 截止之後補送一張：這個人不該再改得動票匭。這裡不能用「votedAt 是不是 null」判斷——
     // voters[3] 也在前面「投票開放瞬間」那個 case 投過票了，votedAt 早就非 null；真正該守的
@@ -263,7 +297,9 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const before = await prisma.encryptedBallot.findUnique({ where: { voterId: target.id } });
     await castViaHttp(voters[3], jobs[0].ciphertext);
     const after = await prisma.encryptedBallot.findUnique({ where: { voterId: target.id } });
-    expect(after?.ciphertext, "投票已截止，票匭裡的密文卻被改寫了").toBe(before?.ciphertext ?? null);
+    expect(after?.ciphertext ?? null, "投票已截止，票匭裡的密文卻被改寫了").toBe(
+      before?.ciphertext ?? null,
+    );
     console.log(`  ▸ RSS 灌爆前後：${rssBefore ?? "?"}MB → ${appRssMb() ?? "?"}MB`);
     trackRss("截止瞬間");
   });
