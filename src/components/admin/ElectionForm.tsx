@@ -166,7 +166,7 @@ export function ElectionForm({
           {fe.seats && <p className="mt-1 font-mono text-xs font-bold text-destructive">{fe.seats}</p>}
         </div>
         <div>
-          <Label htmlFor="maxChoices">每票最多可選（choose 模式用）</Label>
+          <Label htmlFor="maxChoices">每票最多可選（多選模式用）</Label>
           <Input
             id="maxChoices"
             name="maxChoices"
