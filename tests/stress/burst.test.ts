@@ -115,10 +115,11 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     trackRss("投票灌爆");
   });
 
-  it("同一個人同時送 30 張票，票匭只會留下一張", async () => {
+  it("同一個人同時送 200 張票，票匭只會留下一張", async () => {
+    const SAME_PERSON_BURST = 200;
     const victim = voters[0];
     const jobs = await Promise.all(
-      Array.from({ length: 30 }, (_, i) =>
+      Array.from({ length: SAME_PERSON_BURST }, (_, i) =>
         encryptBallot(publicKeyJwk, {
           v: 1,
           electionId,
@@ -126,13 +127,31 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
         } satisfies BallotPlain),
       ),
     );
+    const start = performance.now();
     const settled = await Promise.allSettled(
       jobs.map((ct) => as(victim, () => castBallot(SLUG, ct))),
     );
+    const wallMs = performance.now() - start;
     const failed = settled.filter(
       (s) => s.status === "rejected" || !(s.value as { ok: boolean }).ok,
     );
-    console.log(`  ▸ 同一人 30 張並發：失敗 ${failed.length}（upsert 競爭）`);
+    const errorSamples = settled
+      .map((s) =>
+        s.status === "rejected"
+          ? String((s as PromiseRejectedResult).reason)
+          : !(s as PromiseFulfilledResult<{ ok: boolean; error?: string }>).value.ok
+            ? (s as PromiseFulfilledResult<{ ok: boolean; error?: string }>).value.error
+            : null,
+      )
+      .filter((e): e is string => e !== null);
+    const deadlocks = errorSamples.filter((e) => /deadlock|serializ/i.test(e));
+    console.log(
+      `  ▸ 同一人 ${SAME_PERSON_BURST} 張並發：牆鐘 ${Math.round(wallMs)}ms・失敗 ${failed.length}（upsert 競爭）・` +
+        `疑似 deadlock/serialization 失敗 ${deadlocks.length}`,
+    );
+    if (errorSamples.length > 0) {
+      console.log(`  ▸ 錯誤樣本：${errorSamples.slice(0, 3).join(" / ")}`);
+    }
 
     const voter = await prisma.voter.findUniqueOrThrow({
       where: { electionId_email: { electionId, email: victim.email } },
@@ -140,6 +159,7 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const mine = await prisma.encryptedBallot.count({ where: { voterId: voter.id } });
     expect(mine, "同一人留下超過一張票＝一人一票被打破").toBe(1);
     expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(VOTERS);
+    expect(deadlocks, "castBallot 的 $transaction 在高併發同一人重投下出現 deadlock/serialization failure").toHaveLength(0);
   });
 
   it("PostgreSQL 連線被砍光（模擬 9/2 的 PG 重啟）之後仍能收票", async () => {

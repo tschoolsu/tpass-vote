@@ -63,8 +63,10 @@ export function cookieHeader(token: string, name = "tpass_token"): string {
   return `${name}=${token}`;
 }
 
-/** 啟動 JWKS stub；回傳關閉函式。 */
-export function startJwksServer(): Promise<{ close: () => Promise<void>; server: Server }> {
+/** 啟動 JWKS stub；回傳關閉函式。預設監聽 TEST_PORTS.jwks，k6 前置腳本用別的 port 時可覆寫。 */
+export function startJwksServer(
+  port: number = TEST_PORTS.jwks,
+): Promise<{ close: () => Promise<void>; server: Server }> {
   const body = JSON.stringify({ keys: [TEST_PUBLIC_JWK] });
   const server = createServer((req, res) => {
     if (req.url?.startsWith("/.well-known/jwks.json")) {
@@ -79,7 +81,7 @@ export function startJwksServer(): Promise<{ close: () => Promise<void>; server:
 
   return new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(TEST_PORTS.jwks, "127.0.0.1", () => {
+    server.listen(port, "127.0.0.1", () => {
       resolve({
         server,
         close: () => new Promise<void>((done) => server.close(() => done())),

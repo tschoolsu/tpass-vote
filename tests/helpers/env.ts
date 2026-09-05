@@ -2,8 +2,8 @@
 // 這些值同時餵給 vitest 的 globalSetup（起 JWKS stub 與 next server）與各測試檔。
 
 export const TEST_PORTS = {
-  jwks: 3901,
-  app: 3906,
+  jwks: 39012,
+  app: 39066,
 } as const;
 
 export const JWKS_URL = `http://127.0.0.1:${TEST_PORTS.jwks}/.well-known/jwks.json`;
