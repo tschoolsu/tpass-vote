@@ -211,7 +211,10 @@ export function VoteForm({
           </div>
 
           {error && (
-            <p className="mt-4 rounded-xl border-2 border-destructive bg-card px-4 py-3 font-bold text-destructive">
+            <p
+              role="alert"
+              className="mt-4 rounded-xl border-2 border-destructive bg-card px-4 py-3 font-bold text-destructive"
+            >
               {error}
             </p>
           )}
@@ -355,7 +358,10 @@ export function VoteForm({
       </button>
 
       {error && (
-        <p className="rounded-xl border-2 border-destructive bg-card px-4 py-3 font-bold text-destructive">
+        <p
+          role="alert"
+          className="rounded-xl border-2 border-destructive bg-card px-4 py-3 font-bold text-destructive"
+        >
           {error}
         </p>
       )}
