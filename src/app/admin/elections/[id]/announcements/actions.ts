@@ -15,6 +15,7 @@ import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { upsertOfficesForElection } from "@/lib/office-upsert";
 import type { TallyResult } from "@/lib/tally";
+import type { Prisma } from "@/generated/prisma/client";
 
 export type ActionResult = { ok: true; id: string } | { ok: false; error: string };
 
@@ -83,7 +84,7 @@ export async function publishAnnouncement(
   title: string,
   body: string,
 ): Promise<ActionResult> {
-  await requireAdmin(`/admin/elections/${electionId}`);
+  const admin = await requireAdmin(`/admin/elections/${electionId}`);
   const t = title.trim();
   if (t === "") return { ok: false, error: "請輸入標題" };
 
@@ -142,6 +143,20 @@ export async function publishAnnouncement(
           );
         }
       }
+
+      await tx.electionAuditLog.create({
+        data: {
+          electionId,
+          actorEmail: admin.email,
+          action: "publish_announcement",
+          summary:
+            legalTag === "result" && isFirstPublish
+              ? `發布結果公告「${t}」，選舉狀態轉為 published`
+              : `發布公告「${t}」`,
+          diff: { announcementId: saved.id, legalTag, isFirstPublish } as Prisma.InputJsonValue,
+        },
+      });
+
       return saved.id;
     }, { timeout: 10_000 });
   } catch (e) {

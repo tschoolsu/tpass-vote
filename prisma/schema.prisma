@@ -50,6 +50,7 @@ model Election {
   voters           Voter[]
   ballots          EncryptedBallot[]
   recallSignatures RecallSignature[]
+  auditLogs        ElectionAuditLog[]
   office           Office?           @relation("ElectionFillsOffice", fields: [officeId], references: [id])
   targetOffice     Office?           @relation("RecallTargetOffice", fields: [recallTargetOfficeId], references: [id])
 
@@ -171,6 +172,23 @@ model Office {
   recalls          Election[]      @relation("RecallTargetOffice")
 
   @@index([isVacant])
+}
+
+// 選舉層級稽核留痕：金鑰、狀態機推進、名冊異動、公告發布、結果提交等關鍵動作各留一筆，
+// 供選後爭議還原「誰、何時、做了什麼」，也讓選委能自證清白。diff 只放足以重建事實的最小
+// 資料（狀態轉換 from/to、名冊筆數、結果關鍵數字…），不得塞整份 resultsJson 或整份名冊。
+model ElectionAuditLog {
+  id         String   @id @default(cuid())
+  electionId String
+  election   Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  actorEmail String
+  action     String // advance_status | submit_results | import_roster | remove_voter | hide_election | restore_election | save_public_key | publish_announcement | redo_election
+  summary    String // 人類可讀一行
+  diff       Json // 最小可還原資料，形狀依 action 而定
+
+  createdAt DateTime @default(now())
+
+  @@index([electionId, createdAt])
 }
 
 // 職務編輯留痕：每次自動 upsert 或手動編輯都寫一筆，供「誰、何時、改了什麼」重播。

@@ -11,6 +11,7 @@ import { randomInt, createHash } from "node:crypto";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
+import type { Prisma } from "@/generated/prisma/client";
 import { authConfig } from "@/config/auth";
 import { resultAnnouncementDraft, type ResultCandidateInfo } from "@/lib/result-announcement";
 import { cloneElection } from "@/lib/clone-election";
@@ -109,7 +110,7 @@ export async function submitResults(
   results: unknown,
   disclosures: unknown,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const parsed = tallyResultSchema.safeParse(results);
   if (!parsed.success) return { ok: false, error: "計票結果格式不正確" };
@@ -126,6 +127,7 @@ export async function submitResults(
   });
   if (!election) return { ok: false, error: "找不到選舉" };
   if (election.status !== "sealed") return { ok: false, error: "選舉尚未彌封，不能提交結果" };
+  const isResubmit = election.resultsJson != null;
 
   const box = Array.isArray(election.sealedBox) ? (election.sealedBox as string[]) : [];
   const boxSize = box.length;
@@ -176,6 +178,24 @@ export async function submitResults(
     await tx.election.update({
       where: { id: electionId },
       data: { resultsJson: r, disclosuresJson: parsedDisclosures.data },
+    });
+
+    await tx.electionAuditLog.create({
+      data: {
+        electionId,
+        actorEmail: admin.email,
+        action: "submit_results",
+        summary: isResubmit ? "重新提交計票結果（覆寫舊結果）" : "提交計票結果",
+        diff: {
+          resubmit: isResubmit,
+          totalBallots: r.totalBallots,
+          validCount: r.validCount,
+          blankCount: r.blankCount,
+          invalidCount: r.invalidCount,
+          electedCount: r.candidates.filter((c) => c.elected).length,
+          hasTie: r.hasTie,
+        } as Prisma.InputJsonValue,
+      },
     });
 
     const existingResultAnnouncement = await tx.announcement.findFirst({

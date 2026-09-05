@@ -8,6 +8,7 @@ const TABLES = [
   "Announcement",
   "Candidate",
   "Voter",
+  "ElectionAuditLog",
   "OfficeEditLog",
   "Upload",
   "Election",

@@ -31,7 +31,7 @@ export async function savePublicKey(
   publicKeyJwk: unknown,
   shares: number,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   if (shares !== 1 && shares !== 2) return { ok: false, error: "分持份數只能是 1 或 2" };
   if (!isPublicOnlyRsaJwk(publicKeyJwk)) {
@@ -44,17 +44,28 @@ export async function savePublicKey(
     return { ok: false, error: "此選舉已有開票金鑰，不可重新產生（會讓既有金鑰檔失效）" };
   }
 
-  await prisma.election.update({
-    where: { id: electionId },
-    data: { tallyPublicKeyJwk: publicKeyJwk as Prisma.InputJsonValue, keyShares: shares },
-  });
+  await prisma.$transaction([
+    prisma.election.update({
+      where: { id: electionId },
+      data: { tallyPublicKeyJwk: publicKeyJwk as Prisma.InputJsonValue, keyShares: shares },
+    }),
+    prisma.electionAuditLog.create({
+      data: {
+        electionId,
+        actorEmail: admin.email,
+        action: "save_public_key",
+        summary: `設定開票金鑰（分持 ${shares} 份）`,
+        diff: { keyShares: shares } as Prisma.InputJsonValue,
+      },
+    }),
+  ]);
 
   revalidatePath(`/admin/elections/${electionId}`);
   return { ok: true };
 }
 
 export async function advanceStatus(electionId: string): Promise<ActionResult> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const election = await prisma.election.findUnique({
     where: { id: electionId },
@@ -133,6 +144,17 @@ export async function advanceStatus(electionId: string): Promise<ActionResult> {
       where: { id: electionId, status: current }, // 樂觀鎖：防兩個選委同時推進
       data: { status: next, ...(ballotMode ? { ballotMode } : {}) },
     });
+    if (updated.count > 0) {
+      await tx.electionAuditLog.create({
+        data: {
+          electionId,
+          actorEmail: admin.email,
+          action: "advance_status",
+          summary: `狀態推進：${current} → ${next}`,
+          diff: { from: current, to: next, ...(ballotMode ? { ballotMode } : {}) } as Prisma.InputJsonValue,
+        },
+      });
+    }
     return { updatedCount: updated.count };
   }, { timeout: 10_000 });
 
@@ -227,7 +249,7 @@ export async function createByElection(sourceId: string): Promise<ElectionCloneR
 
 // 金鑰遺失重辦：複製名冊與已核准候選人，原場同一交易內作廢（軟刪除），新場從頭走金鑰產生。
 export async function redoElection(electionId: string): Promise<ElectionCloneResult> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const source = await prisma.election.findUnique({ where: { id: electionId } });
   if (!source) return { ok: false, error: "找不到選舉" };
@@ -243,6 +265,15 @@ export async function redoElection(electionId: string): Promise<ElectionCloneRes
       copyRoster: true,
     });
     await tx.election.update({ where: { id: source.id }, data: { hiddenAt: new Date() } });
+    await tx.electionAuditLog.create({
+      data: {
+        electionId: source.id,
+        actorEmail: admin.email,
+        action: "redo_election",
+        summary: `金鑰遺失重辦，原場次隱藏，新場次 id＝${created.id}`,
+        diff: { newElectionId: created.id } as Prisma.InputJsonValue,
+      },
+    });
     return created;
   }, { timeout: 10_000 });
 
@@ -254,16 +285,27 @@ export async function redoElection(electionId: string): Promise<ElectionCloneRes
 // 軟刪除：只設 hiddenAt 旗標，資料（候選人／名冊／選票／公告）完全保留，不做 prisma.delete。
 // 隱藏後從所有公開端與管理端預設列表消失，但可隨時還原。
 export async function hideElection(electionId: string): Promise<ActionResult> {
-  await requireAdmin(`/admin/elections/${electionId}`);
+  const admin = await requireAdmin(`/admin/elections/${electionId}`);
 
   const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) return { ok: false, error: "找不到選舉" };
   if (election.hiddenAt) return { ok: false, error: "此選舉已經是隱藏狀態" };
 
-  await prisma.election.update({
-    where: { id: electionId },
-    data: { hiddenAt: new Date() },
-  });
+  await prisma.$transaction([
+    prisma.election.update({
+      where: { id: electionId },
+      data: { hiddenAt: new Date() },
+    }),
+    prisma.electionAuditLog.create({
+      data: {
+        electionId,
+        actorEmail: admin.email,
+        action: "hide_election",
+        summary: "隱藏（軟刪除）此選舉",
+        diff: {} as Prisma.InputJsonValue,
+      },
+    }),
+  ]);
 
   revalidatePath(`/admin/elections/${electionId}`);
   revalidatePath("/admin");
@@ -273,16 +315,27 @@ export async function hideElection(electionId: string): Promise<ActionResult> {
 }
 
 export async function restoreElection(electionId: string): Promise<ActionResult> {
-  await requireAdmin(`/admin/elections/${electionId}`);
+  const admin = await requireAdmin(`/admin/elections/${electionId}`);
 
   const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) return { ok: false, error: "找不到選舉" };
   if (!election.hiddenAt) return { ok: false, error: "此選舉未處於隱藏狀態" };
 
-  await prisma.election.update({
-    where: { id: electionId },
-    data: { hiddenAt: null },
-  });
+  await prisma.$transaction([
+    prisma.election.update({
+      where: { id: electionId },
+      data: { hiddenAt: null },
+    }),
+    prisma.electionAuditLog.create({
+      data: {
+        electionId,
+        actorEmail: admin.email,
+        action: "restore_election",
+        summary: "還原此選舉（取消隱藏）",
+        diff: {} as Prisma.InputJsonValue,
+      },
+    }),
+  ]);
 
   revalidatePath(`/admin/elections/${electionId}`);
   revalidatePath("/admin");
