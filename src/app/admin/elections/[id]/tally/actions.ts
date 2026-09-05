@@ -30,25 +30,34 @@ export async function sealElection(electionId: string): Promise<ActionResult> {
     return { ok: false, error: "只有已截止（closed）的選舉才能彌封" };
   }
 
-  const ballots = await prisma.encryptedBallot.findMany({
-    where: { electionId },
-    select: { ciphertext: true },
-  });
-
-  // Fisher–Yates（node:crypto randomInt，非 Math.random）：
-  // 快照順序必須與寫入順序無關，否則洗牌形同虛設。
-  const box = ballots.map((b) => b.ciphertext);
-  for (let i = box.length - 1; i > 0; i--) {
-    const j = randomInt(i + 1);
-    [box[i], box[j]] = [box[j], box[i]];
-  }
-
-  const sealedHash = createHash("sha256").update(JSON.stringify(box)).digest("hex");
-
   try {
     await prisma.$transaction(async (tx) => {
+      // 收票（castBallot）對這一列取 FOR SHARE，這裡取 FOR UPDATE 與之互斥。
+      // 票匭快照「必須」在鎖之後才讀：讀在交易外的話，一張正在落地的票會落在
+      // 快照與 deleteMany 之間——被刪掉、卻不在快照裡。投票人收到 ok，票卻永久
+      // 消失，不計票也查不出來。這是彌封路徑上最不可偵測的一種失敗。
+      const [locked] = await tx.$queryRaw<{ status: string }[]>`
+        SELECT status FROM "Election" WHERE id = ${electionId} FOR UPDATE
+      `;
+      if (!locked || locked.status !== "closed") throw new Error("CONFLICT");
+
+      const ballots = await tx.encryptedBallot.findMany({
+        where: { electionId },
+        select: { ciphertext: true },
+      });
+
+      // Fisher–Yates（node:crypto randomInt，非 Math.random）：
+      // 快照順序必須與寫入順序無關，否則洗牌形同虛設。
+      const box = ballots.map((b) => b.ciphertext);
+      for (let i = box.length - 1; i > 0; i--) {
+        const j = randomInt(i + 1);
+        [box[i], box[j]] = [box[j], box[i]];
+      }
+
+      const sealedHash = createHash("sha256").update(JSON.stringify(box)).digest("hex");
+
       const sealed = await tx.election.updateMany({
-        where: { id: electionId, status: "closed" }, // 樂觀鎖：防兩個選委同時彌封
+        where: { id: electionId, status: "closed" }, // 樂觀鎖：與上面的列鎖雙保險
         data: {
           sealedBox: box,
           sealedHash,

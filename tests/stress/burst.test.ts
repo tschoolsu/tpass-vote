@@ -230,6 +230,24 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const total = await prisma.encryptedBallot.count({ where: { electionId } });
     expect(total, "票匭張數超過名冊人數＝有人投了不只一張").toBeLessThanOrEqual(VOTERS);
 
+    // 上面那條太鬆：有票在關票之後竄進來，張數照樣不超過名冊人數。真正要守的是
+    // 「回應與票匭必須一致」——每張密文都是唯一的，可以逐張比對到底進去了沒有。
+    const acceptedCts = jobs.filter((_, i) => ballots[i].ok).map((j) => j.ciphertext);
+    const rejectedCts = jobs.filter((_, i) => !ballots[i].ok).map((j) => j.ciphertext);
+
+    const storedAccepted = await prisma.encryptedBallot.count({
+      where: { electionId, ciphertext: { in: acceptedCts } },
+    });
+    expect(
+      storedAccepted,
+      "有投票人收到 ok，票卻不在票匭裡（關票競態把它吃掉了）",
+    ).toBe(acceptedCts.length);
+
+    const storedRejected = await prisma.encryptedBallot.count({
+      where: { electionId, ciphertext: { in: rejectedCts } },
+    });
+    expect(storedRejected, "被拒絕的票竟然寫進了票匭").toBe(0);
+
     const after = await as(voters[3], () =>
       castBallot(SLUG, jobs[0].ciphertext),
     );
