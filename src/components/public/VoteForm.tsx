@@ -244,13 +244,14 @@ export function VoteForm({
           </div>
           <div className={cn(OPTION_CARD, blank && "opacity-50")}>
             <p className="font-extrabold">你是否同意罷免？</p>
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex gap-3">
               <Button
                 type="button"
                 disabled={blank}
                 variant={approvals[target.id] === true ? "primary" : "default"}
                 aria-pressed={approvals[target.id] === true}
                 onClick={() => setApproval(target.id, true)}
+                className="h-11 flex-1"
               >
                 同意罷免
               </Button>
@@ -260,6 +261,7 @@ export function VoteForm({
                 variant={approvals[target.id] === false ? "destructive" : "default"}
                 aria-pressed={approvals[target.id] === false}
                 onClick={() => setApproval(target.id, false)}
+                className="h-11 flex-1"
               >
                 不同意罷免
               </Button>
@@ -301,24 +303,24 @@ export function VoteForm({
             return (
               <div key={c.id} className={cn(OPTION_CARD, blank && "opacity-50")}>
                 <CandidateInfo kind={kind} candidate={c} expanded />
-                <div className="mt-3 flex gap-2">
+                <div className="mt-3 flex gap-3">
                   <Button
                     type="button"
-                    size="sm"
                     disabled={blank}
                     variant={value === true ? "primary" : "default"}
                     aria-pressed={value === true}
                     onClick={() => setApproval(c.id, true)}
+                    className="h-11 flex-1"
                   >
                     同意
                   </Button>
                   <Button
                     type="button"
-                    size="sm"
                     disabled={blank}
                     variant={value === false ? "destructive" : "default"}
                     aria-pressed={value === false}
                     onClick={() => setApproval(c.id, false)}
+                    className="h-11 flex-1"
                   >
                     不同意
                   </Button>
@@ -333,13 +335,12 @@ export function VoteForm({
         type="button"
         onClick={toggleBlank}
         className={cn(
-          OPTION_CARD,
-          "text-left font-bold",
-          blank && "bg-muted shadow-[5px_5px_0_0_var(--color-foreground)] -translate-y-0.5",
+          "rounded-xl border-2 border-dashed border-foreground/30 bg-transparent px-4 py-2.5 text-left text-sm font-bold text-muted-foreground transition-colors duration-200 hover:border-foreground/60 hover:text-foreground",
+          blank && "border-solid border-foreground bg-muted text-foreground",
         )}
       >
         {blank ? "✓ 已選擇：投廢票" : "投廢票"}
-        <span className="ml-2 font-normal text-sm text-muted-foreground">
+        <span className="ml-2 font-normal text-xs text-muted-foreground">
           {isRecall ? "（不表態同意或不同意，仍計入投票率）" : "（不支持任何候選人，仍計入投票率）"}
         </span>
       </button>
