@@ -2,9 +2,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { User } from "lucide-react";
 import { PublicShell } from "@/components/public/Shell";
 import { CandidateStatusBadge } from "@/components/public/Badges";
 import { RegisterForm } from "@/components/public/RegisterForm";
+import { Markdown } from "@/components/public/Markdown";
 import { Card } from "tpass-ui";
 import { requireSession } from "@/lib/guard";
 import { isAdmin } from "@/config/admin";
@@ -91,6 +93,40 @@ export default async function RegisterPage({
               目前狀態為「{CANDIDATE_STATUS_LABEL[existing.status] ?? existing.status}」，如需修改請聯絡選委會。
             </p>
           )}
+        </Card>
+      )}
+
+      {existing && (
+        <Card className="mt-6">
+          <p className="font-bold">你送出的登記內容</p>
+          <div className="mt-3 flex flex-wrap gap-4">
+            {(existing.members as unknown as MemberInfo[]).map((m, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-foreground bg-muted">
+                  {m.photo ? (
+                    // eslint-disable-next-line @next/next/no-img-element -- 相片來自我方 /api/photos，非外部來源，不需要 next/image 的最佳化。
+                    <img
+                      src={`/api/photos/${m.photo}`}
+                      alt={`${m.name}大頭照`}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <User className="h-5 w-5 text-muted-foreground" />
+                  )}
+                </div>
+                <div>
+                  <p className="font-bold text-sm">{m.name}</p>
+                  <p className="text-xs font-medium text-muted-foreground">{m.grade}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 border-t-2 border-foreground/10 pt-3">
+            <p className="font-bold text-accent text-sm">政見</p>
+            <div className="mt-1.5 text-sm text-foreground/80">
+              <Markdown text={existing.platform} />
+            </div>
+          </div>
         </Card>
       )}
 
