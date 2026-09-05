@@ -342,3 +342,40 @@ describe("彌封的併發安全", () => {
     expect(await prisma.encryptedBallot.count({ where: { electionId: id } })).toBe(0);
   }, 60_000);
 });
+
+// 名冊匯入時會 .trim().toLowerCase()（roster/actions.ts），但 auth 簽出的 token
+// 不保證 email 恆定小寫。讀取端若不正規化，同一個人只因大小寫不同就會被判「不在名冊中」。
+// 這是可用性風險（合法選舉人投不了票），不是灌票風險。
+describe("名冊比對的 email 正規化", () => {
+  const slug = "email-normalize";
+  const MIXED = { email: "Mixed.Case@Test.Local", name: "大小寫混用的人" };
+  let electionId: string;
+  let publicKeyJwk: JsonWebKey;
+  let candidateId: string;
+
+  beforeAll(async () => {
+    await resetDb();
+    const created = await makeElection({ slug });
+    electionId = created.electionId!;
+    const keys = await generateKeys(electionId, slug);
+    publicKeyJwk = keys.publicKeyJwk;
+    await importVoters(electionId, [MIXED, CAND]);
+    await advanceTo(electionId, "registration");
+    await registerAs(slug, electionId, CAND);
+    const [cand] = await approveAll(electionId);
+    candidateId = cand.id;
+    await advanceTo(electionId, "voting");
+  }, 60_000);
+
+  it("名冊存的是小寫、token 帶大寫，仍然投得了票", async () => {
+    const stored = await prisma.voter.findMany({ where: { electionId }, select: { email: true } });
+    expect(stored.map((v) => v.email)).toContain("mixed.case@test.local");
+
+    const r = await voteAs(slug, electionId, MIXED, publicKeyJwk, {
+      type: "choose",
+      candidateIds: [candidateId],
+    });
+    expect(r.ok, r.ok ? "" : r.error).toBe(true);
+    expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(1);
+  });
+});

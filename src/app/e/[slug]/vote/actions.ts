@@ -20,7 +20,7 @@ export async function castBallot(slug: string, ciphertext: string): Promise<Cast
   if (!election) return { ok: false, error: "找不到這場選舉" };
 
   const voter = await prisma.voter.findUnique({
-    where: { electionId_email: { electionId: election.id, email: session.email } },
+    where: { electionId_email: { electionId: election.id, email: session.email.trim().toLowerCase() } },
   });
 
   const decision = castDecision(election, voter !== null, new Date());
