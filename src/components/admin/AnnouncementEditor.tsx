@@ -7,7 +7,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Save, Megaphone, Pencil, Eye } from "lucide-react";
-import { Input, Textarea, Button, Badge, Label, cn } from "tpass-ui";
+import { Input, Textarea, Button, Badge, Label, cn, ConfirmDialog } from "tpass-ui";
 import { Markdown } from "@/components/public/Markdown";
 import {
   saveAnnouncementDraft,
@@ -49,11 +49,13 @@ export function AnnouncementEditor({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [publishedAtState, setPublishedAtState] = useState(publishedAt);
+  const [confirmPublishOpen, setConfirmPublishOpen] = useState(false);
 
   function run(fn: () => Promise<ActionResult>) {
     setError(null);
     startTransition(async () => {
       const result = await fn();
+      setConfirmPublishOpen(false);
       if (!result.ok) {
         setError(result.error);
         return;
@@ -61,6 +63,14 @@ export function AnnouncementEditor({
       setId(result.id);
       onSaved?.(result.id);
       router.refresh();
+    });
+  }
+
+  function doPublish() {
+    run(async () => {
+      const r = await publishAnnouncement(electionId, id, legalTag, title, body);
+      if (r.ok) setPublishedAtState(new Date());
+      return r;
     });
   }
 
@@ -150,13 +160,7 @@ export function AnnouncementEditor({
           size="sm"
           variant="primary"
           disabled={pending || title.trim() === "" || Boolean(publishDisabledReason)}
-          onClick={() =>
-            run(async () => {
-              const r = await publishAnnouncement(electionId, id, legalTag, title, body);
-              if (r.ok) setPublishedAtState(new Date());
-              return r;
-            })
-          }
+          onClick={() => setConfirmPublishOpen(true)}
         >
           {publishedAtState ? "更新已發布內容" : "發布"}
         </Button>
@@ -170,6 +174,19 @@ export function AnnouncementEditor({
         <p className="text-xs font-medium text-muted-foreground">{publishDisabledReason}</p>
       )}
       {error && <p className="font-mono text-xs font-bold text-destructive">{error}</p>}
+      <ConfirmDialog
+        open={confirmPublishOpen}
+        title={legalTag === "result" ? "確定要發布結果公告嗎？" : "確定要發布這則公告嗎？"}
+        description={
+          legalTag === "result"
+            ? "發布後選舉會轉為「已公告結果」狀態，且當選人／罷免結果會立即生效登記到職務清單，無法回復到發布前的狀態。請先確認開票結果無誤。"
+            : "發布後所有登入使用者都看得到，確定內容無誤嗎？"
+        }
+        confirmLabel={pending ? "處理中…" : publishedAtState ? "確定更新" : "確定發布"}
+        pending={pending}
+        onConfirm={doPublish}
+        onCancel={() => setConfirmPublishOpen(false)}
+      />
     </div>
   );
 }

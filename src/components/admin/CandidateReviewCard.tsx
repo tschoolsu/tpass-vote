@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, RotateCcw, XCircle, Paperclip } from "lucide-react";
-import { Badge, Button, Textarea } from "tpass-ui";
+import { Badge, Button, Textarea, ConfirmDialog } from "tpass-ui";
 import { CANDIDATE_STATUS_META } from "@/components/admin/status";
 import {
   approveCandidate,
@@ -41,6 +41,7 @@ export function CandidateReviewCard({
   const [note, setNote] = useState(candidate.reviewNote ?? "");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [confirmRejectOpen, setConfirmRejectOpen] = useState(false);
 
   const members = Array.isArray(candidate.members) ? (candidate.members as CandidateMember[]) : [];
   const meta = CANDIDATE_STATUS_META[candidate.status] ?? CANDIDATE_STATUS_META.pending;
@@ -49,6 +50,7 @@ export function CandidateReviewCard({
     setError(null);
     startTransition(async () => {
       const result = await fn();
+      setConfirmRejectOpen(false);
       if (!result.ok) {
         setError(result.error);
         return;
@@ -144,7 +146,7 @@ export function CandidateReviewCard({
                 size="sm"
                 variant="destructive"
                 disabled={pending}
-                onClick={() => run(() => rejectCandidate(electionId, candidate.id, note || undefined))}
+                onClick={() => setConfirmRejectOpen(true)}
               >
                 <XCircle className="h-4 w-4" /> 拒絕
               </Button>
@@ -154,6 +156,16 @@ export function CandidateReviewCard({
           {error && <p className="font-mono text-xs font-bold text-destructive">{error}</p>}
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmRejectOpen}
+        title="確定要拒絕這組候選人嗎？"
+        description="拒絕後這組候選人無法自行修改重送，且會出現在其登記狀態上。如果只是資料需要補正，請改用「退回補正」。"
+        confirmLabel={pending ? "處理中…" : "確定拒絕"}
+        pending={pending}
+        onConfirm={() => run(() => rejectCandidate(electionId, candidate.id, note || undefined))}
+        onCancel={() => setConfirmRejectOpen(false)}
+      />
     </div>
   );
 }
