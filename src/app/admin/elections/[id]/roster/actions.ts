@@ -5,34 +5,39 @@ import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { LOCKED_STATUSES } from "@/lib/election-status";
+import type { Prisma } from "@/generated/prisma/client";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export type RosterImportResult =
-  | { ok: true; imported: number; skipped: number }
+  | { ok: true; imported: number; skipped: number; skippedLines: { line: number; raw: string }[] }
   | { ok: false; error: string };
 
 export async function importRoster(electionId: string, raw: string): Promise<RosterImportResult> {
-  await requireAdmin(`/admin/elections/${electionId}/roster`);
+  const admin = await requireAdmin(`/admin/elections/${electionId}/roster`);
 
   const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) return { ok: false, error: "找不到選舉" };
 
-  const lines = raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length === 0) return { ok: false, error: "請貼上至少一行" };
+  // 用原始（含空行）分行結果編號，讓回報的「第 N 行」對得上使用者在 textarea 裡看到的行號。
+  const rawLines = raw.split(/\r?\n/);
+  if (rawLines.every((l) => l.trim() === "")) return { ok: false, error: "請貼上至少一行" };
 
   const byEmail = new Map<string, { email: string; name: string | null }>();
-  let invalid = 0;
-  for (const line of lines) {
+  const skippedLines: { line: number; raw: string }[] = [];
+  rawLines.forEach((rawLine, idx) => {
+    const line = rawLine.trim();
+    if (line === "") return;
     const [emailRaw, ...rest] = line.split(",");
     const email = (emailRaw ?? "").trim().toLowerCase();
     const name = rest.join(",").trim() || null;
     if (!EMAIL_RE.test(email)) {
-      invalid++;
-      continue;
+      skippedLines.push({ line: idx + 1, raw: line });
+      return;
     }
     byEmail.set(email, { email, name }); // 同一批貼上內若重複 email，以後面那行為準
-  }
+  });
+  const invalid = skippedLines.length;
   const rows = [...byEmail.values()];
   if (rows.length === 0) return { ok: false, error: "沒有格式正確的 email" };
 
@@ -52,16 +57,28 @@ export async function importRoster(electionId: string, raw: string): Promise<Ros
     );
   }
 
+  // 匯入是分批多筆交易（見上），這裡的留痕是批次結束後的單一總結記錄，不追求與最後一批
+  // 原子綁定——寫入失敗頂多少一筆稽核記錄，不影響名冊資料本身的正確性。
+  await prisma.electionAuditLog.create({
+    data: {
+      electionId,
+      actorEmail: admin.email,
+      action: "import_roster",
+      summary: `匯入名冊 ${rows.length} 筆（略過 ${invalid} 筆格式錯誤）`,
+      diff: { imported: rows.length, skipped: invalid } as Prisma.InputJsonValue,
+    },
+  });
+
   revalidatePath(`/admin/elections/${electionId}/roster`);
   revalidatePath(`/admin/elections/${electionId}`);
   revalidatePath("/admin");
-  return { ok: true, imported: rows.length, skipped: invalid };
+  return { ok: true, imported: rows.length, skipped: invalid, skippedLines };
 }
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
 export async function removeVoter(electionId: string, voterId: string): Promise<ActionResult> {
-  await requireAdmin(`/admin/elections/${electionId}/roster`);
+  const admin = await requireAdmin(`/admin/elections/${electionId}/roster`);
 
   const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) return { ok: false, error: "找不到選舉" };
@@ -74,7 +91,18 @@ export async function removeVoter(electionId: string, voterId: string): Promise<
     return { ok: false, error: "找不到此名冊項目" };
   }
 
-  await prisma.voter.delete({ where: { id: voterId } });
+  await prisma.$transaction([
+    prisma.voter.delete({ where: { id: voterId } }),
+    prisma.electionAuditLog.create({
+      data: {
+        electionId,
+        actorEmail: admin.email,
+        action: "remove_voter",
+        summary: `移除名冊項目：${voter.email}`,
+        diff: { voterId: voter.id, email: voter.email } as Prisma.InputJsonValue,
+      },
+    }),
+  ]);
 
   revalidatePath(`/admin/elections/${electionId}/roster`);
   revalidatePath(`/admin/elections/${electionId}`);

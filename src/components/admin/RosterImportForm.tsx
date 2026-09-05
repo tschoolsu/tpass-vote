@@ -6,11 +6,15 @@ import { Upload } from "lucide-react";
 import { Textarea, Button } from "tpass-ui";
 import { importRoster } from "@/app/admin/elections/[id]/roster/actions";
 
+// 截斷顯示的筆數上限：名冊動輒幾百人，全列出來會把畫面撐爆，只給前 N 筆＋總數。
+const MAX_SHOWN_SKIPPED = 20;
+
 export function RosterImportForm({ electionId }: { electionId: string }) {
   const router = useRouter();
   const [raw, setRaw] = useState("");
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [skippedLines, setSkippedLines] = useState<{ line: number; raw: string }[]>([]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -18,6 +22,7 @@ export function RosterImportForm({ electionId }: { electionId: string }) {
     startTransition(async () => {
       const result = await importRoster(electionId, raw);
       if (!result.ok) {
+        setSkippedLines([]);
         setMessage({ ok: false, text: result.error });
         return;
       }
@@ -25,7 +30,9 @@ export function RosterImportForm({ electionId }: { electionId: string }) {
         ok: true,
         text: `已匯入 ${result.imported} 筆${result.skipped ? `（略過 ${result.skipped} 筆格式錯誤）` : ""}`,
       });
-      setRaw("");
+      setSkippedLines(result.skippedLines);
+      // 有略過的行就留著輸入內容，讓使用者能對照原文找出問題；全部成功才清空。
+      if (result.skippedLines.length === 0) setRaw("");
       router.refresh();
     });
   }
@@ -46,6 +53,21 @@ export function RosterImportForm({ electionId }: { electionId: string }) {
         <p className={`font-mono text-xs font-bold ${message.ok ? "text-primary" : "text-destructive"}`}>
           {message.text}
         </p>
+      )}
+      {skippedLines.length > 0 && (
+        <div className="rounded-xl border-2 border-foreground bg-tone-orange-bg p-2 text-xs font-medium text-tone-orange-text">
+          <p className="font-bold">被略過的行（格式不是「email」或「email,姓名」）：</p>
+          <ul className="mt-1 flex flex-col gap-0.5 font-mono">
+            {skippedLines.slice(0, MAX_SHOWN_SKIPPED).map((s) => (
+              <li key={s.line}>
+                第 {s.line} 行：{s.raw || "（空白）"}
+              </li>
+            ))}
+          </ul>
+          {skippedLines.length > MAX_SHOWN_SKIPPED && (
+            <p className="mt-1">…以及其他共 {skippedLines.length} 筆，其餘未列出。</p>
+          )}
+        </div>
       )}
     </form>
   );
