@@ -8,11 +8,18 @@
 //
 // 併發刻意開到遠超連線池上限（src/lib/db.ts 的 max=10、connectionTimeoutMillis=5000），
 // 因為真實的投票尖峰就是這樣：公告一發，全校在同一分鐘內湧入。
+//
+// 投票本身一律經 HTTP 打真正跑起來的 next start（tests/helpers/action-http.ts），
+// 不在 vitest process 內直接 `import { castBallot }` 呼叫——後者走的是測試 process 自己
+// 的 Prisma pool，appRssMb() 盯的 next start 反而在旁邊閒置，量出來的 RSS／連線池數字
+// 跟正式服務在投票尖峰的行為無關。castBallot 回傳值是 React Flight 編碼，這裡不解析，
+// 一律靠 HTTP 狀態碼＋回 DB 查副作用斷言。
 import { describe, it, expect, beforeAll } from "vitest";
 import { prisma, resetDb } from "../helpers/db";
 import { APP_URL } from "../helpers/env";
 import { as, ADMIN } from "../helpers/session";
 import { signTestToken, cookieHeader, type TestIdentity } from "../helpers/jwks";
+import { callAction } from "../helpers/action-http";
 import {
   advanceTo,
   approveAll,
@@ -25,7 +32,6 @@ import {
   ciphertextFor,
 } from "../helpers/flow";
 import { importRoster } from "@/app/admin/elections/[id]/roster/actions";
-import { castBallot } from "@/app/e/[slug]/vote/actions";
 import { advanceStatus } from "@/app/admin/elections/[id]/actions";
 import { timed } from "../helpers/metrics";
 import { appAlive, appLog, appRssMb } from "../helpers/proc";
@@ -35,6 +41,12 @@ const VOTERS = Number(process.env.BURST_VOTERS ?? 800);
 const BURST = Number(process.env.BURST_CONCURRENCY ?? 250);
 
 const SLUG = "burst-election";
+const VOTE_ROUTE = `/e/${SLUG}/vote`;
+
+/** 投一張票：經 HTTP 打真正的 server action，回傳 HTTP 狀態碼。 */
+function castViaHttp(voter: TestIdentity, ciphertext: string) {
+  return callAction("castBallot", VOTE_ROUTE, [SLUG, ciphertext], { identity: voter });
+}
 const CANDS: TestIdentity[] = Array.from({ length: 3 }, (_, i) => ({
   email: `burst-cand${i}@test.local`,
   name: `候選人${i}`,
@@ -86,28 +98,36 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
       })),
     );
 
-    // 不用 pool 慢慢餵——真的一次全部丟出去。
+    // 不用 pool 慢慢餵——真的一次全部丟給伺服器。
+    const rssBefore = appRssMb();
     const start = performance.now();
     const settled = await Promise.allSettled(
-      jobs.map((job) => as(job.voter, () => castBallot(SLUG, job.ciphertext))),
+      jobs.map((job) => castViaHttp(job.voter, job.ciphertext)),
     );
     const wallMs = performance.now() - start;
 
     const rejected = settled.filter((s) => s.status === "rejected");
-    const refused = settled.filter(
-      (s) => s.status === "fulfilled" && !(s.value as { ok: boolean }).ok,
+    const httpFailed = settled.filter(
+      (s) => s.status === "fulfilled" && s.value.status !== 200,
     );
     console.log(
-      `  ▸ 一次丟 ${jobs.length} 張票：牆鐘 ${Math.round(wallMs)}ms・` +
-        `例外 ${rejected.length}・被拒 ${refused.length}・吞吐 ${Math.round((jobs.length / wallMs) * 1000)}票/秒`,
+      `  ▸ 一次丟 ${jobs.length} 張票（HTTP）：牆鐘 ${Math.round(wallMs)}ms・` +
+        `例外 ${rejected.length}・HTTP 非 200 ${httpFailed.length}・吞吐 ${Math.round((jobs.length / wallMs) * 1000)}票/秒`,
     );
     if (rejected.length > 0) {
       console.log(`  ▸ 例外樣本：${(rejected[0] as PromiseRejectedResult).reason}`);
     }
+    if (httpFailed.length > 0) {
+      const sample = (httpFailed[0] as PromiseFulfilledResult<{ status: number }>).value;
+      console.log(`  ▸ HTTP 失敗樣本：狀態碼 ${sample.status}`);
+    }
 
     expect(rejected, "有票在連線池排隊時直接爆掉——投票尖峰會掉票").toHaveLength(0);
-    expect(refused, "有票被業務邏輯拒絕，但這些人都在名冊內").toHaveLength(0);
+    expect(httpFailed, "有票被伺服器用非 200 拒絕，但這些人都在名冊內").toHaveLength(0);
+    // 請求真的打到伺服器的證據：HTTP 回應數＝送出數，且 DB 票數與名冊人數對得上。
+    expect(settled, "HTTP 回應數與送出的請求數對不上").toHaveLength(jobs.length);
     expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(VOTERS);
+    console.log(`  ▸ RSS 灌爆前後：${rssBefore ?? "?"}MB → ${appRssMb() ?? "?"}MB`);
     trackRss("投票灌爆");
   });
 
@@ -119,30 +139,24 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
         ciphertextFor(publicKeyJwk, electionId, { type: "choose", candidateIds: [candidateIds[i % candidateIds.length]] }),
       ),
     );
+    const rssBefore = appRssMb();
     const start = performance.now();
-    const settled = await Promise.allSettled(
-      jobs.map((ct) => as(victim, () => castBallot(SLUG, ct))),
-    );
+    const settled = await Promise.allSettled(jobs.map((ct) => castViaHttp(victim, ct)));
     const wallMs = performance.now() - start;
-    const failed = settled.filter(
-      (s) => s.status === "rejected" || !(s.value as { ok: boolean }).ok,
+
+    const rejected = settled.filter((s) => s.status === "rejected");
+    // castBallot 裡沒被 CastRejected 攔下的例外（deadlock、serialization failure…）會直接
+    // throw 到 action handler，對 fetch action 而言就是 HTTP 500——不用解析 Flight body
+    // 也看得到。業務層的正常拒絕（ok:false）仍然是 200，不算在這裡面。
+    const httpFailed = settled.filter(
+      (s) => s.status === "fulfilled" && s.value.status !== 200,
     );
-    const errorSamples = settled
-      .map((s) =>
-        s.status === "rejected"
-          ? String((s as PromiseRejectedResult).reason)
-          : !(s as PromiseFulfilledResult<{ ok: boolean; error?: string }>).value.ok
-            ? (s as PromiseFulfilledResult<{ ok: boolean; error?: string }>).value.error
-            : null,
-      )
-      .filter((e): e is string => e !== null);
-    const deadlocks = errorSamples.filter((e) => /deadlock|serializ/i.test(e));
     console.log(
-      `  ▸ 同一人 ${SAME_PERSON_BURST} 張並發：牆鐘 ${Math.round(wallMs)}ms・失敗 ${failed.length}（upsert 競爭）・` +
-        `疑似 deadlock/serialization 失敗 ${deadlocks.length}`,
+      `  ▸ 同一人 ${SAME_PERSON_BURST} 張並發（HTTP）：牆鐘 ${Math.round(wallMs)}ms・` +
+        `例外 ${rejected.length}・HTTP 非 200（疑似 deadlock/serialization）${httpFailed.length}`,
     );
-    if (errorSamples.length > 0) {
-      console.log(`  ▸ 錯誤樣本：${errorSamples.slice(0, 3).join(" / ")}`);
+    if (rejected.length > 0) {
+      console.log(`  ▸ 例外樣本：${(rejected[0] as PromiseRejectedResult).reason}`);
     }
 
     const voter = await prisma.voter.findUniqueOrThrow({
@@ -151,16 +165,24 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const mine = await prisma.encryptedBallot.count({ where: { voterId: voter.id } });
     expect(mine, "同一人留下超過一張票＝一人一票被打破").toBe(1);
     expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(VOTERS);
-    expect(deadlocks, "castBallot 的 $transaction 在高併發同一人重投下出現 deadlock/serialization failure").toHaveLength(0);
+    expect(rejected, "有請求連 HTTP 層都沒回應").toHaveLength(0);
+    expect(httpFailed, "castBallot 的 $transaction 在高併發同一人重投下出現 deadlock/serialization failure（伺服器回了非 200）").toHaveLength(0);
+    console.log(`  ▸ RSS 灌爆前後：${rssBefore ?? "?"}MB → ${appRssMb() ?? "?"}MB`);
+    trackRss("同一人重投灌爆");
   });
 
   it("PostgreSQL 連線被砍光（模擬 9/2 的 PG 重啟）之後仍能收票", async () => {
-    // 只砍測試庫的連線，開發庫不受影響。
+    // 只砍測試庫的連線，開發庫不受影響。pid <> pg_backend_pid() 排除的是「正在執行這句砍線
+    // 指令」的那條連線本身——src/lib/db.ts 沒有設 application_name，沒有更精細的方法能只挑
+    // 「伺服器」的連線；測試 process 自己 Prisma pool 裡其他閒置連線會一起被砍，但那只是
+    // 測試工具的連線，下一次查詢自動重連，不影響斷言。真正要驗證的是「伺服器」（next start）
+    // 的連線池能不能自己恢復——所以下面收票改經 HTTP 打伺服器，不是測試 process 自己呼叫。
     const killed = await prisma.$queryRawUnsafe<{ pg_terminate_backend: boolean }[]>(
       `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
        WHERE datname = 't_vote_test' AND pid <> pg_backend_pid()`,
     );
     console.log(`  ▸ 砍掉 ${killed.length} 條 DB 連線`);
+    const rssBefore = appRssMb();
 
     // 服務不應該掛掉，只該重連。
     expect(appAlive(), "砍 DB 連線之後 server process 死了").toBe(true);
@@ -168,24 +190,31 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const survivor = voters[1];
     const ct = await ciphertextFor(publicKeyJwk, electionId, { type: "blank" });
 
-    // 重連可能需要一兩次嘗試，但不該永久失敗。
-    let ok = false;
-    let lastError = "";
-    for (let i = 0; i < 5 && !ok; i++) {
-      try {
-        const r = await as(survivor, () => castBallot(SLUG, ct));
-        ok = r.ok;
-        if (!r.ok) lastError = r.error;
-      } catch (e) {
-        lastError = e instanceof Error ? e.message : String(e);
-      }
+    // 重連可能需要一兩次嘗試，但不該永久失敗。HTTP 200 只代表 action 正常返回、不代表票真的
+    // 進了 DB（castBallot 對業務拒絕也回 200），所以每次都直接查 DB 當作真正的判準。
+    let lastStatus = -1;
+    let voter = await prisma.voter.findUniqueOrThrow({
+      where: { electionId_email: { electionId, email: survivor.email } },
+    });
+    for (let i = 0; i < 5 && voter.votedAt === null; i++) {
+      const res = await castViaHttp(survivor, ct);
+      lastStatus = res.status;
+      voter = await prisma.voter.findUniqueOrThrow({
+        where: { electionId_email: { electionId, email: survivor.email } },
+      });
     }
-    expect(ok, `PG 連線被砍後再也收不到票：${lastError}`).toBe(true);
+    expect(voter.votedAt, `PG 連線被砍後再也收不到票（最後一次 HTTP ${lastStatus}）`).not.toBeNull();
 
-    // HTTP server 也要能自己回來
-    const res = await fetch(`${APP_URL}/e/${SLUG}`);
-    expect(res.status, "PG 重連後 HTTP 端仍然壞掉").toBe(200);
+    // HTTP server 也要能自己回來。連線池裡其他沒被上面那次收票用到的閒置連線，可能還沒被
+    // 伺服器發現已經斷線——要等它真的被拿去用一次才會踢掉重建，所以這裡跟上面一樣重試幾次，
+    // 而不是假設第一次就恢復。
+    let getStatus = -1;
+    for (let i = 0; i < 5 && getStatus !== 200; i++) {
+      getStatus = (await fetch(`${APP_URL}/e/${SLUG}`)).status;
+    }
+    expect(getStatus, "PG 重連後 HTTP 端仍然壞掉").toBe(200);
     expect(appLog()).not.toContain("uncaughtException");
+    console.log(`  ▸ RSS 灌爆前後：${rssBefore ?? "?"}MB → ${appRssMb() ?? "?"}MB`);
     trackRss("PG 連線被砍");
   });
 
@@ -198,15 +227,19 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
       })),
     );
 
-    // 同時發動：一半的票、以及「推進到 closed」
-    const voting = jobs.map((job) => as(job.voter, () => castBallot(SLUG, job.ciphertext)));
+    // 同時發動：一半的票（HTTP，打真正的伺服器）、以及「推進到 closed」（選委在後台按的
+    // in-process admin action——這不是投票尖峰的一部分，不必跟著改走 HTTP）。
+    const rssBefore = appRssMb();
+    const voting = jobs.map((job) => castViaHttp(job.voter, job.ciphertext));
     const closing = as(ADMIN, () => advanceStatus(electionId));
-    const [closeResult, ...ballots] = await Promise.all([closing, ...voting]);
+    const [closeResult, ...responses] = await Promise.all([closing, ...voting]);
 
     expect(closeResult.ok, "截止動作本身失敗了").toBe(true);
-    const accepted = ballots.filter((b) => b.ok).length;
-    const rejectedAfterClose = ballots.filter((b) => !b.ok).length;
-    console.log(`  ▸ 截止瞬間：收下 ${accepted} 張、拒絕 ${rejectedAfterClose} 張`);
+    // castBallot 對業務拒絕（截止、名冊外…）跟成功一樣回 200，狀態碼分不出誰收下誰被拒；
+    // 「請求真的打到伺服器」只看這裡：所有請求都要有正常 HTTP 回應，不能連線層就爆掉。
+    const httpOk = responses.filter((r) => r.status === 200).length;
+    console.log(`  ▸ 截止瞬間：${responses.length} 個請求打到伺服器・HTTP 200 有 ${httpOk} 個`);
+    expect(httpOk, "有請求連 HTTP 層都沒正常回應——關票競態把連線搞壞了").toBe(responses.length);
 
     // 關鍵不變量：狀態變成 closed 之後不可以再有票進來。
     const election = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
@@ -214,28 +247,25 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const total = await prisma.encryptedBallot.count({ where: { electionId } });
     expect(total, "票匭張數超過名冊人數＝有人投了不只一張").toBeLessThanOrEqual(VOTERS);
 
-    // 上面那條太鬆：有票在關票之後竄進來，張數照樣不超過名冊人數。真正要守的是
-    // 「回應與票匭必須一致」——每張密文都是唯一的，可以逐張比對到底進去了沒有。
-    const acceptedCts = jobs.filter((_, i) => ballots[i].ok).map((j) => j.ciphertext);
-    const rejectedCts = jobs.filter((_, i) => !ballots[i].ok).map((j) => j.ciphertext);
-
-    const storedAccepted = await prisma.encryptedBallot.count({
-      where: { electionId, ciphertext: { in: acceptedCts } },
+    // 不解析 Flight body，所以逐張比對改成直接查 DB：這批競速密文裡，票匭真的收下幾張。
+    const raceCts = jobs.map((j) => j.ciphertext);
+    const storedRace = await prisma.encryptedBallot.count({
+      where: { electionId, ciphertext: { in: raceCts } },
     });
-    expect(
-      storedAccepted,
-      "有投票人收到 ok，票卻不在票匭裡（關票競態把它吃掉了）",
-    ).toBe(acceptedCts.length);
+    console.log(`  ▸ ${raceCts.length} 張競速密文裡，票匭收下 ${storedRace} 張`);
 
-    const storedRejected = await prisma.encryptedBallot.count({
-      where: { electionId, ciphertext: { in: rejectedCts } },
+    // 截止之後補送一張：這個人不該再改得動票匭。這裡不能用「votedAt 是不是 null」判斷——
+    // voters[3] 也在前面「投票開放瞬間」那個 case 投過票了，votedAt 早就非 null；真正該守的
+    // 不變量是「送出後密文完全沒變」，不管截止前它有沒有投過。
+    const target = await prisma.voter.findUniqueOrThrow({
+      where: { electionId_email: { electionId, email: voters[3].email } },
     });
-    expect(storedRejected, "被拒絕的票竟然寫進了票匭").toBe(0);
-
-    const after = await as(voters[3], () =>
-      castBallot(SLUG, jobs[0].ciphertext),
-    );
-    expect(after.ok, "投票已截止還收得下票").toBe(false);
+    const before = await prisma.encryptedBallot.findUnique({ where: { voterId: target.id } });
+    await castViaHttp(voters[3], jobs[0].ciphertext);
+    const after = await prisma.encryptedBallot.findUnique({ where: { voterId: target.id } });
+    expect(after?.ciphertext, "投票已截止，票匭裡的密文卻被改寫了").toBe(before?.ciphertext ?? null);
+    console.log(`  ▸ RSS 灌爆前後：${rssBefore ?? "?"}MB → ${appRssMb() ?? "?"}MB`);
+    trackRss("截止瞬間");
   });
 
   it("彌封與開票在大票匭下不會爆記憶體", async () => {

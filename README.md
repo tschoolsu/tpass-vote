@@ -70,7 +70,9 @@ BURST_VOTERS=3000 BURST_CONCURRENCY=500 pnpm stress   # 加大灌爆規模
 - `tests/stress/load.test.ts`：各階段吞吐與延遲
 - `tests/stress/burst.test.ts`：同時灌爆——瞬間併發遠超連線池上限、砍光 DB 連線、
   截止瞬間的競態、以及**盯著 server 的 RSS**（2026-09-02 事故的根因之一是記憶體上限
-  被觸發後 pm2 進入重啟迴圈，這裡就是為了不再重演）
+  被觸發後 pm2 進入重啟迴圈，這裡就是為了不再重演）。灌爆的寫入路徑一律經 HTTP
+  打 production server（`tests/helpers/action-http.ts`），不是在測試 process 內
+  直接呼叫 server action——量的才是伺服器自己的連線池與記憶體，不是測試工具自己的。
 
 ⚠️ 這些測試會清空 `t_vote_test`。`tests/helpers/db.ts` 有雙重防護（檢查連線字串與
 `current_database()`），連錯庫會直接拒絕執行而不是清掉開發資料。
