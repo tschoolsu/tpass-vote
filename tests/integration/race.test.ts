@@ -24,12 +24,14 @@ import {
   voteAs,
   HOUR,
 } from "../helpers/flow";
-import { encryptBallot } from "@/lib/ballot-crypto";
+import { encryptBallot, generateTallyKeyPair } from "@/lib/ballot-crypto";
 import { castBallot } from "@/app/e/[slug]/vote/actions";
 import { sealElection, submitResults } from "@/app/admin/elections/[id]/tally/actions";
 import { approveCandidate, rejectCandidate } from "@/app/admin/elections/[id]/candidates/actions";
 import { updateElection } from "@/app/admin/elections/[id]/edit/actions";
 import { removeVoter } from "@/app/admin/elections/[id]/roster/actions";
+import { sealElection } from "@/app/admin/elections/[id]/tally/actions";
+import { savePublicKey } from "@/app/admin/elections/[id]/actions";
 
 const CAND = { email: "racecand@test.local", name: "候選人" };
 const SLUG = "race";
@@ -522,6 +524,50 @@ describe("D7-5 submitResults：狀態檢查與寫入不再跨交易", () => {
         before.resultsJson as unknown as { candidates: { elected: boolean }[] }
       ).candidates.map((c) => c.elected);
       expect(flipped, "公告之後結果不該被改寫").toEqual(original);
+    } catch (e) {
+      await lock.abort();
+      throw e;
+    }
+  }, 60_000);
+});
+
+describe("D7-1：savePublicKey 兩位選委同時產鑰的競態", () => {
+  it("兩把公鑰幾乎同時送存，只能有一次成功，DB 不會被後寫者悄悄覆蓋", async () => {
+    await resetDb();
+    const created = await makeElection({ slug: "d7-savekey-race" });
+    const electionId = created.electionId!;
+
+    const keyA = await generateTallyKeyPair();
+    const keyB = await generateTallyKeyPair();
+
+    // 窗口：讓兩邊都通過「election.tallyPublicKeyJwk 為 null」的交易外檢查後才放行寫入。
+    const lock = await holdElectionLock(electionId, "no key update");
+    try {
+      const a = as(ADMIN, () => savePublicKey(electionId, keyA.publicKeyJwk, 1));
+      await settle();
+      const b = as(MODERATOR, () => savePublicKey(electionId, keyB.publicKeyJwk, 2));
+      await settle();
+      await lock.release();
+
+      const [ra, rb] = await Promise.all([a, b]);
+      const okCount = [ra, rb].filter((r) => r.ok).length;
+      expect(okCount, "兩次併發儲存應該只有一次成功，另一次要被擋下").toBe(1);
+      const failed = [ra, rb].find((r) => !r.ok) as { ok: false; error: string };
+      expect(failed.error).toContain("已有開票金鑰");
+
+      const e = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+      const stored = JSON.stringify(e.tallyPublicKeyJwk);
+      const storedIsA = stored.includes((keyA.publicKeyJwk as { n: string }).n);
+      const storedIsB = stored.includes((keyB.publicKeyJwk as { n: string }).n);
+      expect(storedIsA !== storedIsB, "DB 應只留下成功那一次的公鑰").toBe(true);
+      expect(storedIsA, "成功回應與 keyShares 應對應到同一次呼叫").toBe(ra.ok);
+      expect(e.keyShares, "keyShares 應對應到成功寫入的那一次").toBe(ra.ok ? 1 : 2);
+
+      // 只有成功那一次留下稽核紀錄——被擋下的那次不該留假的痕跡。
+      const logs = await prisma.electionAuditLog.count({
+        where: { electionId, action: "save_public_key" },
+      });
+      expect(logs, "只有成功的那次寫 audit log").toBe(1);
     } catch (e) {
       await lock.abort();
       throw e;

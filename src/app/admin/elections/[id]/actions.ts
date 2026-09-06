@@ -44,12 +44,16 @@ export async function savePublicKey(
     return { ok: false, error: "此選舉已有開票金鑰，不可重新產生（會讓既有金鑰檔失效）" };
   }
 
-  await prisma.$transaction([
-    prisma.election.update({
-      where: { id: electionId },
+  const wrote = await prisma.$transaction(async (tx) => {
+    // 「還沒有公鑰才寫」的條件放進 updateMany 的 where，由資料庫保證只有一次寫入會
+    // 命中——兩位選委同時通過上面交易外的檢查時，只有先 commit 的那個 count 會是 1，
+    // 後到的會是 0，不會互相覆蓋。
+    const updated = await tx.election.updateMany({
+      where: { id: electionId, tallyPublicKeyJwk: { equals: Prisma.DbNull } },
       data: { tallyPublicKeyJwk: publicKeyJwk as Prisma.InputJsonValue, keyShares: shares },
-    }),
-    prisma.electionAuditLog.create({
+    });
+    if (updated.count === 0) return false;
+    await tx.electionAuditLog.create({
       data: {
         electionId,
         actorEmail: admin.email,
@@ -57,8 +61,12 @@ export async function savePublicKey(
         summary: `設定開票金鑰（分持 ${shares} 份）`,
         diff: { keyShares: shares } as Prisma.InputJsonValue,
       },
-    }),
-  ]);
+    });
+    return true;
+  });
+  if (!wrote) {
+    return { ok: false, error: "此選舉已有開票金鑰，不可重新產生（會讓既有金鑰檔失效）" };
+  }
 
   revalidatePath(`/admin/elections/${electionId}`);
   return { ok: true };
