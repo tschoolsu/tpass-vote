@@ -9,9 +9,17 @@ export interface VoteDraft {
   approvals: Record<string, boolean>; // ballotMode="approval"／罷免用
 }
 
-/** 每場選舉各自一個 key，不同場次的草稿不會互相污染。 */
-export function draftStorageKey(slug: string): string {
-  return `tvote:draft:${slug}`;
+/**
+ * 每場選舉、每個投票人各自一個 key。
+ *
+ * voterId 是必要的隔離維度，不是裝飾：token 過期時整頁會硬導去登入頁再導回來，
+ * sessionStorage 是同分頁跨導航存活的——共用電腦（校內電腦教室）常見的「A 選到一半
+ * token 過期停在登入頁、A 離開、B 用自己帳號登入接力」，若 key 只綁 slug，B 回到投票頁
+ * 會撿到 A 的明文選擇並被當成「已還原你剛才的選擇」顯示出來，等於選票秘密外洩。
+ * 綁 voterId 後，不同投票人的 key 天生不同，B 的 mount effect 讀不到 A 的草稿。
+ */
+export function draftStorageKey(slug: string, voterId: string): string {
+  return `tvote:draft:${slug}:${voterId}`;
 }
 
 export function serializeDraft(draft: VoteDraft): string {

@@ -3,7 +3,11 @@ import { draftStorageKey, serializeDraft, parseDraft, type VoteDraft } from "@/l
 
 describe("vote-draft", () => {
   it("key 依 slug 隔開，不同場次不互相污染", () => {
-    expect(draftStorageKey("a")).not.toBe(draftStorageKey("b"));
+    expect(draftStorageKey("a", "voter-1")).not.toBe(draftStorageKey("b", "voter-1"));
+  });
+
+  it("key 依 voterId 隔開，同分頁接力登入的不同投票人不會撿到彼此的草稿", () => {
+    expect(draftStorageKey("a", "voter-1")).not.toBe(draftStorageKey("a", "voter-2"));
   });
 
   it("round-trip：序列化再解回來要拿到一樣的內容", () => {

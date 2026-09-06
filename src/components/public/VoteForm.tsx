@@ -20,6 +20,9 @@ import { draftStorageKey, serializeDraft, parseDraft, type VoteDraft } from "@/l
 
 interface Props {
   slug: string;
+  /** 本場選舉裡這個投票人的 Voter.id（server component 已用 session.email 查過名冊）。
+   *  只用來把 sessionStorage 草稿跟「這個人」綁在一起，不是拿去做任何伺服器端授權判斷。 */
+  voterId: string;
   electionId: string;
   kind: string;
   ballotMode: "choose" | "approval";
@@ -36,6 +39,7 @@ const OPTION_CARD =
 
 export function VoteForm({
   slug,
+  voterId,
   electionId,
   kind,
   ballotMode,
@@ -61,10 +65,11 @@ export function VoteForm({
   // 頁面停留太久導致 token 過期時，castBallot 內的 requireSession 會導去登入頁，
   // 讓這個元件被整個卸載——選擇內容只活在 state 裡，導航一發生就沒了。
   // 送出前把選擇存一份到 sessionStorage，登入完回到這頁時撿回來，不必重選。
+  // key 綁 voterId：共用電腦同一分頁接力登入的下一個人，key 天生不同，讀不到上一個人的草稿。
   React.useEffect(() => {
     let draft: VoteDraft | null = null;
     try {
-      draft = parseDraft(sessionStorage.getItem(draftStorageKey(slug)));
+      draft = parseDraft(sessionStorage.getItem(draftStorageKey(slug, voterId)));
     } catch {
       draft = null;
     }
@@ -81,6 +86,7 @@ export function VoteForm({
   }, []);
 
   function toggleCandidate(id: string) {
+    setRestoredNotice(false);
     setBlank(false);
     if (ballotMode === "choose" && maxChoices === 1) {
       setSelected(new Set([id]));
@@ -95,11 +101,13 @@ export function VoteForm({
   }
 
   function setApproval(id: string, agree: boolean) {
+    setRestoredNotice(false);
     setBlank(false);
     setApprovals((prev) => ({ ...prev, [id]: agree }));
   }
 
   function toggleBlank() {
+    setRestoredNotice(false);
     setBlank((prev) => {
       const next = !prev;
       if (next) {
@@ -155,7 +163,7 @@ export function VoteForm({
     // 整個卸載，state 就沒了；重登回來時靠這份草稿還原，不必重選一次。
     try {
       sessionStorage.setItem(
-        draftStorageKey(slug),
+        draftStorageKey(slug, voterId),
         serializeDraft({ blank, selected: [...selected], approvals }),
       );
     } catch {
@@ -173,7 +181,7 @@ export function VoteForm({
         return;
       }
       try {
-        sessionStorage.removeItem(draftStorageKey(slug));
+        sessionStorage.removeItem(draftStorageKey(slug, voterId));
       } catch {
         // 同上：拿不到就算了，不影響已經成功的投票。
       }

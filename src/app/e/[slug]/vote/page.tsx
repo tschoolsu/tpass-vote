@@ -164,6 +164,7 @@ export default async function VotePage({
       <div className="mt-6">
         <VoteForm
           slug={slug}
+          voterId={voter.id}
           electionId={election.id}
           ballotMode={election.ballotMode as "choose" | "approval"}
           maxChoices={election.maxChoices}
