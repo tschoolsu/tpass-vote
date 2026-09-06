@@ -93,7 +93,13 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/elections/[s
     return new NextResponse(null, { status: 304, headers: { ETag: etag, "Cache-Control": cacheControl } });
   }
 
-  const rows = ["代碼,內容", ...entries.map((e) => `${e.code},"${describe(e, labels).replace(/"/g, '""')}"`)];
+  // CSV 公式注入防護：內容包含候選人自填姓名，若以 = + - @ 或 tab／CR 開頭，
+  // Excel/Sheets 會當公式執行——前綴一個單引號中和它（Excel 顯示時會吃掉這個單引號）。
+  const guardCsvFormula = (s: string) => (/^[-=+@\t\r]/.test(s) ? `'${s}` : s);
+  const rows = [
+    "代碼,內容",
+    ...entries.map((e) => `${e.code},"${guardCsvFormula(describe(e, labels)).replace(/"/g, '""')}"`),
+  ];
   return new NextResponse(`﻿${rows.join("\n")}\n`, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",

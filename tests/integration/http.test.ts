@@ -135,6 +135,76 @@ describe("檔案端點的邊界", () => {
     const body = await rejected.json();
     expect(body.error).toContain("階段不開放上傳");
   });
+
+  it("photo 上傳驗 magic bytes：宣告 image/png 但內容不是真的圖片，一律拒收", async () => {
+    await prisma.election.update({ where: { id: electionId }, data: { status: "registration" } });
+    const form = new FormData();
+    form.set("electionId", electionId);
+    form.set("kind", "photo");
+    form.set(
+      "file",
+      new File([new TextEncoder().encode("<script>alert(1)</script>")], "fake.png", {
+        type: "image/png",
+      }),
+    );
+    const res = await fetch(`${APP_URL}/api/upload`, {
+      method: "POST",
+      headers: { Cookie: cookieHeader(await signTestToken(CAND)) },
+      body: form,
+    });
+    expect(res.status).toBe(415);
+  });
+});
+
+describe("CSV 公式注入防護（roster／disclosures 的自由文字欄位）", () => {
+  it("roster CSV 的姓名欄位以 = 開頭時，前綴單引號中和公式注入", async () => {
+    const created = await makeElection({ slug: "csv-injection-roster" });
+    const electionId = created.electionId!;
+    await importVoters(electionId, [
+      { email: "csv-inject@test.local", name: "=1+1" } as TestIdentity,
+      VOTER_B,
+    ]);
+    await prisma.election.update({ where: { id: electionId }, data: { status: "published" } });
+
+    const res = await get(`/api/elections/csv-injection-roster/roster`, VOTER_B);
+    expect(res.status).toBe(200);
+    const csv = await res.text();
+    expect(csv).not.toContain('"=1+1"');
+    expect(csv).toContain("\"'=1+1\"");
+  });
+
+  it("disclosures CSV 的候選人姓名欄位若沒有號次前綴、以 = 開頭，前綴單引號中和公式注入", async () => {
+    const created = await makeElection({ slug: "csv-injection-disclosures" });
+    const electionId = created.electionId!;
+    // 直接建一個 number:null 的候選人列——模擬「欄位前面沒有強制的 N 號・前綴」這個
+    // 真正暴露注入的情境，不繞經完整的登記／核准流程。
+    const candidate = await prisma.candidate.create({
+      data: {
+        electionId,
+        status: "approved",
+        number: null,
+        members: [{ name: '=HYPERLINK("http://evil.test","點我")' }],
+        platform: "測試政見",
+        createdBy: "csv-inject-cand@test.local",
+      },
+      select: { id: true },
+    });
+    await prisma.election.update({
+      where: { id: electionId },
+      data: {
+        status: "published",
+        disclosuresJson: [{ code: "abc123", kind: "choose", candidateIds: [candidate.id] }],
+      },
+    });
+
+    const res = await get(`/api/elections/csv-injection-disclosures/disclosures`);
+    expect(res.status).toBe(200);
+    const csv = await res.text();
+    const line = csv.split("\n").find((l) => l.startsWith("abc123"));
+    expect(line).toBeDefined();
+    expect(line!.startsWith('abc123,"=')).toBe(false);
+    expect(line).toContain("'=HYPERLINK");
+  });
 });
 
 describe("彌封快照端點（§26-1 Ⅵ）", () => {

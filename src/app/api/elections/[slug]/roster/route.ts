@@ -23,10 +23,15 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/elections/[
     orderBy: [{ name: "asc" }, { email: "asc" }],
   });
 
+  // CSV 公式注入防護：姓名是 admin 貼上的自由文字，若以 = + - @ 或 tab／CR 開頭，
+  // Excel/Sheets 會當公式執行——前綴一個單引號中和它（Excel 顯示時會吃掉這個單引號）。
+  const guardCsvFormula = (s: string) => (/^[-=+@\t\r]/.test(s) ? `'${s}` : s);
+
   const rows = [
     "選舉人,投票狀態",
     ...voters.map((v) => {
-      const label = (v.name?.trim() || v.email.split("@")[0]).replace(/"/g, '""');
+      const raw = v.name?.trim() || v.email.split("@")[0];
+      const label = guardCsvFormula(raw).replace(/"/g, '""');
       return `"${label}",${v.votedAt ? "已投票" : "未投票"}`;
     }),
   ];
