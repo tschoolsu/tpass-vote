@@ -79,7 +79,8 @@ export type DisclosureMismatch =
   | "class-count"
   | "votes"
   | "max-choices"
-  | "malformed";
+  | "malformed"
+  | "kind-mismatch";
 
 /**
  * 交叉驗證：明細必須與票匭張數、以及選委提交的計票結果完全自洽。
@@ -116,6 +117,9 @@ export function verifyDisclosures(
     } else if (e.kind === "invalid") {
       invalid++;
     } else if (e.kind === "choose") {
+      // 明細自稱的 kind 必須與本場計票結果宣告的 mode 一致，否則能拿 approval 明細
+      // （較寬鬆、不受 maxChoices 限制）套進 choose 場，繞過下面這整套 choose 判定。
+      if (results.mode !== "choose") return "kind-mismatch";
       const ids = e.candidateIds ?? [];
       if (ids.length > maxChoices) return "max-choices";
       if (!ids.every((id) => idSet.has(id))) return "codes"; // 明細出現不在本場名單的候選人
@@ -125,6 +129,7 @@ export function verifyDisclosures(
       for (const id of ids) votes.set(id, votes.get(id)! + 1);
       valid++;
     } else {
+      if (results.mode !== "approval") return "kind-mismatch";
       const approvals = e.approvals ?? {};
       if (!Object.keys(approvals).every((id) => idSet.has(id))) return "codes";
       if (!isWellFormedChoice({ type: "approval", approvals }, idSet, maxChoices)) {
@@ -156,4 +161,5 @@ export const DISCLOSURE_MISMATCH_MESSAGE: Record<DisclosureMismatch, string> = {
   votes: "選票明細逐票加總的得票數與計票結果不符",
   "max-choices": "選票明細出現超過可圈選人數的選票",
   malformed: "選票明細出現空白圈選、重複圈選或無人表態卻標記為有效票",
+  "kind-mismatch": "選票明細的種類與本場計票結果宣告的模式不符",
 };

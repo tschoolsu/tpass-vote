@@ -162,4 +162,52 @@ describe("verifyDisclosures 的 well-formed 判定必須與 tally.ts 一致（D4
     const entries: DisclosureEntry[] = [{ code: code(1), kind: "approval", approvals: {} }];
     expect(verifyDisclosures(entries, 1, fakeResults(0), 1)).not.toBeNull();
   });
+
+  // 審查發現的漏洞：verifyDisclosures 只依明細自稱的 kind 分支、從不比對
+  // results.mode，所以把 choose 場的明細全換成 kind="approval" 就能繞過上面
+  // 三項 well-formed 檢查（approval 判定較寬鬆、且不受 maxChoices 限制），
+  // 構造出「有效票數對得上、卻沒有加給任何候選人」的自洽假結果。
+  it("choose 場塞 kind=approval 的明細不應被放行（繞過 well-formed 判定）", () => {
+    const entries: DisclosureEntry[] = Array.from({ length: 10 }, (_, i) => ({
+      code: code(i + 1),
+      kind: "approval",
+      approvals: { a: false },
+    }));
+    const forged: TallyResult = {
+      mode: "choose",
+      totalBallots: 10,
+      validCount: 10,
+      blankCount: 0,
+      invalidCount: 0,
+      rosterCount: 100,
+      turnoutPct: 10,
+      hasTie: false,
+      candidates: [
+        { candidateId: "a", votes: 0, disagree: 10, elected: true, tied: false },
+        { candidateId: "b", votes: 0, disagree: 0, elected: false, tied: false },
+        { candidateId: "c", votes: 0, disagree: 0, elected: false, tied: false },
+      ],
+    };
+    expect(verifyDisclosures(entries, 10, forged, 1)).not.toBeNull();
+  });
+
+  // 反向：approval 場塞 kind="choose" 的明細，同樣要被擋下來。
+  it("approval 場塞 kind=choose 的明細不應被放行", () => {
+    const entries: DisclosureEntry[] = [{ code: code(1), kind: "choose", candidateIds: ["a"] }];
+    const forged: TallyResult = {
+      mode: "approval",
+      totalBallots: 1,
+      validCount: 1,
+      blankCount: 0,
+      invalidCount: 0,
+      rosterCount: 10,
+      turnoutPct: 10,
+      hasTie: false,
+      candidates: [
+        { candidateId: "a", votes: 1, disagree: 0, elected: true, tied: false },
+        { candidateId: "b", votes: 0, disagree: 0, elected: false, tied: false },
+      ],
+    };
+    expect(verifyDisclosures(entries, 1, forged, 1)).not.toBeNull();
+  });
 });
