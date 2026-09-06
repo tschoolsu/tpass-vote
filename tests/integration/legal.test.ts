@@ -214,6 +214,59 @@ describe("§26-1 Ⅳ／Ⅴ 明細與名冊", () => {
     expect(election.status).toBe("sealed");
   }, 90_000);
 
+  // D4-3 稽核駁回附件重現：verifyDisclosures 曾只靠提交者自己填的 results.mode 判定
+  // 明細 kind 是否一致——攻擊者把 choose 場的 results.mode 與整批明細 kind 一起改成
+  // "approval"（判定較寬鬆、且不受 maxChoices 限制），就能讓 choose 場整套 well-formed
+  // 判定被跳過，構造出「有效票數對得上、卻沒有加給任何候選人」的自洽假結果。
+  // 修法後 submitResults 在碰明細之前就先比對 r.mode 與 election.ballotMode（DB 真相），
+  // 不一致直接拒絕，攻擊者無從讓「自稱 mode」與「明細 kind」聯手繞過真實模式的限制。
+  it("計票結果宣告的 mode 與本場真實 ballotMode 不符會被拒絕", async () => {
+    const slug = "mode-mismatch";
+    const created = await makeElection({ slug, kind: "grade_rep", seats: 1, maxChoices: 1 });
+    expect(created.ok, created.error).toBe(true);
+    const electionId = created.electionId!;
+    const { publicKeyJwk, keyFiles } = await generateKeys(electionId, slug);
+
+    // 3 位候選人角逐 1 席 → candidates.length > seats，本場真實 ballotMode 定案為 choose。
+    const cands = Array.from({ length: 3 }, (_, i) => ({
+      email: `mmc${i}@test.local`,
+      name: `模式候選人${i}`,
+    }));
+    await importVoters(electionId, [VOTER_A, ...cands]);
+    await advanceTo(electionId, "registration");
+    for (const c of cands) await registerAs(slug, electionId, c);
+    const approved = await approveAll(electionId);
+    await advanceTo(electionId, "voting");
+
+    await voteAs(slug, electionId, VOTER_A, publicKeyJwk, {
+      type: "choose",
+      candidateIds: [approved[0].id],
+    });
+    await advanceTo(electionId, "closed");
+    await seal(electionId);
+
+    const election = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(election.ballotMode).toBe("choose");
+
+    const { results, disclosures } = await tallyAndSubmit(electionId, slug, keyFiles);
+    expect(results.mode).toBe("choose");
+    expect(results.candidates.find((c) => c.candidateId === approved[0].id)).toMatchObject({
+      votes: 1,
+    });
+
+    // 偽造：results.mode 與整批明細 kind 一起改成 approval，approvals 全填 false，
+    // 藉此把候選人票數灌成 0（approval 模式不受 maxChoices 限制、且不檢查圈選數）。
+    const forgedResults = { ...results, mode: "approval" as const };
+    const forgedDisclosures: DisclosureEntry[] = disclosures.map((d) => ({
+      code: d.code,
+      kind: "approval" as const,
+      approvals: { [approved[0].id]: false },
+    }));
+    const r = await as(ADMIN, () => submitResults(electionId, forgedResults, forgedDisclosures));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("模式");
+  }, 60_000);
+
   it("名冊在投票開始後不可刪除（避免投票率對不上）", async () => {
     const slug = "roster-lock";
     const created = await makeElection({ slug });

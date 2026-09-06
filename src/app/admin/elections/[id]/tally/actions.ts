@@ -137,6 +137,17 @@ export async function submitResults(
   if (election.status !== "sealed") return { ok: false, error: "選舉尚未彌封，不能提交結果" };
   const isResubmit = election.resultsJson != null;
 
+  // ballotMode 是本場選舉的真相（advanceStatus 推進到 voting 時定案，狀態機單向前進到
+  // sealed 必定已設定），不能信任提交者填的 r.mode——r.mode 只做過 enum 格式檢查，
+  // 攻擊者可以填一個跟真實模式不符、卻跟自己偽造的明細自洽的值，讓 verifyDisclosures
+  // 內部「kind 必須與 results.mode 一致」的判定形同虛設（見 disclosure.ts 的說明）。
+  if (election.ballotMode !== "choose" && election.ballotMode !== "approval") {
+    return { ok: false, error: "本場選舉尚未確定投票模式，無法提交結果" };
+  }
+  if (r.mode !== election.ballotMode) {
+    return { ok: false, error: "計票結果宣告的模式與本場選舉不符" };
+  }
+
   const box = Array.isArray(election.sealedBox) ? (election.sealedBox as string[]) : [];
   const boxSize = box.length;
   if (r.totalBallots !== boxSize) {

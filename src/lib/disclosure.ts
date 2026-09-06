@@ -85,6 +85,12 @@ export type DisclosureMismatch =
 /**
  * 交叉驗證：明細必須與票匭張數、以及選委提交的計票結果完全自洽。
  * 回傳 null 代表通過，否則回傳第一個對不上的項目。
+ *
+ * ⚠️ 前提：呼叫端必須先把 `results.mode` 與本場選舉的真實 ballotMode（DB 讀出，
+ * 不是提交者填的）比對過，本函式才驗這裡開始的 kind/mode 一致性才有意義——否則
+ * 提交者只要把 results.mode 一起改成跟偽造明細一致，這裡的 kind-mismatch 判定
+ * 就形同虛設。唯一的生產呼叫點 `tally/actions.ts` 的 `submitResults` 已在呼叫
+ * 前做了這項比對，見那裡的註解。
  */
 export function verifyDisclosures(
   entries: DisclosureEntry[],
