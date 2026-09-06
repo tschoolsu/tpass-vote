@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tallyBallots, type TallyInput } from "@/lib/tally";
+import { tallyBallots, decideElected, type TallyInput } from "@/lib/tally";
 import type { BallotPlain } from "@/lib/ballot-crypto";
 
 const E = "election-1";
@@ -189,6 +189,35 @@ describe("approval（同額，同意/不同意）", () => {
       }),
     );
     expect(r.invalidCount).toBe(1);
+  });
+});
+
+describe("decideElected（純函式，供 tallyBallots 與 submitResults 共用）", () => {
+  it("choose：席次邊界同票 → 邊界票數者全標 tied、不當選", () => {
+    const r = decideElected("choose", 2, [
+      { candidateId: "a", votes: 3, disagree: 0 },
+      { candidateId: "b", votes: 2, disagree: 0 },
+      { candidateId: "c", votes: 2, disagree: 0 },
+    ]);
+    expect(r.hasTie).toBe(true);
+    expect(r.candidates.find((c) => c.candidateId === "a")).toMatchObject({ elected: true, tied: false });
+    expect(r.candidates.find((c) => c.candidateId === "b")).toMatchObject({ elected: false, tied: true });
+    expect(r.candidates.find((c) => c.candidateId === "c")).toMatchObject({ elected: false, tied: true });
+  });
+
+  it("choose：候選人數不足席次時全數當選、無同票", () => {
+    const r = decideElected("choose", 3, [
+      { candidateId: "a", votes: 5, disagree: 0 },
+      { candidateId: "b", votes: 1, disagree: 0 },
+    ]);
+    expect(r.hasTie).toBe(false);
+    expect(r.candidates.every((c) => c.elected && !c.tied)).toBe(true);
+  });
+
+  it("approval：同意等於不同意 → 不當選（跟 tallyBallots 的規則一致）", () => {
+    const r = decideElected("approval", 1, [{ candidateId: "a", votes: 2, disagree: 2 }]);
+    expect(r.candidates[0]).toMatchObject({ elected: false, tied: false });
+    expect(r.hasTie).toBe(false);
   });
 });
 

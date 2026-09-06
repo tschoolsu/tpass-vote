@@ -17,6 +17,7 @@ import { resultAnnouncementDraft, type ResultCandidateInfo } from "@/lib/result-
 import { cloneElection } from "@/lib/clone-election";
 import { recallPassed } from "@/lib/recall";
 import { verifyDisclosures, DISCLOSURE_MISMATCH_MESSAGE } from "@/lib/disclosure";
+import { decideElected } from "@/lib/tally";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -165,6 +166,11 @@ export async function submitResults(
   ) {
     return { ok: false, error: "候選人清單與本場核准名單不符" };
   }
+  // Set 比對只看「有沒有出現過」，同一位候選人出現兩次會被 Set 吃掉、繞過上面的檢查，
+  // 拿一份「重複計某人一次」的清單自洽提交。這裡另外擋陣列長度。
+  if (r.candidates.length !== approvedIds.size) {
+    return { ok: false, error: "候選人清單出現重複" };
+  }
 
   // 代碼封在密文內部（投票人瀏覽器產生），伺服器沒有私鑰就算不出來——「代碼集合與
   // 票匭相符」這項對帳已經不成立，換到的是「單一 DB 讀權限者無法自建對照表」。
@@ -174,6 +180,35 @@ export async function submitResults(
   if (mismatch) {
     return { ok: false, error: `${DISCLOSURE_MISMATCH_MESSAGE[mismatch]}，已拒絕提交` };
   }
+
+  // 上面通過的只是「形狀對＋跟明細自洽」——elected／tied／hasTie／rosterCount／
+  // turnoutPct 是 client 算出來的判定，伺服器沒有重算過就直接信了。verifyDisclosures
+  // 只驗票數（有幾票、投給誰），不驗「誰該當選」；當選與否是票數＋席次＋模式的
+  // 純函式，伺服器自己就能算，不必信任提交者。這裡用 decideElected 重算一遍，
+  // 寫進 DB 的一律是伺服器算出的值。
+  const rosterCount = await prisma.voter.count({ where: { electionId } });
+  const turnoutPct = rosterCount > 0 ? Math.round((r.totalBallots / rosterCount) * 1000) / 10 : 0;
+  const decided = decideElected(
+    election.ballotMode,
+    election.seats,
+    r.candidates.map((c) => ({ candidateId: c.candidateId, votes: c.votes, disagree: c.disagree })),
+  );
+  // client 送來的旗標若與伺服器重算不一致，不拒收（避免舊瀏覽器快取卡住提交），
+  // 但在稽核紀錄留一筆，方便事後追查是不是有人動了手腳。
+  const clientMismatch =
+    r.rosterCount !== rosterCount ||
+    r.turnoutPct !== turnoutPct ||
+    r.hasTie !== decided.hasTie ||
+    decided.candidates.some(
+      (c, i) => c.elected !== r.candidates[i].elected || c.tied !== r.candidates[i].tied,
+    );
+  const finalResults = {
+    ...r,
+    rosterCount,
+    turnoutPct,
+    candidates: decided.candidates,
+    hasTie: decided.hasTie,
+  };
 
   // 提交計票結果後，於同一流程自動生成／更新 legalTag='result' 的公告草稿，
   // 讓選委直接到「結果公告」面板小編後發布，不必自己從零寫。已發布過的 result
@@ -190,14 +225,17 @@ export async function submitResults(
       seats: election.seats,
       resultsUrl: new URL(`/e/${election.slug}/results`, authConfig.selfUrl).toString(),
     },
-    r,
+    finalResults,
     candidatesForDraft,
   );
 
   await prisma.$transaction(async (tx) => {
     await tx.election.update({
       where: { id: electionId },
-      data: { resultsJson: r, disclosuresJson: parsedDisclosures.data },
+      data: {
+        resultsJson: finalResults as unknown as Prisma.InputJsonValue,
+        disclosuresJson: parsedDisclosures.data,
+      },
     });
 
     await tx.electionAuditLog.create({
@@ -208,12 +246,13 @@ export async function submitResults(
         summary: isResubmit ? "重新提交計票結果（覆寫舊結果）" : "提交計票結果",
         diff: {
           resubmit: isResubmit,
-          totalBallots: r.totalBallots,
-          validCount: r.validCount,
-          blankCount: r.blankCount,
-          invalidCount: r.invalidCount,
-          electedCount: r.candidates.filter((c) => c.elected).length,
-          hasTie: r.hasTie,
+          totalBallots: finalResults.totalBallots,
+          validCount: finalResults.validCount,
+          blankCount: finalResults.blankCount,
+          invalidCount: finalResults.invalidCount,
+          electedCount: finalResults.candidates.filter((c) => c.elected).length,
+          hasTie: finalResults.hasTie,
+          clientMismatch,
         } as Prisma.InputJsonValue,
       },
     });
@@ -234,7 +273,7 @@ export async function submitResults(
 
     // 罷免通過 → 同一交易內自動生成補選草稿（以罷免案的 parent＝原職位選舉為本）。
     // 防重複：parent 底下已有 lineage='by_election' 的子場就跳過，不重複建立。
-    const target = r.candidates[0];
+    const target = finalResults.candidates[0];
     if (election.kind === "recall" && election.parentId && target && recallPassed(target.votes, target.disagree)) {
       const existingByElection = await tx.election.findFirst({
         where: { parentId: election.parentId, lineage: "by_election" },

@@ -62,6 +62,48 @@ export function isWellFormedChoice(
   return entries.length >= 1 && entries.every(([id, v]) => idSet.has(id) && typeof v === "boolean");
 }
 
+export interface CandidateVoteCount {
+  candidateId: string;
+  votes: number;
+  disagree: number; // 僅 approval 模式使用
+}
+
+/**
+ * 由各候選人得票／不同意票＋席次＋投票模式，決定 elected／tied／hasTie。
+ * 純函式：只依賴票數，不信任呼叫端傳來的任何旗標——tallyBallots（本地計票）與
+ * submitResults（伺服器重算 client 送來的結果）共用同一份判定，兩處不得各寫一套。
+ */
+export function decideElected(
+  ballotMode: "choose" | "approval",
+  seats: number,
+  candidates: CandidateVoteCount[],
+): { candidates: CandidateTally[]; hasTie: boolean } {
+  if (ballotMode === "choose") {
+    // 依得票排序取名額；席次邊界同票 → 邊界票數者全標 tied、不判當選
+    const ids = candidates.map((c) => c.candidateId);
+    const votes = new Map(candidates.map((c) => [c.candidateId, c.votes]));
+    const sorted = [...ids].sort((a, b) => votes.get(b)! - votes.get(a)!);
+    const boundaryVotes = sorted.length >= seats ? votes.get(sorted[seats - 1])! : -1;
+    const hasTie = sorted.length > seats && votes.get(sorted[seats])! === boundaryVotes;
+    const result = candidates.map((c) => {
+      const v = c.votes;
+      const tied = hasTie && v === boundaryVotes;
+      const elected = !tied && v > (hasTie ? boundaryVotes : -1) &&
+        sorted.indexOf(c.candidateId) < seats;
+      return { candidateId: c.candidateId, votes: v, disagree: 0, elected, tied };
+    });
+    return { candidates: result, hasTie };
+  }
+  const result = candidates.map((c) => ({
+    candidateId: c.candidateId,
+    votes: c.votes,
+    disagree: c.disagree,
+    elected: c.votes > c.disagree,
+    tied: false,
+  }));
+  return { candidates: result, hasTie: false };
+}
+
 export function tallyBallots(input: TallyInput): TallyResult {
   const { electionId, ballotMode, seats, maxChoices, candidateIds, plaintexts, rosterCount } =
     input;
@@ -107,31 +149,15 @@ export function tallyBallots(input: TallyInput): TallyResult {
   const turnoutPct =
     rosterCount > 0 ? Math.round((totalBallots / rosterCount) * 1000) / 10 : 0;
 
-  let candidates: CandidateTally[];
-  let hasTie = false;
-
-  if (ballotMode === "choose") {
-    // 依得票排序取名額；席次邊界同票 → 邊界票數者全標 tied、不判當選
-    const sorted = [...candidateIds].sort((a, b) => votes.get(b)! - votes.get(a)!);
-    const boundaryVotes = sorted.length >= seats ? votes.get(sorted[seats - 1])! : -1;
-    hasTie =
-      sorted.length > seats && votes.get(sorted[seats])! === boundaryVotes;
-    candidates = candidateIds.map((id) => {
-      const v = votes.get(id)!;
-      const tied = hasTie && v === boundaryVotes;
-      const elected = !tied && v > (hasTie ? boundaryVotes : -1) &&
-        sorted.indexOf(id) < seats;
-      return { candidateId: id, votes: v, disagree: 0, elected, tied };
-    });
-  } else {
-    candidates = candidateIds.map((id) => ({
+  const { candidates, hasTie } = decideElected(
+    ballotMode,
+    seats,
+    candidateIds.map((id) => ({
       candidateId: id,
       votes: votes.get(id)!,
       disagree: disagrees.get(id)!,
-      elected: votes.get(id)! > disagrees.get(id)!,
-      tied: false,
-    }));
-  }
+    })),
+  );
 
   return {
     mode: ballotMode,
