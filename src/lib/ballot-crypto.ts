@@ -194,7 +194,13 @@ export async function encryptBallot(
   input: BallotInput,
 ): Promise<{ ciphertext: string; code: string }> {
   const code = newBallotCode();
-  const plain: BallotPlain = { v: 2, electionId: input.electionId, code, choice: input.choice };
+  // choose 模式的 candidateIds 是投票人點選的先後順序，跟內容無關的多餘資訊，
+  // 解密後會原封不動流進公開明細——不排序的話點選順序就是可指紋辨識的側通道。
+  const choice: BallotChoice =
+    input.choice.type === "choose"
+      ? { type: "choose", candidateIds: [...input.choice.candidateIds].sort() }
+      : input.choice;
+  const plain: BallotPlain = { v: 2, electionId: input.electionId, code, choice };
   const aesKey = await subtle().generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
   const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
   const ct = await subtle().encrypt(
@@ -303,6 +309,9 @@ export function isValidCiphertextShape(s: string): boolean {
   return (
     env !== null &&
     typeof env === "object" &&
+    // 只准恰好這 5 個 key（v/alg/ek/iv/ct）：多一個 key（例如塞進去的填充字串）
+    // 就等於讓投票端自由控制存進公開 sealedBox 的字串內容與長度，形狀檢查形同虛設。
+    Object.keys(env).length === 5 &&
     env.v === 2 &&
     env.alg === "RSA-OAEP-256+A256GCM" &&
     typeof env.ek === "string" &&

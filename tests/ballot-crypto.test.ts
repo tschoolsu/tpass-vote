@@ -33,6 +33,27 @@ describe("信封加密 round-trip", () => {
     });
   });
 
+  // D3-3：choose 模式下 candidateIds 是投票人點選的先後順序，原封不動封進明文，
+  // 解密後原封不動印在公開明細上——順序本身是多餘資訊，可能成為指紋。加密時應
+  // 正規化（排序）掉這個順序，讓「同一組人、不同點法」解密回同一個陣列。
+  it("choose 模式：同一組候選人不同點選順序，解密後 candidateIds 相同且排序", async () => {
+    const { publicKeyJwk, privateKeyJwk } = await generateTallyKeyPair();
+    const a = cuid("a");
+    const b = cuid("b");
+    const c = cuid("c");
+    const sorted = [a, b, c].sort();
+    const orders: BallotInput[] = [
+      { electionId: "election-1", choice: { type: "choose", candidateIds: [a, b, c] } },
+      { electionId: "election-1", choice: { type: "choose", candidateIds: [c, b, a] } },
+      { electionId: "election-1", choice: { type: "choose", candidateIds: [b, a, c] } },
+    ];
+    for (const o of orders) {
+      const { ciphertext } = await encryptBallot(publicKeyJwk, o);
+      const plain = await decryptBallot(privateKeyJwk, ciphertext);
+      expect(plain?.choice).toEqual({ type: "choose", candidateIds: sorted });
+    }
+  });
+
   it("同一張選票兩次加密產生不同密文與不同代碼", async () => {
     const { publicKeyJwk } = await generateTallyKeyPair();
     const a = await encryptBallot(publicKeyJwk, input);
@@ -176,6 +197,17 @@ describe("伺服器端形狀檢查", () => {
     const env = JSON.parse(ciphertext);
     env.ek = btoa("short");
     expect(isValidCiphertextShape(JSON.stringify(env))).toBe(false);
+  });
+
+  // D3-4：信封多塞一個未知欄位不該被接受——不然投票端能自由控制存進公開
+  // sealedBox 的字串內容與長度，形狀檢查形同虛設。
+  it("信封多一個未知欄位就判定形狀不合法", async () => {
+    const { publicKeyJwk } = await generateTallyKeyPair();
+    const { ciphertext } = await encryptBallot(publicKeyJwk, input);
+    const env = JSON.parse(ciphertext);
+    expect(isValidCiphertextShape(JSON.stringify({ ...env, extra: "x".repeat(5000) }))).toBe(
+      false,
+    );
   });
 });
 
