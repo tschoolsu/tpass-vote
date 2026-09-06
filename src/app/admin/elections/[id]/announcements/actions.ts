@@ -1,8 +1,10 @@
 "use server";
 // 公告草稿與發布：自由公告流。legalTag 為 null 的一般公告可任意多則、無類型選擇，選委自由
-// 發布任意數量；legalTag='result' 是唯一的法定特例，每場至多一則——這條「至多一則」不是 DB
-// constraint，是這裡的 app 層規則：建立/改標籤時一律先查同場是否已有其他公告佔用 'result'，
-// 衝突就直接擋掉並回錯誤，不會靜默覆寫別人的內容（步驟⑦結果公告面板據此保護唯一性）。
+// 發布任意數量；legalTag='result' 是唯一的法定特例，每場至多一則——建立/改標籤時一律先查
+// 同場是否已有其他公告佔用 'result'，衝突就直接擋掉並回錯誤，不會靜默覆寫別人的內容
+// （步驟⑦結果公告面板據此保護唯一性）。這道 app 層檢查是先查後寫，兩個選委同時通過檢查
+// 仍可能都走到 create——DB 端有 partial unique index 頂住最後一道防線（見 schema.prisma
+// 的 Announcement model 註解），撞到時 create 會丟 P2002，下面 catch 住轉成友善錯誤。
 //
 // 由 id 決定目標：id 給值＝更新既有那一則（可換 legalTag，但要過上面的佔用檢查）；
 // id 為 null＝新建一則。回傳的 id 讓 client 端記住，之後儲存草稿變成「更新」而不是重複新建。
@@ -15,7 +17,13 @@ import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { upsertOfficesForElection } from "@/lib/office-upsert";
 import type { TallyResult } from "@/lib/tally";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
+
+const RESULT_TAG_CONFLICT_ERROR = "這個公告類型已被其他公告佔用，請改為編輯既有那一則";
+
+function isResultTagConflict(e: unknown): boolean {
+  return e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002";
+}
 
 export type ActionResult = { ok: true; id: string } | { ok: false; error: string };
 
@@ -40,14 +48,14 @@ async function resolveTarget(
       const conflict = await prisma.announcement.findFirst({
         where: { electionId, legalTag, NOT: { id } },
       });
-      if (conflict) return { ok: false, error: "這個公告類型已被其他公告佔用，請改為編輯既有那一則" };
+      if (conflict) return { ok: false, error: RESULT_TAG_CONFLICT_ERROR };
     }
     return { ok: true, existing: { id: existing.id, publishedAt: existing.publishedAt } };
   }
 
   if (legalTag !== null) {
     const conflict = await prisma.announcement.findFirst({ where: { electionId, legalTag } });
-    if (conflict) return { ok: false, error: "這個公告類型已被其他公告佔用，請改為編輯既有那一則" };
+    if (conflict) return { ok: false, error: RESULT_TAG_CONFLICT_ERROR };
   }
   return { ok: true, existing: null };
 }
@@ -69,9 +77,15 @@ export async function saveAnnouncementDraft(
   const target = await resolveTarget(electionId, id, legalTag);
   if (!target.ok) return target;
 
-  const saved = target.existing
-    ? await prisma.announcement.update({ where: { id: target.existing.id }, data: { title: t, body, legalTag } })
-    : await prisma.announcement.create({ data: { electionId, legalTag, title: t, body } });
+  let saved: { id: string };
+  try {
+    saved = target.existing
+      ? await prisma.announcement.update({ where: { id: target.existing.id }, data: { title: t, body, legalTag } })
+      : await prisma.announcement.create({ data: { electionId, legalTag, title: t, body } });
+  } catch (e) {
+    if (isResultTagConflict(e)) return { ok: false, error: RESULT_TAG_CONFLICT_ERROR };
+    throw e;
+  }
 
   revalidatePath(`/admin/elections/${electionId}`);
   return { ok: true, id: saved.id };
@@ -163,6 +177,7 @@ export async function publishAnnouncement(
     if (e instanceof Error && e.message === "CONFLICT") {
       return { ok: false, error: "選舉狀態已被其他選委變更，請重新整理頁面" };
     }
+    if (isResultTagConflict(e)) return { ok: false, error: RESULT_TAG_CONFLICT_ERROR };
     throw e;
   }
 

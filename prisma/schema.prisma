@@ -60,6 +60,12 @@ model Election {
 
 // 自由公告流：一般公告可任意多則；legalTag 非 null 者為法定里程碑公告（每場至多一則，由
 // action 層強制），null 為一般公告（不受此限）。
+// 「每場至多一則 legalTag='result'」除了 action 層先查後寫，DB 端也有最後一道防線：
+// migration 20260906181105_result_announcement_unique 手寫了一條 partial unique index
+// （Prisma schema 語法不支援 partial index，改在 migration.sql 直接下 raw SQL）：
+//   CREATE UNIQUE INDEX "Announcement_electionId_result_key"
+//     ON "Announcement" ("electionId") WHERE "legalTag" = 'result';
+// 撞到這條索引時 action 層要 catch P2002 回友善錯誤，不能讓例外裸奔成 500。
 model Announcement {
   id          String    @id @default(cuid())
   electionId  String
@@ -120,6 +126,8 @@ model EncryptedBallot {
   voter      Voter    @relation(fields: [voterId], references: [id], onDelete: Cascade)
   ciphertext String // base64(RSA-OAEP 包 AES 金鑰 + AES-GCM 密文)
   updatedAt  DateTime @updatedAt
+
+  @@index([electionId])
 }
 
 // 罷免連署（具名、一人一署）。門檻與通過判定見 src/lib/recall.ts。

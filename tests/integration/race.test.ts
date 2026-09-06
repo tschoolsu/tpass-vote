@@ -31,7 +31,8 @@ import { approveCandidate, rejectCandidate } from "@/app/admin/elections/[id]/ca
 import { updateElection } from "@/app/admin/elections/[id]/edit/actions";
 import { removeVoter } from "@/app/admin/elections/[id]/roster/actions";
 import { sealElection } from "@/app/admin/elections/[id]/tally/actions";
-import { savePublicKey } from "@/app/admin/elections/[id]/actions";
+import { savePublicKey, redoElection } from "@/app/admin/elections/[id]/actions";
+import { publishAnnouncement } from "@/app/admin/elections/[id]/announcements/actions";
 
 const CAND = { email: "racecand@test.local", name: "候選人" };
 const SLUG = "race";
@@ -572,5 +573,83 @@ describe("D7-1：savePublicKey 兩位選委同時產鑰的競態", () => {
       await lock.abort();
       throw e;
     }
+  }, 60_000);
+});
+
+// C-4：先查後寫的兩個窗口——公告唯一性、cloneElection 的 slug——原本都可能以未處理例外
+// （500）收場。DB 端補了 partial unique index／app 層補了 catch 與重試一次之後，
+// 兩者都應該「恰一則落地」或「友善錯誤」，不再是裸露的 Prisma 例外。
+describe("C-4：公告唯一性與 cloneElection slug 的併發防線", () => {
+  it("兩位選委同時第一次發布結果公告：恰一則落地，另一次拿到友善錯誤而不是例外", async () => {
+    await resetDb();
+    const created = await makeElection({ slug: "race-ann" });
+    const electionId = created.electionId!;
+    // 直接把選舉戳到「已彌封、有結果」，跳過完整開票流程——這裡要測的是公告 create 本身
+    // 的併發，不是計票。
+    await prisma.election.update({
+      where: { id: electionId },
+      data: { status: "sealed", resultsJson: { candidates: [] } },
+    });
+
+    const lock = await holdElectionLock(electionId, "update");
+    try {
+      const a = as(ADMIN, () => publishAnnouncement(electionId, null, "result", "結果公告甲", "甲版本"));
+      await settle();
+      const b = as(MODERATOR, () => publishAnnouncement(electionId, null, "result", "結果公告乙", "乙版本"));
+      await settle();
+      await lock.release();
+
+      const [ra, rb] = await Promise.all([a, b]);
+
+      const oks = [ra, rb].filter((r) => r.ok);
+      const fails = [ra, rb].filter((r) => !r.ok) as { ok: false; error: string }[];
+      expect(oks.length, "兩位選委同時發布，應恰有一次成功").toBe(1);
+      expect(fails.length, "另一次應拿到可讀錯誤而不是丟例外").toBe(1);
+      expect(fails[0].error).toBe("這個公告類型已被其他公告佔用，請改為編輯既有那一則");
+
+      expect(
+        await prisma.announcement.count({ where: { electionId, legalTag: "result" } }),
+        "DB 端 partial unique index：每場至多一則 result 公告",
+      ).toBe(1);
+
+      const election = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+      expect(election.status, "成功那次應把選舉狀態推到 published").toBe("published");
+    } catch (e) {
+      await lock.abort();
+      throw e;
+    }
+  }, 60_000);
+
+  it("同時按兩次重辦：都成功或其一是友善錯誤，slug 不撞號，沒有未處理例外", async () => {
+    await resetDb();
+    const created = await makeElection({ slug: "race-redo" });
+    const electionId = created.electionId!;
+    await generateKeys(electionId, "race-redo");
+    await importVoters(electionId, [VOTER_A]);
+
+    // 刻意不用 Promise.allSettled：修法前這裡應該直接以未處理例外（拒絕）收場，
+    // 而不是回傳一個 ok:false 的可讀結果——這正是規格要修的問題。
+    const [ra, rb] = await Promise.all([
+      as(ADMIN, () => redoElection(electionId)),
+      as(MODERATOR, () => redoElection(electionId)),
+    ]);
+
+    for (const r of [ra, rb]) {
+      if (!r.ok) {
+        expect(r.error, "失敗要是可讀訊息，不能是裸露的 Prisma 例外字串").not.toMatch(
+          /prisma|P2002|constraint|unique/i,
+        );
+      }
+    }
+
+    const oks = [ra, rb].filter((r) => r.ok) as { ok: true; electionId: string }[];
+    expect(oks.length, "至少要有一次重辦成功").toBeGreaterThanOrEqual(1);
+
+    const clones = await prisma.election.findMany({
+      where: { parentId: electionId, lineage: "redo" },
+      select: { slug: true },
+    });
+    expect(clones.length, "落地的重辦場次數要跟回報成功的次數一致").toBe(oks.length);
+    expect(new Set(clones.map((c) => c.slug)).size, "重辦場次的 slug 不可以撞號").toBe(clones.length);
   }, 60_000);
 });

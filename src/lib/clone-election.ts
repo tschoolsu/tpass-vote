@@ -9,6 +9,10 @@
 //    守門判斷——那是呼叫端的責任（各 action 自己驗證來源場次狀態是否允許複製）。
 import { Prisma, type Election } from "@/generated/prisma/client";
 
+function isUniqueSlugConflict(e: unknown): boolean {
+  return e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002";
+}
+
 export type CloneLineage = "runoff" | "by_election" | "redo";
 
 const SLUG_SUFFIX: Record<CloneLineage, string> = {
@@ -62,18 +66,31 @@ export async function cloneElection(
     n++;
   }
 
-  const created = await tx.election.create({
-    data: {
-      slug: newSlug,
-      title: `${source.title}${options.titleSuffix}`,
-      kind: source.kind,
-      parentId: source.id,
-      lineage: options.lineage,
-      seats: source.seats,
-      maxChoices: source.maxChoices,
-      status: "draft",
-    },
-  });
+  const data = {
+    title: `${source.title}${options.titleSuffix}`,
+    kind: source.kind,
+    parentId: source.id,
+    lineage: options.lineage,
+    seats: source.seats,
+    maxChoices: source.maxChoices,
+    status: "draft",
+  };
+
+  // 上面的 while 迴圈是「先查後建」，兩個複製動作同時算出同一個 newSlug 時查詢都會落空——
+  // 交易內真正 create 那一刻才會撞到 slug 的 @unique。撞到就加隨機尾碼重試一次，不讓這個
+  // 窗口期的競態以未處理例外收場。Postgres 一旦某條指令出錯，整個交易會進入 aborted 狀態、
+  // 後續指令一律被拒（25P02），所以重試前必須先 ROLLBACK TO SAVEPOINT 把交易救回來，
+  // 不能在同一個 transaction 裡直接接著再下一次 create。
+  let created: Election;
+  await tx.$executeRawUnsafe("SAVEPOINT clone_election_slug_retry");
+  try {
+    created = await tx.election.create({ data: { ...data, slug: newSlug } });
+  } catch (e) {
+    if (!isUniqueSlugConflict(e)) throw e;
+    await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT clone_election_slug_retry");
+    const retrySlug = `${newSlug}-${Math.random().toString(36).slice(2, 6)}`;
+    created = await tx.election.create({ data: { ...data, slug: retrySlug } });
+  }
 
   if (options.copyRoster) {
     await copyVotersInto(tx, source.id, created.id);
