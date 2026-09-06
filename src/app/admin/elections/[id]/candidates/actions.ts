@@ -13,11 +13,18 @@ import { LOCKED_STATUSES } from "@/lib/election-status";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-async function assertElectionEditable(electionId: string): Promise<ActionResult | null> {
-  const election = await prisma.election.findUnique({ where: { id: electionId }, select: { status: true } });
-  if (!election) return { ok: false, error: "找不到選舉" };
-  if (LOCKED_STATUSES.has(election.status)) return { ok: false, error: "投票已開始，候選人名單已鎖定" };
-  return null;
+// 狀態檢查必須在「持鎖之後」重讀，且與後面的寫入同一個交易，否則 advanceStatus 能在
+// 「檢查完、還沒寫」的窗口插隊 commit（D7-2）：改用 FOR UPDATE 而不是 vote/actions.ts
+// castBallot 那種 FOR SHARE——因為 approve/reject/sendBack 三支都會在同一交易內接著跑
+// renumberApproved，對整場候選人重新編號；若只用 FOR SHARE，兩個選委同時審核不同候選人時
+// 會同時進入 renumberApproved 各自對 Candidate 表下鎖，彼此等待造成死結（P2034/40P01）。
+// FOR UPDATE 讓兩個交易完全序列化：後到的那個等前一個 commit 後才重讀狀態、往下走，
+// 兩邊都不會有機會同時碰 renumberApproved，也就沒有死結可言。
+async function lockElectionStatus(tx: Prisma.TransactionClient, electionId: string): Promise<string | null> {
+  const [row] = await tx.$queryRaw<{ status: string }[]>`
+    SELECT status FROM "Election" WHERE id = ${electionId} FOR UPDATE
+  `;
+  return row?.status ?? null;
 }
 
 // 先把整場選舉的候選人編號全清空（NULL 在唯一索引裡互不衝突，不會撞號），
@@ -36,16 +43,21 @@ async function renumberApproved(tx: Prisma.TransactionClient, electionId: string
 
 export async function approveCandidate(electionId: string, candidateId: string): Promise<ActionResult> {
   await requireAdmin(`/admin/elections/${electionId}/candidates`);
-  const blocked = await assertElectionEditable(electionId);
-  if (blocked) return blocked;
 
   const candidate = await prisma.candidate.findUnique({ where: { id: candidateId } });
   if (!candidate || candidate.electionId !== electionId) return { ok: false, error: "找不到候選人" };
 
-  await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
+    const status = await lockElectionStatus(tx, electionId);
+    if (status === null) return { ok: false as const, error: "找不到選舉" };
+    if (LOCKED_STATUSES.has(status)) return { ok: false as const, error: "投票已開始，候選人名單已鎖定" };
+
     await tx.candidate.update({ where: { id: candidateId }, data: { status: "approved" } });
     await renumberApproved(tx, electionId);
+    return { ok: true as const };
   }, { timeout: 10_000 });
+
+  if (!result.ok) return result;
   revalidatePath(`/admin/elections/${electionId}/candidates`);
   revalidatePath(`/admin/elections/${electionId}`);
   return { ok: true };
@@ -57,8 +69,6 @@ export async function sendBackForFix(
   reviewNote: string,
 ): Promise<ActionResult> {
   await requireAdmin(`/admin/elections/${electionId}/candidates`);
-  const blocked = await assertElectionEditable(electionId);
-  if (blocked) return blocked;
 
   const note = reviewNote.trim();
   if (note === "") return { ok: false, error: "退回補正需要填寫審核意見" };
@@ -66,13 +76,20 @@ export async function sendBackForFix(
   const candidate = await prisma.candidate.findUnique({ where: { id: candidateId } });
   if (!candidate || candidate.electionId !== electionId) return { ok: false, error: "找不到候選人" };
 
-  await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
+    const status = await lockElectionStatus(tx, electionId);
+    if (status === null) return { ok: false as const, error: "找不到選舉" };
+    if (LOCKED_STATUSES.has(status)) return { ok: false as const, error: "投票已開始，候選人名單已鎖定" };
+
     await tx.candidate.update({
       where: { id: candidateId },
       data: { status: "needs_fix", reviewNote: note },
     });
     await renumberApproved(tx, electionId);
+    return { ok: true as const };
   }, { timeout: 10_000 });
+
+  if (!result.ok) return result;
   revalidatePath(`/admin/elections/${electionId}/candidates`);
   return { ok: true };
 }
@@ -83,19 +100,24 @@ export async function rejectCandidate(
   reviewNote?: string,
 ): Promise<ActionResult> {
   await requireAdmin(`/admin/elections/${electionId}/candidates`);
-  const blocked = await assertElectionEditable(electionId);
-  if (blocked) return blocked;
 
   const candidate = await prisma.candidate.findUnique({ where: { id: candidateId } });
   if (!candidate || candidate.electionId !== electionId) return { ok: false, error: "找不到候選人" };
 
-  await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
+    const status = await lockElectionStatus(tx, electionId);
+    if (status === null) return { ok: false as const, error: "找不到選舉" };
+    if (LOCKED_STATUSES.has(status)) return { ok: false as const, error: "投票已開始，候選人名單已鎖定" };
+
     await tx.candidate.update({
       where: { id: candidateId },
       data: { status: "rejected", reviewNote: reviewNote?.trim() || null },
     });
     await renumberApproved(tx, electionId);
+    return { ok: true as const };
   }, { timeout: 10_000 });
+
+  if (!result.ok) return result;
   revalidatePath(`/admin/elections/${electionId}/candidates`);
   revalidatePath(`/admin/elections/${electionId}`);
   return { ok: true };
