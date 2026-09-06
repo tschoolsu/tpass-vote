@@ -125,8 +125,15 @@ jobs:
       - run: pnpm exec prisma generate
 
       # 真的對上面那個空庫套用 prisma/migrations 底下全部 migration。套不起來
-      # （壞掉的 migration、跟 schema 對不上）在這裡就會炸，不必等部署當下才發現。
+      # （壞掉的 migration、SQL 語法錯、migration 之間互相衝突）在這裡就會炸，
+      # 不必等部署當下才發現。
+      # ⚠️ 這裡驗的只是「這批 migration 能不能套進一個空庫」，不是「migrations
+      # 有沒有跟目前的 prisma/schema.prisma 同步」——migrate deploy 不讀 datamodel，
+      # schema 改了但忘記 `prisma migrate dev` 產生對應 migration 的那種分岔
+      # （9/2 事故那類）這一步照樣是綠燈，抓不到。
       - run: pnpm exec prisma migrate deploy
 
       # pm2 要吃這個檔案才知道怎麼啟動、怎麼收 SIGTERM；deploy.sh 沒看到它會直接拒絕部署。
+      # 這一步只在檔案真的缺席時才會紅——如果這裡紅了，代表現在 checkout 到的這個
+      # commit 真的沒辦法部署，不是這個查核本身壞了。
       - run: test -f ecosystem.config.js

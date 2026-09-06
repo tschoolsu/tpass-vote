@@ -20,6 +20,15 @@ describe("C-5：CI 補查核 + 文件與文案修正", () => {
     expect(ci).toMatch(/image:\s*postgres/);
   });
 
+  it("migrate deploy 步驟的註解不誇稱能抓到 migrations 跟 schema.prisma 的落差", () => {
+    // prisma migrate deploy 只驗「這批 migration SQL 套不套得起來」，不讀 datamodel，
+    // 抓不到「schema 改了但沒產生對應 migration」這種 9/2 事故那類分岔。
+    // 之前的註解宣稱它會抓「跟 schema 對不上」，實測反例：對 schema.prisma 加一個
+    // 沒有對應 migration 的 model，migrate deploy 仍 exit 0 全數套用——註解與行為不符。
+    const ci = readFileSync(path.join(repoRoot, ".github/workflows/ci.yml"), "utf8");
+    expect(ci).not.toMatch(/跟 schema 對不上/);
+  });
+
   it("GITHUB_URL 指向 tschoolsu 組織 repo，不是個人帳號", () => {
     const site = readFileSync(path.join(repoRoot, "src/config/site.ts"), "utf8");
     expect(site).toContain("github.com/tschoolsu/tpass-vote");
