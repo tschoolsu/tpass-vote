@@ -4,19 +4,25 @@ import { tallyBallots, type TallyInput, type TallyResult } from "@/lib/tally";
 import type { BallotPlain } from "@/lib/ballot-crypto";
 
 const E = "election-1";
+// 每張票預設要有各自不同的代碼——tallyBallots 現在會把同代碼的票視為串通、標為
+// 無效（D12-3），固定同一個假代碼會讓 tally() 那條路徑的票互相「撞號」。
+// buildDisclosures 用的是外部傳入的 codes[] 參數、不看這裡的 code，不受影響；
+// 想刻意測撞號時，各測試自己組 BallotPlain／codes 指定相同的值。
+let codeSeq = 0;
+const uniqueCode = () => (++codeSeq).toString(16).padStart(12, "0");
 const choose = (...ids: string[]): BallotPlain => ({
   v: 2,
   electionId: E,
-  code: "000000000000",
+  code: uniqueCode(),
   choice: { type: "choose", candidateIds: ids },
 });
 const approval = (approvals: Record<string, boolean>): BallotPlain => ({
   v: 2,
   electionId: E,
-  code: "000000000000",
+  code: uniqueCode(),
   choice: { type: "approval", approvals },
 });
-const blank: BallotPlain = { v: 2, electionId: E, code: "000000000000", choice: { type: "blank" } };
+const blankBallot = (): BallotPlain => ({ v: 2, electionId: E, code: uniqueCode(), choice: { type: "blank" } });
 
 // 代碼實際上是密文雜湊，測試裡只要求「12 碼、彼此不同」即可。
 const code = (n: number) => `${n}`.padStart(12, "0");
@@ -36,7 +42,7 @@ function tally(overrides: Partial<TallyInput>) {
 
 describe("buildDisclosures", () => {
   it("逐票翻成代碼↔意思，並依代碼排序（與彌封順序無關）", () => {
-    const plaintexts = [choose("a"), blank, null, choose("b")];
+    const plaintexts = [choose("a"), blankBallot(), null, choose("b")];
     const codes = [code(3), code(1), code(4), code(2)];
     const entries = buildDisclosures(codes, plaintexts, E, "choose", ["a", "b", "c"], 1);
 
@@ -74,7 +80,7 @@ describe("buildDisclosures", () => {
 });
 
 describe("verifyDisclosures", () => {
-  const plaintexts = [choose("a"), choose("a"), choose("b"), blank, null];
+  const plaintexts = [choose("a"), choose("a"), choose("b"), blankBallot(), null];
   const codes = [code(1), code(2), code(3), code(4), code(5)];
   const results = tally({ plaintexts });
   const entries = buildDisclosures(codes, plaintexts, E, "choose", ["a", "b", "c"], 1);
@@ -102,7 +108,9 @@ describe("verifyDisclosures", () => {
     expect(verifyDisclosures(tampered, codes.length, results, 1)).toBe("codes");
   });
 
-  it("重複代碼", () => {
+  // D12-3：重複代碼本身不再是拒收理由（見下面獨立的 describe），但重複代碼裡只要
+  // 有一張還宣稱自己有效，就代表明細沒有依規則把撞號的票改標無效——這種才要擋下來。
+  it("重複代碼但不是全部標為 invalid：拒收", () => {
     const dup: DisclosureEntry[] = [...entries.slice(1), { ...entries[1] }];
     expect(verifyDisclosures(dup, codes.length, results, 1)).toBe("duplicate-code");
   });
@@ -124,6 +132,38 @@ describe("verifyDisclosures", () => {
       e.kind === "choose" ? { ...e, candidateIds: ["a", "b"] } : e,
     );
     expect(verifyDisclosures(tampered, codes.length, results, 1)).toBe("max-choices");
+  });
+});
+
+// D12-3：代碼由投票人瀏覽器產生、封在密文內部，伺服器收票時看不到，兩位串通的
+// 選舉人可以各自送出一張「代碼相同」的密文。修法前 buildDisclosures 會把兩張各自
+// 判成有效票，verifyDisclosures 一遇到重複代碼就讓整批提交被拒收，全場開不了票。
+// 修法後：撞號的票在明細端全部改標 invalid，計票端也不算給任何候選人，兩邊自洽，
+// verifyDisclosures 因此通過。
+describe("重複代碼（D12-3）：串通票在明細與計票兩端一致地算無效票", () => {
+  it("明細兩張皆標為 invalid、與計票結果自洽、驗證通過", () => {
+    const DUP = "aaaaaaaaaaaa";
+    const OTHER = "bbbbbbbbbbbb";
+    const dupA: BallotPlain = { v: 2, electionId: E, code: DUP, choice: { type: "choose", candidateIds: ["a"] } };
+    const dupB: BallotPlain = { v: 2, electionId: E, code: DUP, choice: { type: "choose", candidateIds: ["b"] } };
+    const other: BallotPlain = { v: 2, electionId: E, code: OTHER, choice: { type: "choose", candidateIds: ["c"] } };
+    const plaintexts = [dupA, dupB, other];
+    // 比照 tally-client.ts 的做法：外部 codes[] 就是明文自帶的 code。
+    const codes = plaintexts.map((p) => p.code);
+
+    const results = tally({ plaintexts });
+    expect(results.invalidCount).toBe(2);
+    expect(results.validCount).toBe(1);
+    expect(results.candidates.find((c) => c.candidateId === "a")!.votes).toBe(0);
+    expect(results.candidates.find((c) => c.candidateId === "b")!.votes).toBe(0);
+    expect(results.candidates.find((c) => c.candidateId === "c")!.votes).toBe(1);
+
+    const entries = buildDisclosures(codes, plaintexts, E, "choose", ["a", "b", "c"], 1);
+    const dupEntries = entries.filter((e) => e.code === DUP);
+    expect(dupEntries).toHaveLength(2);
+    expect(dupEntries.every((e) => e.kind === "invalid")).toBe(true);
+
+    expect(verifyDisclosures(entries, codes.length, results, 1)).toBeNull();
   });
 });
 

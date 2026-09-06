@@ -3,19 +3,24 @@ import { tallyBallots, decideElected, type TallyInput } from "@/lib/tally";
 import type { BallotPlain } from "@/lib/ballot-crypto";
 
 const E = "election-1";
+// 每張票預設要有各自不同的代碼——tallyBallots 現在會把同代碼的票視為串通、
+// 標為無效（D12-3），固定同一個假代碼會讓既有測試的票互相「撞號」。
+// 想刻意測撞號時，各測試自己組 BallotPlain 指定相同的 code。
+let codeSeq = 0;
+const uniqueCode = () => (++codeSeq).toString(16).padStart(12, "0");
 const choose = (...ids: string[]): BallotPlain => ({
   v: 2,
   electionId: E,
-  code: "000000000000",
+  code: uniqueCode(),
   choice: { type: "choose", candidateIds: ids },
 });
 const approval = (approvals: Record<string, boolean>): BallotPlain => ({
   v: 2,
   electionId: E,
-  code: "000000000000",
+  code: uniqueCode(),
   choice: { type: "approval", approvals },
 });
-const blank: BallotPlain = { v: 2, electionId: E, code: "000000000000", choice: { type: "blank" } };
+const blankBallot = (): BallotPlain => ({ v: 2, electionId: E, code: uniqueCode(), choice: { type: "blank" } });
 
 function base(overrides: Partial<TallyInput>): TallyInput {
   return {
@@ -34,7 +39,7 @@ describe("choose（超額，相對多數）", () => {
   it("最高票當選，廢票與無效票分開計，投票率含所有入匭票", () => {
     const r = tallyBallots(
       base({
-        plaintexts: [choose("a"), choose("a"), choose("b"), blank, null],
+        plaintexts: [choose("a"), choose("a"), choose("b"), blankBallot(), null],
       }),
     );
     expect(r.candidates.find((c) => c.candidateId === "a")).toMatchObject({
@@ -189,6 +194,31 @@ describe("approval（同額，同意/不同意）", () => {
       }),
     );
     expect(r.invalidCount).toBe(1);
+  });
+});
+
+// D12-3：代碼由投票人瀏覽器產生、封在密文內部，伺服器收票時看不到，
+// 兩位串通的選舉人可以各自送出一張「代碼相同」的密文。修法前 verifyDisclosures
+// 一遇到重複代碼就讓整批提交被拒收；修法後改成把撞號的票全部算無效票，
+// 不影響其餘票數（tally.ts 這邊只驗證「不計入任何候選人」，明細端的驗證見 disclosure.test.ts）。
+describe("重複代碼（D12-3）：串通票視為無效，不讓整場開不了票", () => {
+  it("兩張同代碼、原本各自有效的票，全部改列無效票，不計入任何候選人", () => {
+    const DUP = "aaaaaaaaaaaa";
+    const dupA: BallotPlain = { v: 2, electionId: E, code: DUP, choice: { type: "choose", candidateIds: ["a"] } };
+    const dupB: BallotPlain = { v: 2, electionId: E, code: DUP, choice: { type: "choose", candidateIds: ["b"] } };
+    const r = tallyBallots(base({ plaintexts: [dupA, dupB, choose("c")] }));
+    expect(r.invalidCount).toBe(2);
+    expect(r.validCount).toBe(1);
+    expect(r.candidates.find((c) => c.candidateId === "a")!.votes).toBe(0);
+    expect(r.candidates.find((c) => c.candidateId === "b")!.votes).toBe(0);
+    expect(r.candidates.find((c) => c.candidateId === "c")!.votes).toBe(1);
+  });
+
+  it("解不開的票沒有代碼可比對，不會被誤判成撞號", () => {
+    const r = tallyBallots(base({ plaintexts: [choose("a"), null, null] }));
+    expect(r.invalidCount).toBe(2);
+    expect(r.validCount).toBe(1);
+    expect(r.candidates.find((c) => c.candidateId === "a")!.votes).toBe(1);
   });
 });
 

@@ -114,9 +114,22 @@ export function tallyBallots(input: TallyInput): TallyResult {
   let invalidCount = 0;
   let validCount = 0;
 
+  // D12-3：代碼由投票人瀏覽器產生、封在明文裡，伺服器管不到——兩位串通的選舉人
+  // 可以送出同一組代碼。§26-1 Ⅷ 無效票款：這些票全部算無效、不計入任何候選人。
+  // 判定依據跟 disclosure.ts 的 buildDisclosures 一致（都是明文自帶的 code），
+  // 兩處不得各寫一套，否則計票結果與公告明細會對不起來。
+  const codeCounts = new Map<string, number>();
+  for (const plain of plaintexts) {
+    if (plain) codeCounts.set(plain.code, (codeCounts.get(plain.code) ?? 0) + 1);
+  }
+
   for (const plain of plaintexts) {
     // 解不開、版本不符、綁錯選舉 → 無效票
     if (!plain || plain.electionId !== electionId) {
+      invalidCount++;
+      continue;
+    }
+    if (codeCounts.get(plain.code)! > 1) {
       invalidCount++;
       continue;
     }

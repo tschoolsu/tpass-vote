@@ -16,9 +16,10 @@ import {
 } from "../helpers/flow";
 import { decryptAndTally } from "@/lib/tally-client";
 import { submitResults } from "@/app/admin/elections/[id]/tally/actions";
+import { castBallot } from "@/app/e/[slug]/vote/actions";
 import type { TallyResult } from "@/lib/tally";
 import type { DisclosureEntry } from "@/lib/disclosure";
-import { combineKeyFiles, decryptBallot, type TallyKeyFile } from "@/lib/ballot-crypto";
+import { combineKeyFiles, decryptBallot, type BallotPlain, type TallyKeyFile } from "@/lib/ballot-crypto";
 
 const SLUG = "results-integrity";
 const V = (n: number) => ({ email: `ri-v${n}@test.local`, name: `投票人${n}` });
@@ -177,4 +178,134 @@ describe("結果提交完整性：elected／tied／hasTie／rosterCount／turnou
 
     await resetSubmission(f.electionId);
   });
+});
+
+// D12-3：可回溯代碼由投票人瀏覽器產生、封在密文內部，伺服器收票時看不到，
+// 兩位串通的選舉人可以各自送出「代碼相同」的密文。修法前 verifyDisclosures 一遇到
+// 重複代碼就讓 submitResults 整批拒收、全場開不了票；修法後改成把撞號的兩張票
+// 全部算無效票（§26-1 Ⅷ），其餘照常開票。
+const PADDED_PLAIN_SIZE = 2048; // 與 ballot-crypto.ts 的常數一致（那裡沒 export）
+const LENGTH_PREFIX = 4;
+
+function dupToB64(buf: ArrayBuffer | Uint8Array): string {
+  const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+/** 攻擊者版本的 encryptBallot：唯一差別是「代碼可以自己指定」，用來重現串通投票。 */
+async function encryptWithChosenCode(
+  publicKeyJwk: JsonWebKey,
+  plain: BallotPlain,
+): Promise<string> {
+  const json = JSON.stringify(plain);
+  const payload = new TextEncoder().encode(json);
+  const padded = globalThis.crypto.getRandomValues(new Uint8Array(PADDED_PLAIN_SIZE));
+  new DataView(padded.buffer).setUint32(0, payload.length, false);
+  padded.set(payload, LENGTH_PREFIX);
+
+  const aesKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, [
+    "encrypt",
+  ]);
+  const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, aesKey, padded);
+  const publicKey = await crypto.subtle.importKey(
+    "jwk",
+    publicKeyJwk,
+    { name: "RSA-OAEP", hash: "SHA-256" },
+    false,
+    ["encrypt"],
+  );
+  const ek = await crypto.subtle.encrypt(
+    { name: "RSA-OAEP" },
+    publicKey,
+    await crypto.subtle.exportKey("raw", aesKey),
+  );
+  return JSON.stringify({
+    v: 2,
+    alg: "RSA-OAEP-256+A256GCM",
+    ek: dupToB64(ek),
+    iv: dupToB64(iv),
+    ct: dupToB64(ct),
+  });
+}
+
+describe("重複代碼（D12-3）：串通投票人送出同代碼，開票端把那幾張標為無效票，不再整場開不了票", () => {
+  const DUP_SLUG = "results-integrity-dup-code";
+  const DV = (n: number) => ({ email: `dc-v${n}@test.local`, name: `投票人${n}` });
+  const DC = (n: number) => ({ email: `dc-c${n}@test.local`, name: `候選人${n}` });
+
+  it("兩位投票人同代碼：submitResults ok、有效票數少 2、無效票數多 2", async () => {
+    const created = await makeElection({ slug: DUP_SLUG, seats: 1, maxChoices: 1, kind: "other" });
+    if (!created.ok) throw new Error(`建場失敗：${created.error}`);
+    const electionId = created.electionId!;
+    const { publicKeyJwk, keyFiles } = await generateKeys(electionId, DUP_SLUG);
+
+    const cands = [DC(1), DC(2)];
+    const voters = [DV(1), DV(2), DV(3)]; // 1、2 串通同代碼；3 誠實投票
+    await importVoters(electionId, [...voters, ...cands]);
+    await advanceTo(electionId, "registration");
+    for (const c of cands) await registerAs(DUP_SLUG, electionId, c);
+    const approved = await approveAll(electionId);
+    const candidateIds = approved.map((c) => c.id);
+    await advanceTo(electionId, "campaigning");
+    await advanceTo(electionId, "voting");
+
+    // 串通者甲乙各自送出「代碼相同」的密文——密文是投票人瀏覽器造的，伺服器只驗形狀
+    // （castBallot 唯一的內容檢查），完全看不到代碼；正常的 encryptBallot 只會產生
+    // 隨機代碼，這裡直接組出攻擊者密文重現串通。
+    const COLLUDING_CODE = "abcdef123456";
+    const dupChoices: BallotPlain["choice"][] = [
+      { type: "choose", candidateIds: [candidateIds[0]] },
+      { type: "choose", candidateIds: [candidateIds[1]] },
+    ];
+    for (const [i, choice] of dupChoices.entries()) {
+      const ciphertext = await encryptWithChosenCode(publicKeyJwk, {
+        v: 2,
+        electionId,
+        code: COLLUDING_CODE,
+        choice,
+      });
+      const cast = await as(voters[i], () => castBallot(DUP_SLUG, ciphertext));
+      if (!cast.ok) throw new Error(`收票失敗：${cast.error}`);
+    }
+    // 誠實投票人正常投一號。
+    const honest = await voteAs(DUP_SLUG, electionId, voters[2], publicKeyJwk, {
+      type: "choose",
+      candidateIds: [candidateIds[0]],
+    });
+    if (!honest.ok) throw new Error(`投票失敗：${honest.error}`);
+
+    await advanceTo(electionId, "closed");
+    await seal(electionId);
+
+    const election = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    const rosterCount = await prisma.voter.count({ where: { electionId } });
+    const { results, disclosures } = await decryptAndTally(
+      keyFiles,
+      (election.sealedBox as string[]) ?? [],
+      {
+        electionId,
+        slug: DUP_SLUG,
+        ballotMode: election.ballotMode as "choose" | "approval",
+        seats: 1,
+        maxChoices: 1,
+        candidateIds,
+        rosterCount,
+      },
+    );
+    const submitted = await as(ADMIN, () => submitResults(electionId, results, disclosures));
+
+    expect(submitted.ok).toBe(true);
+    expect(results.totalBallots).toBe(3);
+    expect(results.invalidCount).toBe(2);
+    expect(results.validCount).toBe(1);
+    expect(results.candidates.find((c) => c.candidateId === candidateIds[0])!.votes).toBe(1);
+    expect(results.candidates.find((c) => c.candidateId === candidateIds[1])!.votes).toBe(0);
+
+    const dupEntries = disclosures.filter((d) => d.code === COLLUDING_CODE);
+    expect(dupEntries).toHaveLength(2);
+    expect(dupEntries.every((d) => d.kind === "invalid")).toBe(true);
+  }, 180_000);
 });

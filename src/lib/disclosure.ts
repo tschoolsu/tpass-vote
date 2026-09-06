@@ -22,6 +22,7 @@ export interface DisclosureEntry {
   kind: "choose" | "approval" | "blank" | "invalid";
   candidateIds?: string[]; // kind="choose"
   approvals?: Record<string, boolean>; // kind="approval"
+  reason?: "duplicate-code"; // kind="invalid" 的細分理由，目前只有這一種
 }
 
 /** 明細排序的唯一標準：依 code 字典序，跟彌封／提交順序無關。 */
@@ -45,7 +46,24 @@ export function buildDisclosures(
   const entries = codes.map((code, i) =>
     toEntry(code, plaintexts[i] ?? null, electionId, ballotMode, idSet, maxChoices),
   );
+  markDuplicateCodesInvalid(entries);
   return entries.sort(compareByCode);
+}
+
+/**
+ * D12-3：代碼由投票人瀏覽器產生、伺服器管不到，兩位串通的選舉人可以各自送出
+ * 「代碼相同」的密文。§26-1 Ⅷ 無效票款：對撞號的票全部改標無效、不計入任何候選人，
+ * 而不是像過去那樣讓 verifyDisclosures 因為看到重複代碼就整批拒收（見那裡的判定）。
+ * 就地覆寫這批 entries，清掉原本的 candidateIds/approvals——它們已經不算數了。
+ */
+function markDuplicateCodesInvalid(entries: DisclosureEntry[]): void {
+  const counts = new Map<string, number>();
+  for (const e of entries) counts.set(e.code, (counts.get(e.code) ?? 0) + 1);
+  for (let i = 0; i < entries.length; i++) {
+    if (counts.get(entries[i].code)! > 1) {
+      entries[i] = { code: entries[i].code, kind: "invalid", reason: "duplicate-code" };
+    }
+  }
 }
 
 /**
@@ -105,10 +123,18 @@ export function verifyDisclosures(
 ): DisclosureMismatch | null {
   if (entries.length !== boxSize) return "count";
 
-  const seen = new Set<string>();
+  // D12-3：重複代碼本身不再是拒收理由——代碼由投票人瀏覽器產生，伺服器管不到，
+  // 串通者一定送得出同一組代碼。真正該擋的是「重複代碼卻有票宣稱自己有效」：
+  // buildDisclosures 已經把撞號的票全部標成 invalid（見那裡的說明），這裡只要求
+  // 同一組代碼裡不能混進非 invalid 的票，其餘張數／票數對帳照舊往下走。
+  const byCode = new Map<string, DisclosureEntry[]>();
   for (const e of entries) {
-    if (seen.has(e.code)) return "duplicate-code";
-    seen.add(e.code);
+    const group = byCode.get(e.code);
+    if (group) group.push(e);
+    else byCode.set(e.code, [e]);
+  }
+  for (const group of byCode.values()) {
+    if (group.length > 1 && group.some((e) => e.kind !== "invalid")) return "duplicate-code";
   }
 
   let blank = 0;
