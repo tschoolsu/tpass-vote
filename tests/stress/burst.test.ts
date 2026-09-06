@@ -189,11 +189,26 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const voter = await prisma.voter.findUniqueOrThrow({
       where: { electionId_email: { electionId, email: victim.email } },
     });
+    const ballot = await prisma.encryptedBallot.findUnique({ where: { voterId: voter.id } });
     const mine = await prisma.encryptedBallot.count({ where: { voterId: voter.id } });
     expect(mine, "同一人留下超過一張票＝一人一票被打破").toBe(1);
     expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(VOTERS);
     expect(rejected, "有請求連 HTTP 層都沒回應").toHaveLength(0);
     expect(httpFailed, "castBallot 的 $transaction 在高併發同一人重投下出現 deadlock/serialization failure（伺服器回了非 200）").toHaveLength(0);
+
+    // 200 個並發請求全部合法（同一個已在名冊內的人、選舉狀態全程不變），伺服器該對每一個
+    // 都回 ok；只看 mine===1 抓不到「伺服器回 ok，但那次寫入其實被吃掉、留在票匭裡的是
+    // 別次請求的密文」——這裡直接核對：最後留下的密文必須屬於某個回 ok 的請求送出的值。
+    const okCiphertexts = new Set(
+      jobs.filter(
+        (_, i) => settled[i].status === "fulfilled" && (settled[i] as PromiseFulfilledResult<{ ok: boolean }>).value.ok,
+      ),
+    );
+    expect(okCiphertexts.size, "200 個合法請求裡沒有任何一個回 ok").toBeGreaterThan(0);
+    expect(
+      ballot ? okCiphertexts.has(ballot.ciphertext) : false,
+      "票匭裡留下的密文不屬於任何一個回 ok 的請求——伺服器說贏的那次其實沒真的寫進去",
+    ).toBe(true);
     console.log(`  ▸ RSS 灌爆前後：${rssBefore ?? "?"}MB → ${appRssMb() ?? "?"}MB`);
     trackRss("同一人重投灌爆");
   });
