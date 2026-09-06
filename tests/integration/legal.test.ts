@@ -2,7 +2,7 @@
 // 條號對應《臺北市數位實驗高級中等學校學生會選舉罷免條例》第三版。
 import { describe, it, expect, beforeEach } from "vitest";
 import { prisma, resetDb } from "../helpers/db";
-import { ADMIN, VOTER_A, VOTER_B, as } from "../helpers/session";
+import { ADMIN, MODERATOR, VOTER_A, VOTER_B, as } from "../helpers/session";
 import {
   HOUR,
   advanceTo,
@@ -81,6 +81,80 @@ describe("§26-1 Ⅱ 投票期間不得少於 48 小時", () => {
     const r = await as(ADMIN, () => advanceStatus(electionId));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain("投票開始與截止時間");
+  });
+
+  it("D12-1：整段投票期間已經過去，不准從造勢期開放投票", async () => {
+    const created = await makeElection({ slug: "voting-window-elapsed" });
+    const electionId = created.electionId!;
+    await generateKeys(electionId, "voting-window-elapsed");
+    await importVoters(electionId, [VOTER_A]);
+    await advanceTo(electionId, "registration");
+    await registerAs("voting-window-elapsed", electionId, CAND);
+    await approveAll(electionId);
+    await advanceTo(electionId, "campaigning");
+    await prisma.election.update({
+      where: { id: electionId },
+      data: {
+        votingStartsAt: new Date(Date.now() - 72 * HOUR),
+        votingEndsAt: new Date(Date.now() - 24 * HOUR),
+      },
+    });
+
+    const r = await as(ADMIN, () => advanceStatus(electionId));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("已過去");
+  });
+});
+
+describe("D2-3／D12-1 投票截止前不能關票", () => {
+  async function setupAtVoting(slug: string) {
+    const created = await makeElection({ slug });
+    const electionId = created.electionId!;
+    await generateKeys(electionId, slug);
+    await importVoters(electionId, [VOTER_A]);
+    await advanceTo(electionId, "registration");
+    await registerAs(slug, electionId, CAND);
+    await approveAll(electionId);
+    await advanceTo(electionId, "voting");
+    return electionId;
+  }
+
+  it("截止時間未到，一般管理員不能關票", async () => {
+    const electionId = await setupAtVoting("close-gate-mod");
+    const r = await as(MODERATOR, () => advanceStatus(electionId));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("尚不能關票");
+  });
+
+  it("截止時間未到，超級管理員不附理由一樣不能關票", async () => {
+    const electionId = await setupAtVoting("close-gate-super-no-reason");
+    const r = await as(ADMIN, () => advanceStatus(electionId));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("尚不能關票");
+  });
+
+  it("截止時間未到，超級管理員附理由可以強制關票，理由寫進 audit log", async () => {
+    const electionId = await setupAtVoting("close-gate-super-forced");
+    const r = await as(ADMIN, () => advanceStatus(electionId, "選情膠著，選委會決議提前關票"));
+    expect(r.ok, r.ok ? "" : r.error).toBe(true);
+
+    const election = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(election.status).toBe("closed");
+    const log = await prisma.electionAuditLog.findFirst({
+      where: { electionId, action: "advance_status" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(JSON.stringify(log?.diff)).toContain("選情膠著");
+  });
+
+  it("截止時間已到，一般管理員可以正常關票", async () => {
+    const electionId = await setupAtVoting("close-gate-on-time");
+    await prisma.election.update({
+      where: { id: electionId },
+      data: { votingEndsAt: new Date(Date.now() - HOUR) },
+    });
+    const r = await as(MODERATOR, () => advanceStatus(electionId));
+    expect(r.ok, r.ok ? "" : r.error).toBe(true);
   });
 });
 
@@ -351,8 +425,9 @@ describe("狀態機與名單鎖定", () => {
 
   it("投票期間結束後就不收票", async () => {
     const slug = "window-closed";
-    const start = new Date(Date.now() - 72 * HOUR);
-    const created = await makeElection({ slug, votingStartsAt: start, votingHours: 48 });
+    // 窗口在開放投票當下必須還沒過去（見 D12-1 的新閘門），所以先用預設（未來）窗口正常
+    // 推進到 voting，「已截止」的情境改成推進之後才把 votingEndsAt 撥回過去來模擬。
+    const created = await makeElection({ slug });
     expect(created.ok, created.error).toBe(true);
     const electionId = created.electionId!;
     const { publicKeyJwk } = await generateKeys(electionId, slug);
@@ -361,6 +436,10 @@ describe("狀態機與名單鎖定", () => {
     await registerAs(slug, electionId, CAND);
     const [cand] = await approveAll(electionId);
     await advanceTo(electionId, "voting");
+    await prisma.election.update({
+      where: { id: electionId },
+      data: { votingEndsAt: new Date(Date.now() - HOUR) },
+    });
 
     const r = await voteAs(slug, electionId, VOTER_A, publicKeyJwk, {
       type: "approval",

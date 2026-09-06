@@ -139,7 +139,14 @@ export async function approveAll(electionId: string) {
   });
 }
 
-/** 把狀態往前推到指定站；每一步都走 advanceStatus（＝真的過所有前置檢查）。 */
+/**
+ * 把狀態往前推到指定站；每一步都走 advanceStatus（＝真的過所有前置檢查）。
+ *
+ * voting→closed 現在有截止時間閘門（D2-3／D12-1）：流程測試建立的選舉窗口預設在未來
+ * （§26-1 Ⅱ 48 小時下限），測試不可能真的等窗口過去，所以這裡固定以 ADMIN（本測試環境的
+ * 超級管理員身分）附理由強制關票——真正驗證「時間未到擋一般管理員／超管無理由」這條規則
+ * 本身的測試在 legal.test.ts 直接呼叫 advanceStatus，不經過這個 helper。
+ */
 export async function advanceTo(electionId: string, target: string) {
   for (let i = 0; i < 8; i++) {
     const election = await prisma.election.findUniqueOrThrow({
@@ -147,7 +154,8 @@ export async function advanceTo(electionId: string, target: string) {
       select: { status: true },
     });
     if (election.status === target) return;
-    const r = await as(ADMIN, () => advanceStatus(electionId));
+    const reason = election.status === "voting" ? "測試流程 helper 強制關票" : undefined;
+    const r = await as(ADMIN, () => advanceStatus(electionId, reason));
     if (!r.ok) throw new Error(`從 ${election.status} 推進失敗：${r.error}`);
   }
   throw new Error(`推不到 ${target}`);

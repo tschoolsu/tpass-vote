@@ -7,10 +7,12 @@ import { redirect } from "next/navigation";
 import { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
+import { isSuperAdmin } from "@/config/admin";
 import { nextStatus, type ElectionStatus } from "@/lib/election-status";
 import type { TallyResult } from "@/lib/tally";
 import { cloneElection, copyVotersInto } from "@/lib/clone-election";
 import { MIN_VOTING_HOURS } from "@/app/admin/elections/election-schema";
+import { formatDateTime } from "@/components/public/shared";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -108,7 +110,9 @@ export async function savePublicKey(
   return { ok: true };
 }
 
-export async function advanceStatus(electionId: string): Promise<ActionResult> {
+// reason：僅 voting→closed 提前關票（截止時間未到）時才有意義，且只有超級管理員能靠它
+// 強制通過——一般管理員帶 reason 一樣被擋，見下方 D2-3／D12-1 的檢查。
+export async function advanceStatus(electionId: string, reason?: string): Promise<ActionResult> {
   const admin = await requireAdmin();
 
   const election = await prisma.election.findUnique({
@@ -146,6 +150,14 @@ export async function advanceStatus(electionId: string): Promise<ActionResult> {
         error: `投票期間不得少於 ${MIN_VOTING_HOURS} 小時（選罷法 §26-1 Ⅱ），請先修改時程`,
       };
     }
+    // D12-1：時程排錯或選委拖到太晚才按，導致整段投票期間已經過去——這種情況不能開放投票
+    // （開放了也沒人投得到票），不是只擋「太短」。
+    if (new Date() >= votingEndsAt) {
+      return {
+        ok: false,
+        error: `投票期間已於 ${formatDateTime(votingEndsAt)} 結束，整段投票期間已過去，無法開放投票`,
+      };
+    }
     if (!election.tallyPublicKeyJwk) return { ok: false, error: "尚未產生開票金鑰，無法開放投票" };
     if (election.kind === "recall") {
       // 罷免只有 1 位「候選人」（罷免對象本身），別讓 candidates.length>seats 的判定邏輯
@@ -178,6 +190,21 @@ export async function advanceStatus(electionId: string): Promise<ActionResult> {
     }
   }
 
+  // D2-3／D12-1：voting→closed 沒有時間閘門的話，投票開始沒多久就能關票，把還沒投的人
+  // 永遠鎖在外——§26-1 Ⅱ 的 48 小時只擋「排程」的跨度，不擋「提早按下關票」。截止時間到才
+  // 准關票；超級管理員可附理由強制提前關票（例如重大資安事故），理由寫進 audit log。
+  let closeReason: string | undefined;
+  if (next === "closed" && election.votingEndsAt && new Date() < election.votingEndsAt) {
+    const trimmedReason = reason?.trim();
+    if (!isSuperAdmin(admin) || !trimmedReason) {
+      return {
+        ok: false,
+        error: `投票截止時間為 ${formatDateTime(election.votingEndsAt)}，尚不能關票`,
+      };
+    }
+    closeReason = trimmedReason;
+  }
+
   const result = await prisma.$transaction(async (tx) => {
     if (copyRosterFromElectionId) {
       await copyVotersInto(tx, copyRosterFromElectionId, electionId);
@@ -194,8 +221,15 @@ export async function advanceStatus(electionId: string): Promise<ActionResult> {
           electionId,
           actorEmail: admin.email,
           action: "advance_status",
-          summary: `狀態推進：${current} → ${next}`,
-          diff: { from: current, to: next, ...(ballotMode ? { ballotMode } : {}) } as Prisma.InputJsonValue,
+          summary: closeReason
+            ? `狀態推進：${current} → ${next}（截止前強制關票，理由：${closeReason}）`
+            : `狀態推進：${current} → ${next}`,
+          diff: {
+            from: current,
+            to: next,
+            ...(ballotMode ? { ballotMode } : {}),
+            ...(closeReason ? { reason: closeReason } : {}),
+          } as Prisma.InputJsonValue,
         },
       });
     }
