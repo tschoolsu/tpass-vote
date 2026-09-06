@@ -273,6 +273,8 @@ export function ElectionWorkbench({
           rosterCount,
           approvedCandidates,
         }}
+        ballotCount={votedCount}
+        isSuperAdmin={isSuperAdmin}
       />
     ),
   };
@@ -362,6 +364,8 @@ export function ElectionWorkbench({
               }}
               offices={offices}
               voters={election.voters}
+              status={status}
+              isSuperAdmin={isSuperAdmin}
             />
           ),
         },

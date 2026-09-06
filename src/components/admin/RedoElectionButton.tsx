@@ -6,19 +6,40 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCcw } from "lucide-react";
-import { Button, ConfirmDialog } from "tpass-ui";
+import { Button, ConfirmDialog, Textarea } from "tpass-ui";
 import { redoElection } from "@/app/admin/elections/[id]/actions";
 
-export function RedoElectionButton({ electionId, className }: { electionId: string; className?: string }) {
+// D14-1：voting／closed／sealed 這三個狀態已經可能有票，redoElection 在伺服器端只准
+// 超級管理員附理由才放行——這裡只是把「要不要顯示理由輸入框」提前判斷，真正的授權
+// 檢查在伺服器（一般管理員就算填了理由送出，伺服器一樣會拒絕）。
+const REQUIRES_SUPERADMIN_REASON = new Set(["voting", "closed", "sealed"]);
+
+export function RedoElectionButton({
+  electionId,
+  status,
+  ballotCount,
+  isSuperAdmin,
+  className,
+}: {
+  electionId: string;
+  status: string;
+  ballotCount: number;
+  isSuperAdmin: boolean;
+  className?: string;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [reason, setReason] = useState("");
+
+  const needsReason = REQUIRES_SUPERADMIN_REASON.has(status);
+  const showReasonInput = needsReason && isSuperAdmin;
 
   function runAction() {
     setError(null);
     startTransition(async () => {
-      const result = await redoElection(electionId);
+      const result = await redoElection(electionId, reason);
       if (!result.ok) {
         setConfirmOpen(false);
         setError(result.error);
@@ -45,10 +66,25 @@ export function RedoElectionButton({ electionId, className }: { electionId: stri
         open={confirmOpen}
         title="確定要作廢本場並重辦嗎？"
         description={
-          <div className="whitespace-pre-wrap">
-            {"本場將被軟刪除（資料保留但從列表消失，可還原但無法復原到「未作廢」的流程狀態）；" +
-              "系統會建立一個新場次，複製名冊與已核准候選人，新場次需要重新產生開票金鑰。\n\n" +
-              "僅在金鑰確定遺失、真的無法開票時才使用此功能。"}
+          <div className="flex flex-col gap-3 whitespace-pre-wrap">
+            <p>
+              {"本場將被軟刪除（資料保留但從列表消失，可還原但無法復原到「未作廢」的流程狀態）；" +
+                "系統會建立一個新場次，複製名冊與已核准候選人，新場次需要重新產生開票金鑰。\n\n" +
+                "僅在金鑰確定遺失、真的無法開票時才使用此功能。"}
+            </p>
+            {ballotCount > 0 && (
+              <p className="font-bold text-destructive">
+                本場已有 {ballotCount} 張票將作廢，且沒有任何方式能把票搬到新場次。
+              </p>
+            )}
+            {showReasonInput && (
+              <Textarea
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                rows={2}
+                placeholder="重辦理由（必填，會記錄於稽核紀錄）"
+              />
+            )}
           </div>
         }
         confirmLabel={pending ? "處理中…" : "確定作廢"}

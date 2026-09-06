@@ -265,10 +265,11 @@ describe("同額競選（approval）", () => {
     expect(results.candidates[0]).toMatchObject({ votes: 2, disagree: 1, elected: true });
 
     // §1-1：金鑰遺失重辦的正當時機正是彌封後、開票當下——sealed 狀態必須仍能重辦。
+    // D14-1：sealed 已經有票，一般管理員不能按，超管也必須附理由。
     const before = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
     expect(before.status).toBe("sealed");
 
-    const redone = await as(ADMIN, () => redoElection(electionId));
+    const redone = await as(ADMIN, () => redoElection(electionId, "金鑰檔損毀，確認遺失"));
     expect(redone.ok, redone.ok ? "" : redone.error).toBe(true);
 
     const after = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });

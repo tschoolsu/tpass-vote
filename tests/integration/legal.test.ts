@@ -16,7 +16,7 @@ import {
   voteAs,
   toLocalInput,
 } from "../helpers/flow";
-import { advanceStatus } from "@/app/admin/elections/[id]/actions";
+import { advanceStatus, redoElection } from "@/app/admin/elections/[id]/actions";
 import { sealElection, submitResults } from "@/app/admin/elections/[id]/tally/actions";
 import { removeVoter } from "@/app/admin/elections/[id]/roster/actions";
 import { approveCandidate } from "@/app/admin/elections/[id]/candidates/actions";
@@ -571,6 +571,73 @@ describe("D3-2 小票匭彌封前需二次確認（避免公開明細變相具�
     const sealed = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
     expect(sealed.status).toBe("sealed");
   }, 60_000);
+});
+
+describe("D14-1 投票中重辦需超級管理員附理由", () => {
+  async function setupVotingWithOneBallot(slug: string) {
+    const created = await makeElection({ slug });
+    const electionId = created.electionId!;
+    const { publicKeyJwk } = await generateKeys(electionId, slug, 1);
+    await importVoters(electionId, [VOTER_A]);
+    await advanceTo(electionId, "registration");
+    const reg = await registerAs(slug, electionId, CAND);
+    if (!reg.ok) throw new Error(`候選人登記失敗：${reg.error}`);
+    await approveAll(electionId);
+    await advanceTo(electionId, "campaigning");
+    await advanceTo(electionId, "voting");
+
+    const candidate = await prisma.candidate.findFirstOrThrow({ where: { electionId } });
+    const cast = await voteAs(slug, electionId, VOTER_A, publicKeyJwk, {
+      type: "approval",
+      approvals: { [candidate.id]: true },
+    });
+    expect(cast.ok, `投票應該成功：${JSON.stringify(cast)}`).toBe(true);
+    return electionId;
+  }
+
+  it("voting 狀態下一般管理員重辦被拒絕，來源場次不會被隱藏", async () => {
+    const electionId = await setupVotingWithOneBallot("d14-redo-voting-mod");
+
+    const redo = await as(MODERATOR, () => redoElection(electionId));
+    expect(redo.ok).toBe(false);
+    if (redo.ok) return;
+    expect(redo.error).toContain("1 張票");
+    expect(redo.error).toContain("超級管理員");
+
+    const source = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(source.hiddenAt, "一般管理員被拒絕時，來源場次不能被隱藏").toBeNull();
+  });
+
+  it("voting 狀態下超級管理員不附理由一樣被拒絕", async () => {
+    const electionId = await setupVotingWithOneBallot("d14-redo-voting-noreason");
+
+    const redo = await as(ADMIN, () => redoElection(electionId));
+    expect(redo.ok).toBe(false);
+    if (redo.ok) return;
+    expect(redo.error).toContain("超級管理員");
+
+    const source = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(source.hiddenAt).toBeNull();
+  });
+
+  it("voting 狀態下超級管理員附理由才能重辦，且 audit log 記下理由與作廢票數", async () => {
+    const electionId = await setupVotingWithOneBallot("d14-redo-voting-ok");
+
+    const redo = await as(ADMIN, () => redoElection(electionId, "金鑰檔損毀，確認遺失"));
+    expect(redo.ok, redo.ok ? "" : redo.error).toBe(true);
+    if (!redo.ok) return;
+
+    const source = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(source.hiddenAt, "超管附理由成功後，來源場次應該被隱藏").not.toBeNull();
+
+    const log = await prisma.electionAuditLog.findFirst({
+      where: { electionId, action: "redo_election" },
+      orderBy: { createdAt: "desc" },
+    });
+    const diff = log?.diff as { reason?: string; voidedBallotCount?: number } | null;
+    expect(diff?.reason).toBe("金鑰檔損毀，確認遺失");
+    expect(diff?.voidedBallotCount).toBe(1);
+  });
 });
 
 // toLocalInput 是 helper 的一部分，這裡順手把它的時區行為釘住——

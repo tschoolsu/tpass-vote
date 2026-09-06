@@ -31,6 +31,8 @@ export function SettingsPanel({
   initial,
   offices,
   voters,
+  status,
+  isSuperAdmin,
 }: {
   electionId: string;
   slug: string;
@@ -39,9 +41,13 @@ export function SettingsPanel({
   initial: ElectionFormInitial;
   offices: { id: string; title: string }[];
   voters: VoterRow[];
+  status: string;
+  isSuperAdmin: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const rosterCount = voters.length;
+  // EncryptedBallot 以 voterId unique upsert，一人一格，所以已投票的 voter 數 ＝ 票匭裡的密文數。
+  // D14-1「作廢並重辦」的確認對話框要標出這個數字，不必另外查 EncryptedBallot。
   const votedCount = voters.filter((v) => v.votedAt !== null).length;
 
   return (
@@ -87,7 +93,12 @@ export function SettingsPanel({
           </p>
           <div className="flex items-center gap-2 border-t-2 border-dashed border-tone-green-text/30 pt-2">
             <p className="text-xs font-medium">金鑰檔打不開或確定遺失，這場永遠無法開票時：</p>
-            <RedoElectionButton electionId={electionId} />
+            <RedoElectionButton
+              electionId={electionId}
+              status={status}
+              ballotCount={votedCount}
+              isSuperAdmin={isSuperAdmin}
+            />
           </div>
         </div>
       )}

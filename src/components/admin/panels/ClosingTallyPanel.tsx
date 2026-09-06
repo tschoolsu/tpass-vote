@@ -141,6 +141,8 @@ export function ClosingTallyPanel({
   onSeal,
   resultsExist,
   tally,
+  ballotCount,
+  isSuperAdmin,
 }: {
   status: string;
   votingEndsAt: Date | null;
@@ -149,6 +151,8 @@ export function ClosingTallyPanel({
   onSeal: (confirmSmallBox?: boolean) => Promise<SealResult>;
   resultsExist: boolean;
   tally: React.ComponentProps<typeof TallyPanel>;
+  ballotCount: number;
+  isSuperAdmin: boolean;
 }) {
   const sealed = status === "sealed" || status === "published";
 
@@ -217,7 +221,12 @@ export function ClosingTallyPanel({
             （複製名冊與已核准候選人到新場次，新場次需要重新產生金鑰）。
           </p>
           <div>
-            <RedoElectionButton electionId={tally.electionId} />
+            <RedoElectionButton
+              electionId={tally.electionId}
+              status={status}
+              ballotCount={ballotCount}
+              isSuperAdmin={isSuperAdmin}
+            />
           </div>
         </div>
       </div>

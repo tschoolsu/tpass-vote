@@ -327,14 +327,42 @@ export async function createByElection(sourceId: string): Promise<ElectionCloneR
   return { ok: true, electionId: byElection.id };
 }
 
+// D14-1：這三個狀態已經可能有人投過票——重辦會把來源場次整個隱藏（投票端 404），
+// 已投的票就留在誰也看不到、開不了票的舊場次裡。一般管理員在這三個狀態一律不准按，
+// 只有超級管理員可以，且必須附上非空理由（寫進 audit log，供事後究責）。
+const REDO_REQUIRES_SUPERADMIN_REASON = new Set(["voting", "closed", "sealed"]);
+
+// 彌封（sealElection）會把 EncryptedBallot 清空、票搬進洗牌後的 sealedBox（§26-1 Ⅳ，
+// voterId↔ciphertext 不得存活），所以 sealed 狀態查 EncryptedBallot 恆為 0。castBallot
+// 是唯一會設 Voter.votedAt 的地方，且與 EncryptedBallot 在同一交易寫入、彌封也不清它
+// （見 sealElection 註解「名冊 Voter.votedAt 保留」），所以查 votedAt 才是 voting／
+// closed／sealed 三態都準的「這場真的有幾張票」——也跟 SettingsPanel／ElectionWorkbench
+// 顯示給選委看的「已投票數」用同一個定義，UI 與稽核紀錄的數字不會兜不起來。
+async function countCastBallots(source: { id: string }): Promise<number> {
+  return prisma.voter.count({ where: { electionId: source.id, votedAt: { not: null } } });
+}
+
 // 金鑰遺失重辦：複製名冊與已核准候選人，原場同一交易內作廢（軟刪除），新場從頭走金鑰產生。
-export async function redoElection(electionId: string): Promise<ElectionCloneResult> {
+export async function redoElection(electionId: string, reason?: string): Promise<ElectionCloneResult> {
   const admin = await requireAdmin();
 
   const source = await prisma.election.findUnique({ where: { id: electionId } });
   if (!source) return { ok: false, error: "找不到選舉" };
   if (source.status === "published") {
     return { ok: false, error: "已公告結果的選舉不能重辦，請聯絡技術負責人循其他程序處理" };
+  }
+
+  let trimmedReason: string | undefined;
+  let ballotCount = 0;
+  if (REDO_REQUIRES_SUPERADMIN_REASON.has(source.status)) {
+    ballotCount = await countCastBallots(source);
+    trimmedReason = reason?.trim();
+    if (!isSuperAdmin(admin) || !trimmedReason) {
+      return {
+        ok: false,
+        error: `已有 ${ballotCount} 張票，重辦會作廢，需超級管理員附理由`,
+      };
+    }
   }
 
   const redone = await prisma.$transaction(async (tx) => {
@@ -351,7 +379,10 @@ export async function redoElection(electionId: string): Promise<ElectionCloneRes
         actorEmail: admin.email,
         action: "redo_election",
         summary: `金鑰遺失重辦，原場次隱藏，新場次 id＝${created.id}`,
-        diff: { newElectionId: created.id } as Prisma.InputJsonValue,
+        diff: {
+          newElectionId: created.id,
+          ...(trimmedReason ? { reason: trimmedReason, voidedBallotCount: ballotCount } : {}),
+        } as Prisma.InputJsonValue,
       },
     });
     return created;
