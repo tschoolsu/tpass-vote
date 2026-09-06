@@ -88,7 +88,7 @@ export function ReceiptLookup({ slug }: { slug: string }) {
       )}
       {state.kind === "missing" && (
         <p role="alert" className="mt-3 flex items-center gap-1.5 font-bold text-destructive">
-          <XCircle className="h-4 w-4" /> 查無此收據
+          <XCircle className="h-4 w-4" /> 查無此收據，若你曾重投，只有最後一次的代碼有效
         </p>
       )}
       {state.kind === "error" && (

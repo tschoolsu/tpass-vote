@@ -85,3 +85,48 @@ jobs:
       - run: pnpm exec tsc --noEmit
       - run: pnpm test
       - run: pnpm run build
+
+  # 補查核：9/2 事故（見 docs/handbook 資料庫準則）的教訓是 migration 只在寫的人本機
+  # 跑過一次，沒人驗過「對一個全新空庫」是否真的套得起來；deploy.sh 也會因為服務缺
+  # ecosystem.config.js 直接拒絕部署，但這件事從沒進過 CI，永遠是部署當下才發現。
+  # 這兩件事跟上面的 check job 無關（不需要 lint/tsc/build），獨立一個 job 平行跑。
+  migrate-and-process-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # 全新的、什麼資料都沒有的 postgres——這裡要驗的正是「空庫」這個狀態。
+    # 只在 CI runner 內部的 localhost 起這個容器，不是任何真實主機，log 裡不會出現主機位址。
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+
+      # 真的對上面那個空庫套用 prisma/migrations 底下全部 migration。套不起來
+      # （壞掉的 migration、跟 schema 對不上）在這裡就會炸，不必等部署當下才發現。
+      - run: pnpm exec prisma migrate deploy
+
+      # pm2 要吃這個檔案才知道怎麼啟動、怎麼收 SIGTERM；deploy.sh 沒看到它會直接拒絕部署。
+      - run: test -f ecosystem.config.js
