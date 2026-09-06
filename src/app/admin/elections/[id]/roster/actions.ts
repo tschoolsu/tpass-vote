@@ -41,33 +41,34 @@ export async function importRoster(electionId: string, raw: string): Promise<Ros
   const rows = [...byEmail.values()];
   if (rows.length === 0) return { ok: false, error: "沒有格式正確的 email" };
 
-  // 大量 upsert 一次塞進單一交易會撐爆預設 timeout；每 500 筆分一批、各批各自一個交易。
+  // 整次匯入（所有批次＋audit log）包在同一個交易裡：中途任何一批失敗就整筆回滾，
+  // 不會留下半套名冊。名冊上限以 3000 列估算，分批只是避免單一 statement 過大，
+  // 分批之間仍共用同一個 tx，30 秒 statement_timeout 內足夠。
   const BATCH_SIZE = 500;
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const batch = rows.slice(i, i + BATCH_SIZE);
-    await prisma.$transaction(
-      batch.map((r) =>
-        prisma.voter.upsert({
-          where: { electionId_email: { electionId, email: r.email } },
-          update: { name: r.name },
-          create: { electionId, email: r.email, name: r.name },
-        }),
-      ),
-      { timeout: 30_000 },
-    );
-  }
+  await prisma.$transaction(async (tx) => {
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const batch = rows.slice(i, i + BATCH_SIZE);
+      await Promise.all(
+        batch.map((r) =>
+          tx.voter.upsert({
+            where: { electionId_email: { electionId, email: r.email } },
+            update: { name: r.name },
+            create: { electionId, email: r.email, name: r.name },
+          }),
+        ),
+      );
+    }
 
-  // 匯入是分批多筆交易（見上），這裡的留痕是批次結束後的單一總結記錄，不追求與最後一批
-  // 原子綁定——寫入失敗頂多少一筆稽核記錄，不影響名冊資料本身的正確性。
-  await prisma.electionAuditLog.create({
-    data: {
-      electionId,
-      actorEmail: admin.email,
-      action: "import_roster",
-      summary: `匯入名冊 ${rows.length} 筆（略過 ${invalid} 筆格式錯誤）`,
-      diff: { imported: rows.length, skipped: invalid } as Prisma.InputJsonValue,
-    },
-  });
+    await tx.electionAuditLog.create({
+      data: {
+        electionId,
+        actorEmail: admin.email,
+        action: "import_roster",
+        summary: `匯入名冊 ${rows.length} 筆（略過 ${invalid} 筆格式錯誤）`,
+        diff: { imported: rows.length, skipped: invalid } as Prisma.InputJsonValue,
+      },
+    });
+  }, { timeout: 30_000 });
 
   revalidatePath(`/admin/elections/${electionId}/roster`);
   revalidatePath(`/admin/elections/${electionId}`);
