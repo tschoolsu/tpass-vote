@@ -4,15 +4,18 @@
 // TallyClient 內的上傳/解密/提交，含私鑰只活在 component state 的邏輯）完全不動，這裡只重排
 // 外層呈現與子步驟說明——上傳/解密/提交三步在 TallyClient 裡本來就是一段連續操作，沒有可從
 // 伺服器觀察的中間狀態，所以合併成一個子步驟區塊呈現，內文用編號列表講清楚三個動作各自在做什麼。
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Lock, CheckCircle2, ChevronDown, ChevronRight, Circle, AlertTriangle } from "lucide-react";
-import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
 import { RedoElectionButton } from "@/components/admin/RedoElectionButton";
-import { cn } from "tpass-ui";
+import { Button, ConfirmDialog, cn } from "tpass-ui";
 import { TallyPanel } from "@/components/admin/panels/TallyPanel";
 
 type SubStepState = "done" | "current" | "pending";
-type Result = { ok: true } | { ok: false; error: string };
+type SealResult =
+  | { ok: true }
+  | { ok: false; error: string }
+  | { ok: false; needsConfirm: true; ballots: number };
 
 function SubStep({
   n,
@@ -70,6 +73,66 @@ function SubStep({
   );
 }
 
+// 彌封按鈕：先一般性確認「無法再變更」，若伺服器因票數過少（D3-2：一票選舉的
+// 公開名冊×公開明細會直接曝光個別選舉人的選擇）回報 needsConfirm，再多問一次
+// 才帶著 confirmSmallBox 重送——不是攔阻，是逼選委正視匿名性風險再按一次。
+function SealButton({ onSeal }: { onSeal: (confirmSmallBox?: boolean) => Promise<SealResult> }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [smallBoxBallots, setSmallBoxBallots] = useState<number | null>(null);
+
+  function runSeal(confirmSmallBox?: boolean) {
+    setError(null);
+    startTransition(async () => {
+      const result = await onSeal(confirmSmallBox);
+      setConfirmOpen(false);
+      if (!result.ok) {
+        if ("needsConfirm" in result) {
+          setSmallBoxBallots(result.ballots);
+          return;
+        }
+        setSmallBoxBallots(null);
+        setError(result.error);
+        return;
+      }
+      setSmallBoxBallots(null);
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <Button
+        type="button"
+        variant="destructive"
+        disabled={pending}
+        onClick={() => setConfirmOpen(true)}
+      >
+        <Lock className="h-4 w-4" /> 彌封票匭
+      </Button>
+      {error && <p role="alert" className="font-mono text-xs font-bold text-destructive">{error}</p>}
+      <ConfirmDialog
+        open={confirmOpen}
+        title="請確認"
+        description="彌封後票匭無法再變更，確定要彌封嗎？"
+        pending={pending}
+        onConfirm={() => runSeal(false)}
+        onCancel={() => setConfirmOpen(false)}
+      />
+      <ConfirmDialog
+        open={smallBoxBallots !== null}
+        title="請確認"
+        description={`只有 ${smallBoxBallots} 張票，公開明細可能識別出投票人，確定彌封？`}
+        pending={pending}
+        onConfirm={() => runSeal(true)}
+        onCancel={() => setSmallBoxBallots(null)}
+      />
+    </div>
+  );
+}
+
 export function ClosingTallyPanel({
   status,
   votingEndsAt,
@@ -83,7 +146,7 @@ export function ClosingTallyPanel({
   votingEndsAt: Date | null;
   sealedAt: Date | null;
   sealedBy: string | null;
-  onSeal: () => Promise<Result>;
+  onSeal: (confirmSmallBox?: boolean) => Promise<SealResult>;
   resultsExist: boolean;
   tally: React.ComponentProps<typeof TallyPanel>;
 }) {
@@ -117,16 +180,7 @@ export function ClosingTallyPanel({
             <p className="text-sm font-medium text-muted-foreground">
               彌封後只能憑金鑰在本地開票，此後無法回頭變更票匭。
             </p>
-            <ConfirmActionButton
-              action={onSeal}
-              label={
-                <>
-                  <Lock className="h-4 w-4" /> 彌封票匭
-                </>
-              }
-              variant="destructive"
-              confirmMessage="彌封後票匭無法再變更，確定要彌封嗎？"
-            />
+            <SealButton onSeal={onSeal} />
           </div>
         )}
       </SubStep>

@@ -176,9 +176,13 @@ export async function ciphertextFor(
   return (await encryptBallot(publicKeyJwk, { electionId, choice })).ciphertext;
 }
 
+/** 一般流程測試不在乎小票匭確認（D3-2），一律直接帶 confirmSmallBox 略過那道提示。 */
 export async function seal(electionId: string) {
-  const r = await as(ADMIN, () => sealElection(electionId));
-  if (!r.ok) throw new Error(`彌封失敗：${r.error}`);
+  const r = await as(ADMIN, () => sealElection(electionId, true));
+  if (!r.ok) {
+    const reason = "needsConfirm" in r ? `票數過少（${r.ballots} 張）` : r.error;
+    throw new Error(`彌封失敗：${reason}`);
+  }
 }
 
 /** 在「選委瀏覽器」解密計票，並把結果與明細提交回伺服器。 */

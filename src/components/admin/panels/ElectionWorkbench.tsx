@@ -221,7 +221,7 @@ export function ElectionWorkbench({
         votingEndsAt={election.votingEndsAt}
         sealedAt={election.sealedAt}
         sealedBy={election.sealedBy}
-        onSeal={sealElection.bind(null, election.id)}
+        onSeal={(confirmSmallBox) => sealElection(election.id, confirmSmallBox)}
         resultsExist={resultsExist}
         tally={{
           electionId: election.id,

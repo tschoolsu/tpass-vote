@@ -21,13 +21,33 @@ import { decideElected } from "@/lib/tally";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-export async function sealElection(electionId: string): Promise<ActionResult> {
+// 只有彌封會因為票數過少要求選委二次確認，submitResults 等其他 action 不受影響，
+// 所以另立型別而不是動到共用的 ActionResult（會連帶波及所有讀 `.error` 的呼叫端）。
+export type SealResult = ActionResult | { ok: false; needsConfirm: true; ballots: number };
+
+// §26-1 Ⅴ 要求同時公開具名名冊與去識別化明細；票數太少時兩者疊在一起會直接
+// 曝光個別選舉人的選擇（見 D3-2）。不擋，但要選委多按一次確認才彌封。
+const SMALL_BOX_THRESHOLD = 5;
+
+export async function sealElection(
+  electionId: string,
+  confirmSmallBox = false,
+): Promise<SealResult> {
   const admin = await requireAdmin();
 
   const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) return { ok: false, error: "找不到選舉" };
   if (election.status !== "closed") {
     return { ok: false, error: "只有已截止（closed）的選舉才能彌封" };
+  }
+
+  if (!confirmSmallBox) {
+    // 票匭已 closed，不會再有新票落地（castBallot 只收 voting 狀態），這裡讀到的
+    // 張數跟下面交易裡實際彌封的張數必然一致，不必在交易內重讀。
+    const ballots = await prisma.encryptedBallot.count({ where: { electionId } });
+    if (ballots < SMALL_BOX_THRESHOLD) {
+      return { ok: false, needsConfirm: true, ballots };
+    }
   }
 
   try {

@@ -330,9 +330,11 @@ describe("彌封的併發安全", () => {
     });
     await advanceTo(id, "closed");
 
+    // confirmSmallBox: true——這裡測的是彌封交易本身的鎖，不是 D3-2 的小票匭確認，
+    // 帶 true 跳過票數前置檢查，兩邊才會真的競爭同一個交易鎖。
     const [r1, r2] = await Promise.all([
-      as(ADMIN, () => sealElection(id)),
-      as(MODERATOR, () => sealElection(id)),
+      as(ADMIN, () => sealElection(id, true)),
+      as(MODERATOR, () => sealElection(id, true)),
     ]);
     expect([r1.ok, r2.ok].filter(Boolean).length, "同時彌封應該只有一個成功").toBe(1);
 

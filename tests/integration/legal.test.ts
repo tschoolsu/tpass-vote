@@ -17,7 +17,7 @@ import {
   toLocalInput,
 } from "../helpers/flow";
 import { advanceStatus } from "@/app/admin/elections/[id]/actions";
-import { submitResults } from "@/app/admin/elections/[id]/tally/actions";
+import { sealElection, submitResults } from "@/app/admin/elections/[id]/tally/actions";
 import { removeVoter } from "@/app/admin/elections/[id]/roster/actions";
 import { approveCandidate } from "@/app/admin/elections/[id]/candidates/actions";
 import type { DisclosureEntry } from "@/lib/disclosure";
@@ -410,6 +410,73 @@ describe("候選人登記", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain("大頭照");
   });
+});
+
+/** sealElection 失敗時把原因印成字串——ok:false 有兩種形狀，斷言訊息不能只挑一種。 */
+function sealFailureReason(r: { ok: false; error: string } | { ok: false; needsConfirm: true; ballots: number }) {
+  return "error" in r ? r.error : `未預期的 needsConfirm（${r.ballots} 張票）`;
+}
+
+describe("D3-2 小票匭彌封前需二次確認（避免公開明細變相具名）", () => {
+  it("1 張票時不帶 confirm 回 needsConfirm 且不彌封，帶 confirm 才真的彌封", async () => {
+    const slug = "seal-confirm-small";
+    const created = await makeElection({ slug });
+    const electionId = created.electionId!;
+    const { publicKeyJwk } = await generateKeys(electionId, slug);
+    await importVoters(electionId, [VOTER_A, CAND]);
+    await advanceTo(electionId, "registration");
+    await registerAs(slug, electionId, CAND);
+    const [cand] = await approveAll(electionId);
+    await advanceTo(electionId, "voting");
+    await voteAs(slug, electionId, VOTER_A, publicKeyJwk, {
+      type: "approval",
+      approvals: { [cand.id]: true },
+    });
+    await advanceTo(electionId, "closed");
+
+    const r1 = await as(ADMIN, () => sealElection(electionId));
+    expect(r1.ok).toBe(false);
+    if (!r1.ok) {
+      expect("needsConfirm" in r1 ? r1.needsConfirm : undefined).toBe(true);
+      expect("ballots" in r1 ? r1.ballots : undefined).toBe(1);
+    }
+    const stillClosed = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(stillClosed.status).toBe("closed");
+
+    const r2 = await as(ADMIN, () => sealElection(electionId, true));
+    expect(r2.ok, r2.ok ? "" : sealFailureReason(r2)).toBe(true);
+    const sealed = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(sealed.status).toBe("sealed");
+  }, 60_000);
+
+  it("5 張票不需要 confirm，直接彌封成功", async () => {
+    const slug = "seal-confirm-enough";
+    const created = await makeElection({ slug });
+    const electionId = created.electionId!;
+    const { publicKeyJwk } = await generateKeys(electionId, slug);
+    const voters = Array.from({ length: 5 }, (_, i) => ({
+      email: `sc-v${i}@test.local`,
+      name: `投票人${i}`,
+    }));
+    await importVoters(electionId, [...voters, CAND]);
+    await advanceTo(electionId, "registration");
+    await registerAs(slug, electionId, CAND);
+    const [cand] = await approveAll(electionId);
+    await advanceTo(electionId, "voting");
+    for (const v of voters) {
+      const r = await voteAs(slug, electionId, v, publicKeyJwk, {
+        type: "approval",
+        approvals: { [cand.id]: true },
+      });
+      expect(r.ok, r.ok ? "" : r.error).toBe(true);
+    }
+    await advanceTo(electionId, "closed");
+
+    const r = await as(ADMIN, () => sealElection(electionId));
+    expect(r.ok, r.ok ? "" : sealFailureReason(r)).toBe(true);
+    const sealed = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(sealed.status).toBe("sealed");
+  }, 60_000);
 });
 
 // toLocalInput 是 helper 的一部分，這裡順手把它的時區行為釘住——

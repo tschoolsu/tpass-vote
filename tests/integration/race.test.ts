@@ -115,7 +115,9 @@ describe("收票與關票／彌封的競態", () => {
 
     const lock = await holdElectionLock(electionId, "no key update");
     try {
-      const sealing = as(ADMIN, () => sealElection(electionId));
+      // confirmSmallBox: true——這裡測的是彌封交易本身的鎖，不是 D3-2 的小票匭確認，
+      // 帶 true 跳過票數前置檢查，才會真的進到下面的鎖等待。
+      const sealing = as(ADMIN, () => sealElection(electionId, true));
       await settle();
 
       // 一個停滯的收票交易此刻才落地。走 raw create 是刻意的：這裡測的是彌封自己
@@ -126,7 +128,7 @@ describe("收票與關票／彌封的競態", () => {
 
       await lock.release();
       const sealed = await sealing;
-      expect(sealed.ok, sealed.ok ? "" : sealed.error).toBe(true);
+      expect(sealed.ok, sealed.ok || !("error" in sealed) ? "" : sealed.error).toBe(true);
 
       const election = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
       const box = election.sealedBox as string[];
