@@ -652,4 +652,57 @@ describe("C-4：公告唯一性與 cloneElection slug 的併發防線", () => {
     expect(clones.length, "落地的重辦場次數要跟回報成功的次數一致").toBe(oks.length);
     expect(new Set(clones.map((c) => c.slug)).size, "重辦場次的 slug 不可以撞號").toBe(clones.length);
   }, 60_000);
+
+  it("submitResults 首次自動生成 result 公告草稿時撞到別人搶先寫入，交易照樣成功而不是丟未處理例外", async () => {
+    await resetDb();
+    const SUBMIT_SLUG = "race-submit";
+    const created = await makeElection({ slug: SUBMIT_SLUG });
+    const electionId = created.electionId!;
+    const { publicKeyJwk, keyFiles } = await generateKeys(electionId, SUBMIT_SLUG);
+    await importVoters(electionId, [VOTER_A, CAND]);
+    await advanceTo(electionId, "registration");
+    await registerAs(SUBMIT_SLUG, electionId, CAND);
+    const [cand] = await approveAll(electionId);
+    await advanceTo(electionId, "voting");
+    await voteAs(SUBMIT_SLUG, electionId, VOTER_A, publicKeyJwk, {
+      type: "choose",
+      candidateIds: [cand.id],
+    });
+    await advanceTo(electionId, "closed");
+    await seal(electionId);
+
+    // 另一位選委在同一場選舉搶先建了一則 result 公告草稿——現實中對應
+    // saveAnnouncementDraft：它沒有任何狀態守門、交易外 autocommit，窗口極短但存在。
+    // 這裡尚未 commit，卡住 submitResults 首次自動生成草稿時要做的 create。
+    const other = new Client({ connectionString: TEST_DATABASE_URL });
+    await other.connect();
+    await other.query("BEGIN");
+    await other.query(
+      `INSERT INTO "Announcement" (id, "electionId", "legalTag", title, body, "createdAt", "updatedAt")
+       VALUES ('race-submit-ann', $1, 'result', '別人的草稿', 'x', now(), now())`,
+      [electionId],
+    );
+
+    try {
+      const submitting = tallyAndSubmit(electionId, SUBMIT_SLUG, keyFiles);
+      await settle();
+      await other.query("COMMIT");
+      await other.end();
+
+      const { submitted } = await submitting;
+      expect(submitted.ok, submitted.ok ? "" : submitted.error).toBe(true);
+
+      const election = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+      expect(election.resultsJson, "撞到公告不該連累結果本身沒有落地").not.toBeNull();
+
+      expect(
+        await prisma.announcement.count({ where: { electionId, legalTag: "result" } }),
+        "撞到的那則是別人先建的草稿，submitResults 不需要（也不應該）再建一則",
+      ).toBe(1);
+    } catch (e) {
+      await other.query("ROLLBACK").catch(() => {});
+      await other.end().catch(() => {});
+      throw e;
+    }
+  }, 90_000);
 });

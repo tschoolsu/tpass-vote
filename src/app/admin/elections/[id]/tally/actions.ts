@@ -11,7 +11,7 @@ import { randomInt, createHash } from "node:crypto";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { authConfig } from "@/config/auth";
 import { resultAnnouncementDraft, type ResultCandidateInfo } from "@/lib/result-announcement";
 import { cloneElection } from "@/lib/clone-election";
@@ -304,9 +304,20 @@ export async function submitResults(
         where: { electionId, legalTag: "result" },
       });
       if (!existingResultAnnouncement) {
-        await tx.announcement.create({
-          data: { electionId, legalTag: "result", title: draft.title, body: draft.body },
-        });
+        // 先查後寫：另一位選委的交易可能已搶先建立同一場的 result 公告草稿（DB 端的
+        // partial unique index 頂住這裡）。語意本來就是「沒有才建」，撞到代表別人已經
+        // 建了，不必再建、也不該讓這個提交結果的交易整個失敗——但 Postgres 一旦某條
+        // 指令出錯，整個交易會進入 aborted 狀態、後續指令一律被拒（25P02），所以撞到後
+        // 必須先 ROLLBACK TO SAVEPOINT 把交易救回來，不能只在 JS 這層 catch 住就當沒事。
+        await tx.$executeRawUnsafe("SAVEPOINT submit_results_announcement_retry");
+        try {
+          await tx.announcement.create({
+            data: { electionId, legalTag: "result", title: draft.title, body: draft.body },
+          });
+        } catch (e) {
+          if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")) throw e;
+          await tx.$executeRawUnsafe("ROLLBACK TO SAVEPOINT submit_results_announcement_retry");
+        }
       } else if (!existingResultAnnouncement.publishedAt) {
         await tx.announcement.update({
           where: { id: existingResultAnnouncement.id },
