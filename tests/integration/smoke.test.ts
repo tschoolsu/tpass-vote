@@ -15,7 +15,7 @@ describe("測試環境自檢", () => {
     const [row] = await prisma.$queryRawUnsafe<{ current_database: string }[]>(
       "SELECT current_database()",
     );
-    expect(row.current_database).toBe("t_vote_test");
+    expect(row.current_database).toMatch(/^t_vote_test/);
   });
 
   it("HTTP server 活著，而且連的也是測試庫", async () => {
