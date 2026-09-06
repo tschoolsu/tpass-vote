@@ -62,11 +62,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
   }
 
-  // 在讀 body 之前先看 Content-Length：遠超上限的請求直接 413，不讓伺服器把整包
-  // multipart 讀進記憶體（單一使用者用一個大請求就能推高數百 MB RSS）。缺 header
-  // 時（例如 chunked transfer）照舊往下走，靠既有的 file.size 檢查把關。
-  const contentLength = request.headers.get("content-length");
-  if (contentLength !== null && Number(contentLength) > MAX_CONTENT_LENGTH_BYTES) {
+  // 在讀 body 之前先看 Content-Length：超過上限的請求直接 413，不讓伺服器把整包
+  // multipart 讀進記憶體（單一使用者用一個大請求就能推高數百 MB RSS）。
+  //
+  // 沒有 Content-Length（例如 Transfer-Encoding: chunked）不能當成「長度未知就放行」：
+  // 正常瀏覽器 <form>/fetch 上傳 File 一定會帶這個 header，缺 header 本身就是可疑，
+  // 一律當作超過上限擋掉，不讓它繞過檢查直接落到 request.formData()
+  // （同樣邏輯見 src/app/api/elections/[slug]/disclosures/route.ts 的 POST）。
+  const contentLengthHeader = request.headers.get("content-length");
+  const contentLength = contentLengthHeader === null ? NaN : Number(contentLengthHeader);
+  if (!Number.isFinite(contentLength) || contentLength > MAX_CONTENT_LENGTH_BYTES) {
     return NextResponse.json({ error: "file too large" }, { status: 413 });
   }
 

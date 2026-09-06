@@ -214,6 +214,30 @@ describe("檔案端點的邊界", () => {
       req.destroy();
     }
   }, 5_000);
+
+  it("body 沒有 Content-Length（chunked 傳輸）一樣要被擋，不能靠缺 header 繞過大小檢查", async () => {
+    await prisma.election.update({ where: { id: electionId }, data: { status: "registration" } });
+    // 用 ReadableStream 當 body：undici 量不出長度，會送 Transfer-Encoding: chunked
+    // 而不是 Content-Length——這是攻擊者不帶 Content-Length 就能重現的真實路徑
+    // （D6-2 的修法只檢查「有帶且超標」的 Content-Length，缺 header 時會直接落到
+    // `request.formData()` 把整包讀進記憶體，攻擊者只要不宣告長度就繞過檢查）。
+    const chunkedBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("a".repeat(2_000_000)));
+        controller.close();
+      },
+    });
+    const res = await fetch(`${APP_URL}/api/upload`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "multipart/form-data; boundary=----chunkedboundary",
+        Cookie: cookieHeader(await signTestToken(CAND)),
+      },
+      body: chunkedBody,
+      duplex: "half",
+    } as RequestInit);
+    expect(res.status).toBe(413);
+  });
 });
 
 describe("CSV 公式注入防護（roster／disclosures 的自由文字欄位）", () => {
