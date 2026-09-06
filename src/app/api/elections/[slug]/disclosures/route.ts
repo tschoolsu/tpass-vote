@@ -56,6 +56,7 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/elections/[s
     select: {
       kind: true,
       disclosuresJson: true,
+      sealedHash: true,
       candidates: {
         where: { status: "approved" },
         orderBy: { number: "asc" },
@@ -69,13 +70,27 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/elections/[s
 
   const entries = election.disclosuresJson as unknown as DisclosureEntry[];
   const labels = labelOf(election.kind, election.candidates);
+  // 內容只由彌封決定，公告後不會再變——用 sealedHash 當 ETag，命中就 304 免序列化。
+  const cacheControl = "public, max-age=300, s-maxage=3600";
 
   // 單筆查詢：投票人拿收據來核對自己那一票。
   const code = req.nextUrl.searchParams.get("code")?.trim().toLowerCase();
   if (code) {
+    const etag = `"${election.sealedHash ?? "none"}-${code}"`;
+    if (req.headers.get("if-none-match") === etag) {
+      return new NextResponse(null, { status: 304, headers: { ETag: etag, "Cache-Control": cacheControl } });
+    }
     const found = entries.find((e) => e.code === code);
     if (!found) return NextResponse.json({ found: false }, { status: 404 });
-    return NextResponse.json({ found: true, code: found.code, summary: describe(found, labels) });
+    return NextResponse.json(
+      { found: true, code: found.code, summary: describe(found, labels) },
+      { headers: { "Cache-Control": cacheControl, ETag: etag } },
+    );
+  }
+
+  const etag = `"${election.sealedHash ?? "none"}"`;
+  if (req.headers.get("if-none-match") === etag) {
+    return new NextResponse(null, { status: 304, headers: { ETag: etag, "Cache-Control": cacheControl } });
   }
 
   const rows = ["代碼,內容", ...entries.map((e) => `${e.code},"${describe(e, labels).replace(/"/g, '""')}"`)];
@@ -83,6 +98,8 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/elections/[s
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="disclosures-${slug}.csv"`,
+      "Cache-Control": cacheControl,
+      ETag: etag,
     },
   });
 }

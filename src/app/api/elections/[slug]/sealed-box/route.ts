@@ -7,7 +7,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   ctx: RouteContext<"/api/elections/[slug]/sealed-box">,
 ) {
   const { slug } = await ctx.params;
@@ -17,6 +17,13 @@ export async function GET(
   });
   if (!election || !Array.isArray(election.sealedBox)) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+
+  // 內容只由彌封決定，公告後不會再變——用 sealedHash 當 ETag，命中就 304 免序列化。
+  const etag = `"${election.sealedHash ?? "none"}"`;
+  const cacheControl = "public, max-age=300, s-maxage=3600";
+  if (req.headers.get("if-none-match") === etag) {
+    return new NextResponse(null, { status: 304, headers: { ETag: etag, "Cache-Control": cacheControl } });
   }
 
   const payload = {
@@ -30,6 +37,8 @@ export async function GET(
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Content-Disposition": `attachment; filename="sealed-box-${election.slug}.json"`,
+      "Cache-Control": cacheControl,
+      ETag: etag,
     },
   });
 }

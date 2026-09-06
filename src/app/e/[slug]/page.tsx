@@ -1,6 +1,7 @@
 // 選舉詳情頁：狀態、時程倒數、核准候選人卡片、已發布公告連結、依狀態 CTA。
 // 不強制登入（同 tpass-form 的公開頁模式）：任何人可看，登記／投票才需要登入。
 import type { Metadata } from "next";
+import { cache } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CalendarClock, Megaphone } from "lucide-react";
@@ -27,15 +28,40 @@ import {
   type MemberInfo,
 } from "@/components/public/shared";
 
-async function getElection(slug: string) {
+// cache()：generateMetadata 與頁面本體都會呼叫這裡，同一次請求只查一次 Election。
+// 明確 select：**不要把 sealedBox／resultsJson／disclosuresJson 撈進來**——這頁不需要
+// 票匭內容，撈了它們會讓公告後全校同時來看時，每個請求多背幾百 KB～幾 MB（見 D8 稽核）。
+const getElection = cache(async (slug: string) => {
   return prisma.election.findFirst({
     where: { slug, hiddenAt: null },
-    include: {
-      candidates: { where: { status: "approved" }, orderBy: { number: "asc" } },
-      announcements: { orderBy: { publishedAt: "desc" } },
+    select: {
+      id: true,
+      status: true,
+      kind: true,
+      title: true,
+      lineage: true,
+      parentId: true,
+      registrationStartsAt: true,
+      registrationEndsAt: true,
+      votingStartsAt: true,
+      votingEndsAt: true,
+      recallReason: true,
+      recallDefense: true,
+      recallLeadName: true,
+      recallTargetCandidateId: true,
+      recallTargetOfficeId: true,
+      candidates: {
+        where: { status: "approved" },
+        orderBy: { number: "asc" },
+        select: { id: true, number: true, members: true, platform: true },
+      },
+      announcements: {
+        orderBy: { publishedAt: "desc" },
+        select: { id: true, publishedAt: true, legalTag: true, title: true },
+      },
     },
   });
-}
+});
 
 export async function generateMetadata({
   params,

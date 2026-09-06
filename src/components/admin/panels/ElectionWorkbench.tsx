@@ -92,7 +92,6 @@ interface ElectionData {
   votingEndsAt: Date | null;
   tallyPublicKeyJwk: unknown;
   keyShares: number;
-  sealedBox: unknown;
   sealedHash: string | null;
   sealedAt: Date | null;
   sealedBy: string | null;
@@ -264,7 +263,6 @@ export function ElectionWorkbench({
           slug: election.slug,
           status,
           ballotMode: election.ballotMode,
-          sealedBox: election.sealedBox,
           sealedHash: election.sealedHash,
           keyShares: election.keyShares,
           resultsExist,

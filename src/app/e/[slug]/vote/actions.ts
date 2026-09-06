@@ -30,7 +30,12 @@ type CastGate = {
 export async function castBallot(slug: string, ciphertext: string): Promise<CastResult> {
   const session = await requireSession(`/e/${slug}/vote`);
 
-  const election = await prisma.election.findFirst({ where: { slug, hiddenAt: null } });
+  // 明確 select：不撈 sealedBox——投票中的選舉票匭快照根本不存在，撈整列只是白白
+  // 把其他大欄位（resultsJson／disclosuresJson）一起帶進來，投票是全校最熱的請求路徑。
+  const election = await prisma.election.findFirst({
+    where: { slug, hiddenAt: null },
+    select: { id: true, status: true, votingStartsAt: true, votingEndsAt: true },
+  });
   if (!election) return { ok: false, error: "找不到這場選舉" };
 
   const voter = await prisma.voter.findUnique({

@@ -37,7 +37,24 @@ export default async function VotePage({
 }) {
   const { slug } = await params;
   const session = await requireSession(`/e/${slug}/vote`);
-  const election = await prisma.election.findFirst({ where: { slug, hiddenAt: null } });
+  // 明確 select：不撈 sealedBox／resultsJson／disclosuresJson——投票頁不需要票匭內容，
+  // 撈了它會讓截止前選民同時湧入時，每個請求多背幾百 KB～幾 MB（見 D8 稽核）。
+  const election = await prisma.election.findFirst({
+    where: { slug, hiddenAt: null },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      kind: true,
+      seats: true,
+      maxChoices: true,
+      votingStartsAt: true,
+      votingEndsAt: true,
+      tallyPublicKeyJwk: true,
+      ballotMode: true,
+      recallReason: true,
+    },
+  });
   if (!election || election.status === "draft") notFound();
 
   const admin = isAdmin(session);

@@ -19,7 +19,6 @@ export function TallyPanel({
   slug,
   status,
   ballotMode,
-  sealedBox,
   sealedHash,
   keyShares,
   resultsExist,
@@ -32,7 +31,6 @@ export function TallyPanel({
   slug: string;
   status: string;
   ballotMode: string | null;
-  sealedBox: unknown;
   sealedHash: string | null;
   keyShares: number;
   resultsExist: boolean;
@@ -49,10 +47,10 @@ export function TallyPanel({
     );
   }
 
-  if (!ballotMode || !Array.isArray(sealedBox)) {
+  if (!ballotMode) {
     return (
       <p role="alert" className="font-bold text-sm text-destructive">
-        選舉資料不完整（缺少投票模式或票匭快照），無法開票，請聯絡開發團隊確認資料狀態。
+        選舉資料不完整（缺少投票模式），無法開票，請聯絡開發團隊確認資料狀態。
       </p>
     );
   }
@@ -69,7 +67,6 @@ export function TallyPanel({
     <TallyClient
       electionId={electionId}
       slug={slug}
-      sealedBox={sealedBox as string[]}
       sealedHash={sealedHash}
       keyShares={keyShares}
       alreadySubmitted={resultsExist}

@@ -21,6 +21,28 @@ import { decideElected } from "@/lib/tally";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
+export type SealedBoxResult = { ok: true; sealedBox: string[] } | { ok: false; error: string };
+
+// 開票面板（TallyClient）在需要時才呼叫這裡取票匭快照，不讓它跟著整場選舉的資料
+// 一起塞進工作台頁面的 RSC payload（3000 票時票匭本身就有幾 MB，見 D8 稽核）。
+export async function getSealedBoxForTally(electionId: string): Promise<SealedBoxResult> {
+  await requireAdmin();
+
+  const election = await prisma.election.findUnique({
+    where: { id: electionId },
+    select: { status: true, sealedBox: true },
+  });
+  if (!election) return { ok: false, error: "找不到選舉" };
+  if (election.status !== "sealed" && election.status !== "published") {
+    return { ok: false, error: "尚未彌封，無法取得票匭" };
+  }
+  if (!Array.isArray(election.sealedBox)) {
+    return { ok: false, error: "選舉資料不完整（缺少票匭快照），請聯絡開發團隊確認資料狀態" };
+  }
+  return { ok: true, sealedBox: election.sealedBox as string[] };
+}
+
+
 // 只有彌封會因為票數過少要求選委二次確認，submitResults 等其他 action 不受影響，
 // 所以另立型別而不是動到共用的 ActionResult（會連帶波及所有讀 `.error` 的呼叫端）。
 export type SealResult = ActionResult | { ok: false; needsConfirm: true; ballots: number };

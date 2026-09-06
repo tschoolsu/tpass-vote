@@ -418,6 +418,44 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     }
   });
 
+  // D8：選舉詳情頁（免登入、任何人第一個會點的連結）不能因為票匭已經灌到 VOTERS 張
+  // 就在同樣併發下垮掉——getElection 撈整列＋沒包 cache() 的舊版在這裡會 500。
+  it("選舉詳情頁在票匭已灌大的情況下承受同等併發：零 500、記憶體不失控", async () => {
+    const before = appRssMb();
+
+    const requests = Array.from({ length: BURST });
+    const start = performance.now();
+    const settled = await Promise.allSettled(
+      requests.map(async () => {
+        const res = await fetch(`${APP_URL}/e/${SLUG}`, { redirect: "manual" });
+        return res.status;
+      }),
+    );
+    const wallMs = performance.now() - start;
+    const rejected = settled.filter((s) => s.status === "rejected");
+    const statuses = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
+    const serverErrors = statuses.filter((s) => s >= 500);
+
+    console.log(
+      `  ▸ ${BURST} 個同時請求詳情頁：牆鐘 ${Math.round(wallMs)}ms・連線層例外 ${rejected.length}・` +
+        `HTTP 5xx ${serverErrors.length}`,
+    );
+    if (rejected.length > 0) {
+      console.log(`  ▸ 例外樣本：${(rejected[0] as PromiseRejectedResult).reason}`);
+    }
+    trackRss("詳情頁灌爆");
+
+    expect(appAlive(), "灌爆詳情頁之後 server 死了").toBe(true);
+    expect(rejected, "有請求連連線層都沒回應——連線池排隊逾時").toHaveLength(0);
+    expect(serverErrors, "詳情頁在高併發下回了 5xx——連線池被整列 Election 撈取（含 sealedBox）排隊卡死").toHaveLength(0);
+
+    const after = appRssMb();
+    if (before !== null && after !== null) {
+      console.log(`  ▸ 詳情頁灌爆前後 RSS：${before}MB → ${after}MB`);
+      expect(after, "灌爆時 RSS 逼近 pm2 的 1G 上限，會觸發重啟迴圈").toBeLessThan(800);
+    }
+  });
+
   it("最後回顧記憶體軌跡", () => {
     for (const { label, mb } of rssTrack) {
       expect(mb === null || mb < 900, `${label} 階段 RSS ${mb}MB 過高`).toBe(true);

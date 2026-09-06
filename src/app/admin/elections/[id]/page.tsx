@@ -21,9 +21,38 @@ export default async function ElectionWorkbenchPage({
   const { id } = await params;
   const admin = await requireAdmin(`/admin/elections/${id}`);
 
+  // 明確 select：不撈 sealedBox／disclosuresJson——這兩個欄位是整包票匭級別的大小，
+  // 撈進來會整個塞進 RSC payload（3000 票時 9.4MB HTML，見 D8 稽核）。開票時真的
+  // 需要 sealedBox 的地方（TallyClient）改在需要時另外用 getSealedBoxForTally() 取。
   const election = await prisma.election.findUnique({
     where: { id },
-    include: {
+    select: {
+      id: true,
+      slug: true,
+      title: true,
+      kind: true,
+      lineage: true,
+      seats: true,
+      maxChoices: true,
+      status: true,
+      ballotMode: true,
+      registrationStartsAt: true,
+      registrationEndsAt: true,
+      votingStartsAt: true,
+      votingEndsAt: true,
+      tallyPublicKeyJwk: true,
+      keyShares: true,
+      sealedHash: true,
+      sealedAt: true,
+      sealedBy: true,
+      resultsJson: true,
+      hiddenAt: true,
+      recallReason: true,
+      recallDefense: true,
+      recallLeadName: true,
+      recallLeadEmail: true,
+      officeId: true,
+      recallTargetOfficeId: true,
       candidates: true,
       voters: { orderBy: { email: "asc" } },
       announcements: { orderBy: { createdAt: "desc" } },

@@ -23,9 +23,19 @@ function KindBadges({ kind, lineage }: { kind: string; lineage: string | null })
 export default async function AdminHomePage() {
   await requireAdmin();
 
+  // 明確 select：列表只需要這些欄位——不撈 sealedBox／resultsJson／disclosuresJson，
+  // 否則是「每場選舉的整包票匭」乘上選舉場數一起進記憶體（見 D8 稽核）。
   const allElections = await prisma.election.findMany({
     orderBy: { createdAt: "desc" },
-    include: {
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      kind: true,
+      lineage: true,
+      seats: true,
+      slug: true,
+      hiddenAt: true,
       voters: { select: { votedAt: true } },
       _count: { select: { candidates: true } },
     },

@@ -2,7 +2,7 @@
 // 開票頁主體。全程在瀏覽器執行：讀金鑰檔 → 本地解密 → 計票 → 顯示結果 → 送出「結果」給伺服器
 // （伺服器只收計票結果數字，收不到金鑰、也看不到任何一張選票內容）。
 // 金鑰檔內容只存在這個 component 的 state；一離開頁面（或按「清除」）就沒了，不寫 localStorage/cookie。
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Lock,
@@ -19,7 +19,7 @@ import type { TallyKeyFile } from "@/lib/ballot-crypto";
 import { decryptAndTally, type TallyMeta } from "@/lib/tally-client";
 import type { TallyResult } from "@/lib/tally";
 import type { DisclosureEntry } from "@/lib/disclosure";
-import { submitResults } from "@/app/admin/elections/[id]/tally/actions";
+import { getSealedBoxForTally, submitResults } from "@/app/admin/elections/[id]/tally/actions";
 import { createRunoff } from "@/app/admin/elections/[id]/actions";
 
 type Stage = "idle" | "loaded" | "result" | "submitted";
@@ -27,7 +27,6 @@ type Stage = "idle" | "loaded" | "result" | "submitted";
 export function TallyClient({
   electionId,
   slug,
-  sealedBox,
   sealedHash,
   keyShares,
   alreadySubmitted,
@@ -36,7 +35,6 @@ export function TallyClient({
 }: {
   electionId: string;
   slug: string;
-  sealedBox: string[];
   sealedHash: string | null;
   keyShares: number;
   alreadySubmitted: boolean;
@@ -53,6 +51,40 @@ export function TallyClient({
   const [busy, startTransition] = useTransition();
   const [submitMsg, setSubmitMsg] = useState<string | null>(null);
   const [runoffMsg, setRunoffMsg] = useState<string | null>(null);
+  // 票匭快照不隨頁面一起下發（見 D8 稽核），這裡另外打 server action 取——
+  // 私鑰仍然只活在瀏覽器記憶體，這裡拿到的只是密文陣列。
+  const [sealedBox, setSealedBox] = useState<string[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSealedBoxForTally(electionId).then((r) => {
+      if (cancelled) return;
+      if (r.ok) setSealedBox(r.sealedBox);
+      else setLoadError(r.error);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [electionId]);
+
+  if (loadError) {
+    return (
+      <Card>
+        <p role="alert" className="font-bold text-sm text-destructive">
+          {loadError}
+        </p>
+      </Card>
+    );
+  }
+
+  if (sealedBox === null) {
+    return (
+      <Card>
+        <p className="text-sm font-medium text-muted-foreground">載入票匭中…</p>
+      </Card>
+    );
+  }
 
   async function handleFiles(fileList: FileList | null) {
     setError(null);
@@ -69,6 +101,7 @@ export function TallyClient({
   }
 
   function handleDecrypt() {
+    if (!sealedBox) return; // 不會發生：按鈕只在票匭載入完成後才會出現，這裡只是滿足型別。
     setError(null);
     startTransition(async () => {
       try {
