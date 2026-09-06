@@ -263,11 +263,13 @@ export async function submitResults(
       // 上面 election.status !== "sealed" 的檢查是交易外的一般 SELECT——公告發布
       // （publishAnnouncement）能在「檢查完、還沒寫」的窗口插隊把 sealed → published
       // commit 掉，讓這裡照樣覆寫已公告的結果（D7-5）。這個交易接下來就是對 Election
-      // 這一列本身寫入 resultsJson，所以跟 sealElection 一樣用 FOR UPDATE 重讀一次，
-      // 而不是 FOR SHARE——否則兩次重新提交（isResubmit）同時發生時，兩邊都持 FOR SHARE
-      // 再各自嘗試 UPDATE 同一列會互相等待造成死結。
+      // 這一列本身寫入 resultsJson，所以用 FOR NO KEY UPDATE 重讀一次，而不是
+      // FOR SHARE——否則兩次重新提交（isResubmit）同時發生時，兩邊都持 FOR SHARE
+      // 再各自嘗試 UPDATE 同一列會互相等待造成死結。也不用 FOR UPDATE：importRoster
+      // 的 Voter upsert 對這一列持 FOR KEY SHARE（外鍵檢查）可達 30 秒，FOR UPDATE 會被
+      // 它卡到交易逾時，FOR NO KEY UPDATE 與它相容（與 candidates／edit 同一結論）。
       const [locked] = await tx.$queryRaw<{ status: string }[]>`
-        SELECT status FROM "Election" WHERE id = ${electionId} FOR UPDATE
+        SELECT status FROM "Election" WHERE id = ${electionId} FOR NO KEY UPDATE
       `;
       if (!locked || locked.status !== "sealed") throw new Error("CONFLICT");
 

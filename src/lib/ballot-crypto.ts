@@ -6,7 +6,8 @@
 // 職責邊界（違反就是資安事故）：
 // - 開票私鑰只存在於選委瀏覽器與下載的金鑰檔，永遠不得出現在任何送往伺服器的
 //   payload、log、cookie、localStorage。
-// - 伺服器端只允許用到 isValidCiphertextShape / sha256Hex（不碰金鑰）。
+// - 伺服器端只允許用到 canonicalizeCiphertext / sha256Hex（不碰金鑰）；收票一律存
+//   canonicalizeCiphertext 的輸出，不存 client 原始字串（isValidCiphertextShape 只給測試用）。
 
 export type BallotChoice =
   | { type: "choose"; candidateIds: string[] } // 超額：單記/限記相對多數
