@@ -14,15 +14,20 @@ import { LOCKED_STATUSES } from "@/lib/election-status";
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
 // 狀態檢查必須在「持鎖之後」重讀，且與後面的寫入同一個交易，否則 advanceStatus 能在
-// 「檢查完、還沒寫」的窗口插隊 commit（D7-2）：改用 FOR UPDATE 而不是 vote/actions.ts
-// castBallot 那種 FOR SHARE——因為 approve/reject/sendBack 三支都會在同一交易內接著跑
-// renumberApproved，對整場候選人重新編號；若只用 FOR SHARE，兩個選委同時審核不同候選人時
-// 會同時進入 renumberApproved 各自對 Candidate 表下鎖，彼此等待造成死結（P2034/40P01）。
-// FOR UPDATE 讓兩個交易完全序列化：後到的那個等前一個 commit 後才重讀狀態、往下走，
-// 兩邊都不會有機會同時碰 renumberApproved，也就沒有死結可言。
+// 「檢查完、還沒寫」的窗口插隊 commit（D7-2）：改用 FOR NO KEY UPDATE 而不是
+// vote/actions.ts castBallot 那種 FOR SHARE——因為 approve/reject/sendBack 三支都會在
+// 同一交易內接著跑 renumberApproved，對整場候選人重新編號；若只用 FOR SHARE，兩個選委
+// 同時審核不同候選人時會同時進入 renumberApproved 各自對 Candidate 表下鎖，彼此等待
+// 造成死結（P2034/40P01）。FOR NO KEY UPDATE 自己跟自己互斥，讓兩個交易完全序列化：
+// 後到的那個等前一個 commit 後才重讀狀態、往下走，兩邊都不會有機會同時碰
+// renumberApproved，也就沒有死結可言——不需要升級到 FOR UPDATE。
+// FOR UPDATE 是錯的：importRoster 對 3000 列 Voter 做 upsert，每一列的外鍵檢查都會對
+// 父列 Election 取 FOR KEY SHARE 並持有整個交易（可長達 30 秒）；FOR KEY SHARE 只跟
+// FOR UPDATE 衝突、跟 FOR NO KEY UPDATE 相容，選 FOR UPDATE 會讓這裡跟著卡到交易逾時
+// 丟出未接住的例外（見 P7 反例，tests/integration/race.test.ts）。
 async function lockElectionStatus(tx: Prisma.TransactionClient, electionId: string): Promise<string | null> {
   const [row] = await tx.$queryRaw<{ status: string }[]>`
-    SELECT status FROM "Election" WHERE id = ${electionId} FOR UPDATE
+    SELECT status FROM "Election" WHERE id = ${electionId} FOR NO KEY UPDATE
   `;
   return row?.status ?? null;
 }
