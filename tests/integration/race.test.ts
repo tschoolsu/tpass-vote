@@ -142,4 +142,33 @@ describe("收票與關票／彌封的競態", () => {
       throw e;
     }
   }, 60_000);
+
+  it("D7-8：收票交易途中被隱藏，票必須被拒且不落地", async () => {
+    const lock = await holdElectionLock(electionId, "no key update");
+    try {
+      // 鎖窗內把 hiddenAt 寫掉（尚未 commit）：castBallot 交易外的 findFirst
+      // 讀到舊值（未隱藏）→ 通過；交易內重讀 status/時程時應一併讀到這個新值。
+      await lock.client.query(`UPDATE "Election" SET "hiddenAt" = now() WHERE id = $1`, [
+        electionId,
+      ]);
+
+      const { ciphertext } = await encryptBallot(publicKeyJwk, {
+        electionId,
+        choice: { type: "choose", candidateIds: [candidateId] },
+      });
+      const voting = as(VOTER_A, () => castBallot(SLUG, ciphertext));
+      await settle();
+      await lock.release();
+
+      const r = await voting;
+      expect(r.ok, "選舉被隱藏之後這張票仍被收下了").toBe(false);
+      expect(
+        await prisma.encryptedBallot.count({ where: { electionId } }),
+        "票匭裡出現了隱藏之後才寫入的票",
+      ).toBe(0);
+    } catch (e) {
+      await lock.abort();
+      throw e;
+    }
+  }, 60_000);
 });

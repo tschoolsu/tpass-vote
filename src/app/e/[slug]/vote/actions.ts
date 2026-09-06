@@ -15,7 +15,7 @@ export type CastResult = { ok: true; revote: boolean } | { ok: false; error: str
 
 /** 鎖內判定失敗：靠 throw 讓交易回滾，不能只 return——否則後面的寫入會照跑。 */
 class CastRejected extends Error {
-  constructor(readonly reason: CastRejection) {
+  constructor(readonly reason: CastRejection | "hidden") {
     super(reason);
   }
 }
@@ -24,6 +24,7 @@ type CastGate = {
   status: string;
   votingStartsAt: Date | null;
   votingEndsAt: Date | null;
+  hiddenAt: Date | null;
 };
 
 export async function castBallot(slug: string, ciphertext: string): Promise<CastResult> {
@@ -54,10 +55,13 @@ export async function castBallot(slug: string, ciphertext: string): Promise<Cast
       // 一般 SELECT 不鎖列：Postgres 預設 READ COMMITTED 下，光把查詢搬進
       // $transaction 擋不住關票插隊，必須顯式取鎖後「在鎖裡」重新判定一次。
       const [locked] = await tx.$queryRaw<CastGate[]>`
-        SELECT status, "votingStartsAt", "votingEndsAt"
+        SELECT status, "votingStartsAt", "votingEndsAt", "hiddenAt"
         FROM "Election" WHERE id = ${election.id} FOR SHARE
       `;
       if (!locked) throw new CastRejected("not-open");
+      // 交易外的 findFirst 只擋得住「進交易前」就已隱藏的場次；隱藏發生在
+      // 交易外檢查之後、鎖內重讀之前的窗口，得在這裡再擋一次。
+      if (locked.hiddenAt) throw new CastRejected("hidden");
       // 名冊在投票期間只能新增不能刪除（removeVoter 的 LOCKED_STATUSES 擋著），
       // 所以交易外確認過的資格在這裡仍然成立。
       const decision = castDecision(locked, true, new Date());
@@ -72,6 +76,9 @@ export async function castBallot(slug: string, ciphertext: string): Promise<Cast
     }, { timeout: 10_000 });
   } catch (e) {
     if (e instanceof CastRejected) {
+      // "hidden" 與交易外 findFirst 找不到選舉時的訊息一致，不查
+      // CAST_REJECTION_MESSAGES——那張表只覆蓋 castDecision 的判定結果。
+      if (e.reason === "hidden") return { ok: false, error: "找不到這場選舉" };
       return { ok: false, error: CAST_REJECTION_MESSAGES[e.reason] };
     }
     throw e;
