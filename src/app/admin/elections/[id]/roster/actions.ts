@@ -81,20 +81,26 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 export async function removeVoter(electionId: string, voterId: string): Promise<ActionResult> {
   const admin = await requireAdmin(`/admin/elections/${electionId}/roster`);
 
-  const election = await prisma.election.findUnique({ where: { id: electionId } });
-  if (!election) return { ok: false, error: "找不到選舉" };
-  if (LOCKED_STATUSES.has(election.status)) {
-    return { ok: false, error: "投票已開始，名冊只能新增，不能刪除" };
-  }
+  const result = await prisma.$transaction(async (tx) => {
+    // 交易外的一般 SELECT 讀到「未鎖定」後，advanceStatus 能在檢查完、還沒刪之間插隊
+    // 把投票開放（D7-4）——這裡刪的是 Voter，不是 Election 本身，所以跟 castBallot 一樣
+    // 用 FOR SHARE：多個 removeVoter 各刪不同人可以彼此並行，只需要跟「會改變 Election
+    // 狀態」的那個 UPDATE（advanceStatus 隱含的 FOR NO KEY UPDATE）互斥。
+    const [locked] = await tx.$queryRaw<{ status: string }[]>`
+      SELECT status FROM "Election" WHERE id = ${electionId} FOR SHARE
+    `;
+    if (!locked) return { ok: false as const, error: "找不到選舉" };
+    if (LOCKED_STATUSES.has(locked.status)) {
+      return { ok: false as const, error: "投票已開始，名冊只能新增，不能刪除" };
+    }
 
-  const voter = await prisma.voter.findUnique({ where: { id: voterId } });
-  if (!voter || voter.electionId !== electionId) {
-    return { ok: false, error: "找不到此名冊項目" };
-  }
+    const voter = await tx.voter.findUnique({ where: { id: voterId } });
+    if (!voter || voter.electionId !== electionId) {
+      return { ok: false as const, error: "找不到此名冊項目" };
+    }
 
-  await prisma.$transaction([
-    prisma.voter.delete({ where: { id: voterId } }),
-    prisma.electionAuditLog.create({
+    await tx.voter.delete({ where: { id: voterId } });
+    await tx.electionAuditLog.create({
       data: {
         electionId,
         actorEmail: admin.email,
@@ -102,8 +108,11 @@ export async function removeVoter(electionId: string, voterId: string): Promise<
         summary: `移除名冊項目：${voter.email}`,
         diff: { voterId: voter.id, email: voter.email } as Prisma.InputJsonValue,
       },
-    }),
-  ]);
+    });
+    return { ok: true as const };
+  }, { timeout: 10_000 });
+
+  if (!result.ok) return result;
 
   revalidatePath(`/admin/elections/${electionId}/roster`);
   revalidatePath(`/admin/elections/${electionId}`);
