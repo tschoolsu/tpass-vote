@@ -18,7 +18,7 @@ import { decryptAndTally } from "@/lib/tally-client";
 import { submitResults } from "@/app/admin/elections/[id]/tally/actions";
 import type { TallyResult } from "@/lib/tally";
 import type { DisclosureEntry } from "@/lib/disclosure";
-import type { TallyKeyFile } from "@/lib/ballot-crypto";
+import { combineKeyFiles, decryptBallot, type TallyKeyFile } from "@/lib/ballot-crypto";
 
 const SLUG = "results-integrity";
 const V = (n: number) => ({ email: `ri-v${n}@test.local`, name: `投票人${n}` });
@@ -147,6 +147,34 @@ describe("結果提交完整性：elected／tied／hasTie／rosterCount／turnou
     r.mode = "approval";
     const got = await as(ADMIN, () => submitResults(f.electionId, r, f.disclosures));
     expect(got.ok).toBe(false);
+    await resetSubmission(f.electionId);
+  });
+
+  // D3-1：明細順序本身是側通道——sealedBox 是公開的，提交者若把明細排成與
+  // sealedBox 同索引，任何持彌封前 EncryptedBallot 快照者事後都能逐人還原
+  // 誰投給誰。伺服器存檔前必須自己依 code 排序，不能照抄提交順序。
+  it("明細改成 sealedBox 同索引順序送出：DB 存的仍是依 code 排序，提交順序不留痕跡", async () => {
+    const election = await prisma.election.findUniqueOrThrow({ where: { id: f.electionId } });
+    const box = (election.sealedBox as string[]) ?? [];
+    const priv = combineKeyFiles(f.keyFiles);
+    const byCode = new Map(f.disclosures.map((d) => [d.code, d]));
+    const boxOrdered: DisclosureEntry[] = [];
+    for (const ct of box) {
+      const plain = await decryptBallot(priv, ct);
+      boxOrdered.push(byCode.get(plain!.code)!);
+    }
+
+    const sortedCodes = [...f.disclosures].map((d) => d.code).sort();
+    // 先確認「同索引順序」與「排序後順序」確實不同，測試才有意義。
+    expect(boxOrdered.map((d) => d.code)).not.toEqual(sortedCodes);
+
+    const got = await as(ADMIN, () => submitResults(f.electionId, f.results, boxOrdered));
+    expect(got.ok).toBe(true);
+
+    const saved = (await prisma.election.findUniqueOrThrow({ where: { id: f.electionId } }))
+      .disclosuresJson as unknown as DisclosureEntry[];
+    expect(saved.map((d) => d.code)).toEqual(sortedCodes);
+
     await resetSubmission(f.electionId);
   });
 });

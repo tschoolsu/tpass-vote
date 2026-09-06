@@ -16,7 +16,7 @@ import { authConfig } from "@/config/auth";
 import { resultAnnouncementDraft, type ResultCandidateInfo } from "@/lib/result-announcement";
 import { cloneElection } from "@/lib/clone-election";
 import { recallPassed } from "@/lib/recall";
-import { verifyDisclosures, DISCLOSURE_MISMATCH_MESSAGE } from "@/lib/disclosure";
+import { verifyDisclosures, compareByCode, DISCLOSURE_MISMATCH_MESSAGE } from "@/lib/disclosure";
 import { decideElected } from "@/lib/tally";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -127,6 +127,11 @@ export async function submitResults(
 
   const parsedDisclosures = disclosureSchema.safeParse(disclosures);
   if (!parsedDisclosures.success) return { ok: false, error: "選票明細格式不正確" };
+  // 提交者送來的順序不可信——sealedBox 是公開的，若明細照抄提交順序存檔，順序本身
+  // 就會是「與 sealedBox 同索引」的側通道，讓持彌封前 EncryptedBallot 快照者事後
+  // 逐人還原誰投給誰（見 disclosure.ts 開頭說明）。存檔前一律改成依 code 排序，
+  // 跟 buildDisclosures 產出公告明細用同一個比較函式；不排序不拒收，只是不採信。
+  const sortedDisclosures = [...parsedDisclosures.data].sort(compareByCode);
 
   const election = await prisma.election.findUnique({
     where: { id: electionId },
@@ -176,7 +181,7 @@ export async function submitResults(
   // 票匭相符」這項對帳已經不成立，換到的是「單一 DB 讀權限者無法自建對照表」。
   // 剩下的自洽檢查照舊：張數、代碼不重複、各類票張數、逐票加總的得票數。
   // 造假結果的防線在「兩位選委各自獨立開票比對」（docs/election-sop.md）。
-  const mismatch = verifyDisclosures(parsedDisclosures.data, boxSize, r, election.maxChoices);
+  const mismatch = verifyDisclosures(sortedDisclosures, boxSize, r, election.maxChoices);
   if (mismatch) {
     return { ok: false, error: `${DISCLOSURE_MISMATCH_MESSAGE[mismatch]}，已拒絕提交` };
   }
@@ -234,7 +239,7 @@ export async function submitResults(
       where: { id: electionId },
       data: {
         resultsJson: finalResults as unknown as Prisma.InputJsonValue,
-        disclosuresJson: parsedDisclosures.data,
+        disclosuresJson: sortedDisclosures,
       },
     });
 

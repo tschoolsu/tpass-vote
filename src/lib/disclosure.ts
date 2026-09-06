@@ -24,6 +24,11 @@ export interface DisclosureEntry {
   approvals?: Record<string, boolean>; // kind="approval"
 }
 
+/** 明細排序的唯一標準：依 code 字典序，跟彌封／提交順序無關。 */
+export function compareByCode(a: DisclosureEntry, b: DisclosureEntry): number {
+  return a.code < b.code ? -1 : a.code > b.code ? 1 : 0;
+}
+
 /**
  * 代碼與明文同索引配對，產出公告用的明細。
  * 輸出依 code 字典序排序：與彌封順序無關，兩個人各自開票應得到逐字相同的清單。
@@ -40,7 +45,7 @@ export function buildDisclosures(
   const entries = codes.map((code, i) =>
     toEntry(code, plaintexts[i] ?? null, electionId, ballotMode, idSet, maxChoices),
   );
-  return entries.sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+  return entries.sort(compareByCode);
 }
 
 /**
