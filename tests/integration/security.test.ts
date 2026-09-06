@@ -252,6 +252,60 @@ describe("選票完整性", () => {
     expect(await decryptBallot(privateKeyJwk, stored.ciphertext), "拿錯鑰匙不該解得開").toBeNull();
   });
 
+  // D3-4：isValidCiphertextShape 只數 key 數量，擋不住「重新排版過的合法信封」——
+  // JSON 允許物件內任意空白、重複 key（取最後一個）、欄位順序不影響語意。這些花招
+  // 都通得過形狀檢查，如果伺服器把 client 送來的原始字串逐字存進 DB／公開
+  // sealedBox，投票端就等於能自由控制那段公開字串的內容與長度。正確的防線是
+  // 在儲存邊界把信封「重建」成固定欄位、固定順序、無多餘空白的正規字串，
+  // 而不是想辦法在形狀檢查裡窮舉擋掉每一種花招。
+  it("信封重新排版（空白／重複 key／欄位順序）不會被逐字存進 DB", async () => {
+    const { ciphertext } = await encryptBallot(publicKeyJwk, {
+      electionId,
+      choice: { type: "choose", candidateIds: [candidateId] },
+    });
+    const env = JSON.parse(ciphertext) as {
+      v: 2;
+      alg: string;
+      ek: string;
+      iv: string;
+      ct: string;
+    };
+    const voterB = await prisma.voter.findUniqueOrThrow({
+      where: { electionId_email: { electionId, email: VOTER_B.email } },
+    });
+
+    // 花招 A：物件開頭塞 13000 個空白——JSON 語法合法，形狀檢查全部通過，
+    // 但存進 DB 的位元組長度完全被投票端控制。
+    const padded = "{" + " ".repeat(13000) + ciphertext.slice(1);
+    const rPadded = await as(VOTER_B, () => castBallot(slug, padded));
+    expect(rPadded.ok, "花招 A 的信封被拒收，測不到儲存邊界").toBe(true);
+    const storedPadded = await prisma.encryptedBallot.findUniqueOrThrow({
+      where: { voterId: voterB.id },
+    });
+    expect(
+      storedPadded.ciphertext,
+      "DB 裡存的是投票端塞的原始位元組（含 13000 個空白），不是正規化後的信封",
+    ).toBe(ciphertext);
+
+    // 花招 B：重複的 ct 欄位，前面塞一段可辨識字串——JSON.parse 對重複 key 取
+    // 最後一個，語意上等於沒有這段字串，但如果伺服器存的是「投票端送來的原始
+    // 字串」而不是「重新序列化過的正規字串」，這段字串就會原封不動流進 DB。
+    const marker = "MARKER-" + "Z".repeat(2000);
+    const withDup =
+      `{"v":2,"ct":"${marker}","alg":${JSON.stringify(env.alg)},` +
+      `"ek":${JSON.stringify(env.ek)},"iv":${JSON.stringify(env.iv)},` +
+      `"ct":${JSON.stringify(env.ct)}}`;
+    const rDup = await as(VOTER_B, () => castBallot(slug, withDup));
+    expect(rDup.ok, "花招 B 的信封被拒收，測不到儲存邊界").toBe(true);
+    const storedDup = await prisma.encryptedBallot.findUniqueOrThrow({
+      where: { voterId: voterB.id },
+    });
+    expect(
+      storedDup.ciphertext.includes(marker),
+      "DB 裡不該留著重複 key 被蓋掉的那段字串",
+    ).toBe(false);
+  });
+
   it("伺服器只收公鑰：夾帶私鑰欄位的 JWK 被拒", async () => {
     const created = await makeElection({ slug: "key-guard" });
     const id = created.electionId!;

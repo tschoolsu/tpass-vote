@@ -7,7 +7,7 @@
 import { requireSession } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { castDecision, CAST_REJECTION_MESSAGES, type CastRejection } from "@/lib/vote-policy";
-import { isValidCiphertextShape } from "@/lib/ballot-crypto";
+import { canonicalizeCiphertext } from "@/lib/ballot-crypto";
 
 // 沒有 receipt：可回溯代碼由投票人瀏覽器產生並封在密文裡，伺服器看不到它。
 // 代碼由前端在送出成功後自己顯示（見 VoteForm）。
@@ -41,7 +41,11 @@ export async function castBallot(slug: string, ciphertext: string): Promise<Cast
   const pre = castDecision(election, voter !== null, new Date());
   if (!pre.ok) return { ok: false, error: CAST_REJECTION_MESSAGES[pre.reason] };
 
-  if (!isValidCiphertextShape(ciphertext)) {
+  // 存進 DB／公開 sealedBox 的一律是這裡重建出來的正規字串，不是 client 送來的
+  // 原始位元組——不然投票端能靠合法但重新排版過的 JSON（多餘空白、重複 key、
+  // 欄位順序）自由控制那段公開字串的內容與長度，形狀檢查形同虛設。
+  const canonical = canonicalizeCiphertext(ciphertext);
+  if (canonical === null) {
     return { ok: false, error: "選票格式不正確，請重新整理頁面再試" };
   }
 
@@ -69,8 +73,8 @@ export async function castBallot(slug: string, ciphertext: string): Promise<Cast
 
       await tx.encryptedBallot.upsert({
         where: { voterId: voter!.id },
-        create: { electionId: election.id, voterId: voter!.id, ciphertext },
-        update: { ciphertext },
+        create: { electionId: election.id, voterId: voter!.id, ciphertext: canonical },
+        update: { ciphertext: canonical },
       });
       await tx.voter.update({ where: { id: voter!.id }, data: { votedAt: new Date() } });
     }, { timeout: 10_000 });

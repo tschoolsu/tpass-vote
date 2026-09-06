@@ -6,6 +6,7 @@ import {
   encryptBallot,
   decryptBallot,
   isValidCiphertextShape,
+  canonicalizeCiphertext,
   fallbackCodeFor,
   newBallotCode,
   sha256Hex,
@@ -199,15 +200,38 @@ describe("伺服器端形狀檢查", () => {
     expect(isValidCiphertextShape(JSON.stringify(env))).toBe(false);
   });
 
-  // D3-4：信封多塞一個未知欄位不該被接受——不然投票端能自由控制存進公開
-  // sealedBox 的字串內容與長度，形狀檢查形同虛設。
-  it("信封多一個未知欄位就判定形狀不合法", async () => {
+  // D3-4：JSON 允許物件內任意空白、重複 key（取最後一個）、欄位順序、多餘欄位——
+  // 這些都是「合法的 JSON」，光數 key 數量擋不住。真正的防線是 canonicalizeCiphertext
+  // 把信封重建成固定欄位、固定順序、無多餘空白的正規字串，讓這整類花招帶進來的
+  // 多餘位元組沒有機會被存下來（見 castBallot：存的是這個函式的回傳值，不是
+  // client 送來的原始字串）。
+  it("canonicalizeCiphertext 把多餘欄位、重新排版過的信封收斂成同一個正規字串", async () => {
     const { publicKeyJwk } = await generateTallyKeyPair();
     const { ciphertext } = await encryptBallot(publicKeyJwk, input);
     const env = JSON.parse(ciphertext);
-    expect(isValidCiphertextShape(JSON.stringify({ ...env, extra: "x".repeat(5000) }))).toBe(
-      false,
-    );
+
+    // 多一個未知欄位：形狀仍合法（5 個已知欄位都對），但正規化後那個欄位消失。
+    const withExtra = JSON.stringify({ ...env, extra: "x".repeat(5000) });
+    expect(isValidCiphertextShape(withExtra)).toBe(true);
+    expect(canonicalizeCiphertext(withExtra)).toBe(ciphertext);
+
+    // 欄位順序不同：正規化後與原始密文逐字相同。
+    const reordered = JSON.stringify({ ct: env.ct, iv: env.iv, ek: env.ek, alg: env.alg, v: env.v });
+    expect(canonicalizeCiphertext(reordered)).toBe(ciphertext);
+
+    // 開頭塞大量空白：JSON 語法合法，但正規化後空白不見，長度回到原本大小。
+    const padded = "{" + " ".repeat(5000) + ciphertext.slice(1);
+    expect(canonicalizeCiphertext(padded)).toBe(ciphertext);
+  });
+
+  it("canonicalizeCiphertext 對真正不合法的形狀回傳 null", async () => {
+    const { publicKeyJwk } = await generateTallyKeyPair();
+    const { ciphertext } = await encryptBallot(publicKeyJwk, input);
+    const env = JSON.parse(ciphertext);
+    env.ek = btoa("short");
+    expect(canonicalizeCiphertext(JSON.stringify(env))).toBeNull();
+    expect(canonicalizeCiphertext("not json")).toBeNull();
+    expect(canonicalizeCiphertext("")).toBeNull();
   });
 });
 

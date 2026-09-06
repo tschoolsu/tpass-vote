@@ -298,34 +298,47 @@ export async function decryptBallot(
 
 const MAX_CIPHERTEXT_LENGTH = 16384;
 
-export function isValidCiphertextShape(s: string): boolean {
-  if (typeof s !== "string" || s.length === 0 || s.length > MAX_CIPHERTEXT_LENGTH) return false;
+/**
+ * 驗證信封並回傳「重新序列化過」的正規字串；不合法回傳 null。
+ *
+ * JSON 允許物件內任意空白、重複 key（取最後一個）、欄位順序不影響語意——這些花招
+ * 都是「合法的 JSON」，光數 key 數量或檢查欄位值擋不住。真正的防線不是想辦法在
+ * 形狀檢查裡窮舉擋掉每一種花招，而是伺服器存進 DB／公開 sealedBox 的字串一律用
+ * 這裡重建出來的正規字串，不是投票端送來的原始位元組——花招留下的多餘位元組
+ * 從來沒有機會被存下來。
+ */
+export function canonicalizeCiphertext(s: string): string | null {
+  if (typeof s !== "string" || s.length === 0 || s.length > MAX_CIPHERTEXT_LENGTH) return null;
   let env: CiphertextEnvelope;
   try {
     env = JSON.parse(s) as CiphertextEnvelope;
   } catch {
-    return false;
+    return null;
   }
-  return (
-    env !== null &&
-    typeof env === "object" &&
-    // 只准恰好這 5 個 key（v/alg/ek/iv/ct）：多一個 key（例如塞進去的填充字串）
-    // 就等於讓投票端自由控制存進公開 sealedBox 的字串內容與長度，形狀檢查形同虛設。
-    Object.keys(env).length === 5 &&
-    env.v === 2 &&
-    env.alg === "RSA-OAEP-256+A256GCM" &&
-    typeof env.ek === "string" &&
-    B64_RE.test(env.ek) &&
-    fromB64Length(env.ek) === 256 && // RSA-2048 輸出固定 256 bytes
-    typeof env.iv === "string" &&
-    B64_RE.test(env.iv) &&
-    fromB64Length(env.iv) === 12 &&
-    typeof env.ct === "string" &&
-    B64_RE.test(env.ct) &&
+  if (
+    env === null ||
+    typeof env !== "object" ||
+    env.v !== 2 ||
+    env.alg !== "RSA-OAEP-256+A256GCM" ||
+    typeof env.ek !== "string" ||
+    !B64_RE.test(env.ek) ||
+    fromB64Length(env.ek) !== 256 || // RSA-2048 輸出固定 256 bytes
+    typeof env.iv !== "string" ||
+    !B64_RE.test(env.iv) ||
+    fromB64Length(env.iv) !== 12 ||
+    typeof env.ct !== "string" ||
+    !B64_RE.test(env.ct) ||
     // 定長：AES-GCM 密文 = 填充後明文 + 16 bytes tag。長度不變量在伺服器這一關就
     // 強制，否則有人繞過前端送不等長密文，長度側通道就從那條路回來了。
-    fromB64Length(env.ct) === PADDED_PLAIN_SIZE + 16
-  );
+    fromB64Length(env.ct) !== PADDED_PLAIN_SIZE + 16
+  ) {
+    return null;
+  }
+  return JSON.stringify({ v: env.v, alg: env.alg, ek: env.ek, iv: env.iv, ct: env.ct });
+}
+
+export function isValidCiphertextShape(s: string): boolean {
+  return canonicalizeCiphertext(s) !== null;
 }
 
 function fromB64Length(b64: string): number {
