@@ -14,8 +14,17 @@ import { MIN_VOTING_HOURS } from "@/app/admin/elections/election-schema";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-// 開票私鑰永不上傳伺服器：這裡只收公鑰，看起來像私鑰的欄位一律直接拒絕，不「先存起來以後再說」。
-const PRIVATE_JWK_FIELDS = ["d", "p", "q", "dp", "dq", "qi"] as const;
+// 開票公鑰只准長成 generateTallyKeyPair（src/lib/ballot-crypto.ts）匯出的形狀：
+// 白名單而非「列舉壞欄位」——多一個沒列在這裡的欄位（含任何私鑰欄位）一律直接拒絕，
+// 不「先存起來以後再說」。use/key_ops 額外正面規定用途，否則像 use:"sig" 這種本身
+// 貨真價實的 2048 bit 公鑰會被收下、寫進 DB 且不可覆寫，但投票端瀏覽器
+// importKey(usages:["encrypt"]) 會直接 throw DataError，全場票都投不進去。
+const ALLOWED_JWK_FIELDS = new Set(["kty", "n", "e", "alg", "use", "key_ops", "ext", "kid"]);
+
+// n 必須先用嚴格 base64url 字元集擋過，才准解碼：驗證端與投票端（瀏覽器嚴格
+// base64url）用同一套解讀，帶 padding（=）或標準 base64 字元（+ /）一律先擋在這裡，
+// 不讓兩邊對同一個字串解出不同位元組。
+const STRICT_BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 
 // 收票端 isValidCiphertextShape（src/lib/ballot-crypto.ts）硬性要求 ek 剛好 256 bytes，
 // 也就是只認 RSA-2048。這裡若放行別的模數長度，金鑰存進去之後每一張票都會被收票端
@@ -35,12 +44,18 @@ function isRsa2048Modulus(n: string): boolean {
 function isPublicOnlyRsaJwk(jwk: unknown): jwk is JsonWebKey {
   if (!jwk || typeof jwk !== "object") return false;
   const o = jwk as Record<string, unknown>;
+  if (!Object.keys(o).every((k) => ALLOWED_JWK_FIELDS.has(k))) return false;
   if (o.kty !== "RSA") return false;
-  if (typeof o.n !== "string" || typeof o.e !== "string") return false;
-  if (PRIVATE_JWK_FIELDS.some((f) => f in o)) return false;
-  if (o.e !== "AQAB") return false;
-  if (typeof o.alg === "string" && o.alg !== "RSA-OAEP-256") return false;
-  if (!isRsa2048Modulus(o.n)) return false;
+  if (typeof o.e !== "string" || o.e !== "AQAB") return false;
+  if (typeof o.n !== "string" || !STRICT_BASE64URL_RE.test(o.n) || !isRsa2048Modulus(o.n)) {
+    return false;
+  }
+  if ("alg" in o && o.alg !== "RSA-OAEP-256") return false;
+  if ("use" in o && o.use !== "enc") return false;
+  if ("key_ops" in o) {
+    if (!Array.isArray(o.key_ops) || o.key_ops.length === 0) return false;
+    if (!o.key_ops.every((op) => op === "encrypt")) return false;
+  }
   return true;
 }
 

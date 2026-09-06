@@ -377,6 +377,59 @@ describe("選票完整性", () => {
     expect(r2.ok).toBe(true);
   }, 30_000);
 
+  it("開票金鑰的 use/key_ops 若與加密用途不符，即使模數是真的 2048 也要被擋", async () => {
+    // use="sig" 或 key_ops=["verify"] 對 isRsa2048Modulus 來說完全是合法的 2048 bit
+    // 公鑰，會被收下、寫進 DB 且不可覆寫——但瀏覽器 importKey(usages:["encrypt"])
+    // 之後看到 use/key_ops 跟用途對不上，會直接 throw DataError，全場票投不進去。
+    const { publicKeyJwk: base } = await generateTallyKeyPair();
+
+    const created1 = await makeElection({ slug: "key-use-sig" });
+    const id1 = created1.electionId!;
+    const evilUse = { ...base, use: "sig" };
+    const r1 = await as(ADMIN, () => savePublicKey(id1, evilUse, 1));
+    expect(r1.ok).toBe(false);
+    expect((await prisma.election.findUniqueOrThrow({ where: { id: id1 } })).tallyPublicKeyJwk).toBeNull();
+
+    const created2 = await makeElection({ slug: "key-ops-verify" });
+    const id2 = created2.electionId!;
+    const evilKeyOps = { ...base, key_ops: ["verify"] };
+    const r2 = await as(ADMIN, () => savePublicKey(id2, evilKeyOps, 1));
+    expect(r2.ok).toBe(false);
+    expect((await prisma.election.findUniqueOrThrow({ where: { id: id2 } })).tallyPublicKeyJwk).toBeNull();
+
+    // 補救路徑：原封不動的正常金鑰仍應放行。
+    const created3 = await makeElection({ slug: "key-use-ok" });
+    const id3 = created3.electionId!;
+    const r3 = await as(ADMIN, () => savePublicKey(id3, base, 1));
+    expect(r3.ok).toBe(true);
+  }, 30_000);
+
+  it("開票金鑰的 n 只認嚴格 base64url：夾帶 padding 或標準 base64 字元也要被擋", async () => {
+    // 驗證端若比投票端（瀏覽器嚴格 base64url）更寬鬆地解碼 n，兩邊解讀同一個字串
+    // 卻用不同解碼器＝ dual-parse：這裡驗過去了，投票時瀏覽器 importKey 卻可能解出
+    // 不同的位元組，或者根本無法預期地失敗。
+    const { publicKeyJwk: base } = await generateTallyKeyPair();
+    const n = base.n as string;
+
+    const created1 = await makeElection({ slug: "key-n-padding" });
+    const id1 = created1.electionId!;
+    const paddedN = { ...base, n: n + "==" };
+    const r1 = await as(ADMIN, () => savePublicKey(id1, paddedN, 1));
+    expect(r1.ok).toBe(false);
+
+    const created2 = await makeElection({ slug: "key-n-stdb64" });
+    const id2 = created2.electionId!;
+    const stdB64N = { ...base, n: Buffer.from(n, "base64url").toString("base64") };
+    const r2 = await as(ADMIN, () => savePublicKey(id2, stdB64N, 1));
+    expect(r2.ok).toBe(false);
+
+    // 補救路徑：原封不動的正常金鑰仍應放行。
+    const created3 = await makeElection({ slug: "key-n-ok" });
+    const id3 = created3.electionId!;
+    const r3 = await as(ADMIN, () => savePublicKey(id3, base, 1));
+    expect(r3.ok).toBe(true);
+  }, 30_000);
+
   it("資料庫全洩漏也看不出誰投給誰：彌封後連結不存在", async () => {
     const slug2 = "leak-test";
     const created = await makeElection({ slug: slug2 });
