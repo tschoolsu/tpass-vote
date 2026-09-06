@@ -30,7 +30,6 @@ import { sealElection, submitResults } from "@/app/admin/elections/[id]/tally/ac
 import { approveCandidate, rejectCandidate } from "@/app/admin/elections/[id]/candidates/actions";
 import { updateElection } from "@/app/admin/elections/[id]/edit/actions";
 import { removeVoter } from "@/app/admin/elections/[id]/roster/actions";
-import { sealElection } from "@/app/admin/elections/[id]/tally/actions";
 import { savePublicKey, redoElection } from "@/app/admin/elections/[id]/actions";
 import { publishAnnouncement } from "@/app/admin/elections/[id]/announcements/actions";
 
