@@ -35,7 +35,7 @@ const CAND = { email: "racecand@test.local", name: "候選人" };
 const SLUG = "race";
 
 /** 開一條獨立連線並鎖住某場選舉，回傳「放行」函式。 */
-async function holdElectionLock(electionId: string, mode: "no key update" | "update") {
+async function holdElectionLock(electionId: string, mode: "key share" | "no key update" | "update") {
   const client = new Client({ connectionString: TEST_DATABASE_URL });
   await client.connect();
   await client.query("BEGIN");
@@ -238,6 +238,35 @@ describe("D7-2 候選人審核：狀態檢查與寫入不再跨交易", () => {
     }
   }, 60_000);
 
+  it("P7：importRoster 的 Voter upsert 對 Election 取的 FOR KEY SHARE，不該卡住 approveCandidate", async () => {
+    // importRoster 對 3000 列 Voter 做 upsert，每一列的外鍵檢查都會對父列 Election
+    // 取 FOR KEY SHARE 並持有整個交易（可長達 30 秒）。approveCandidate 只需要跟
+    // 其他會改 Election 這一列本身的動作互斥（FOR NO KEY UPDATE 對 FOR NO KEY UPDATE），
+    // 不該因為選了過強的鎖模式（FOR UPDATE）而被無關的子表 INSERT 卡住。
+    const fkLock = await holdElectionLock(electionId, "key share");
+    let settled = false;
+    const approving = as(ADMIN, () => approveCandidate(electionId, candB)).then((r) => {
+      settled = true;
+      return r;
+    });
+    try {
+      await settle();
+      // 先斷言、再釋放鎖：卡住的話這裡會是 false，且下面 release 之後才會變 true——
+      // 用時序本身當證據，不是等它最終成功就當作沒事。
+      expect(
+        settled,
+        "approveCandidate 被無關的 FOR KEY SHARE 卡住了，鎖模式選得比需要的強",
+      ).toBe(true);
+      await fkLock.release();
+      const approved = await approving;
+      expect(approved.ok, approved.ok ? "" : approved.error).toBe(true);
+    } catch (e) {
+      await fkLock.abort();
+      await approving.catch(() => {});
+      throw e;
+    }
+  }, 60_000);
+
   it("兩位選委同時核准兩位不同候選人：不再死結，兩邊都成功且號次不衝突", async () => {
     for (let attempt = 0; attempt < 5; attempt++) {
       await prisma.candidate.updateMany({
@@ -281,6 +310,35 @@ describe("D7-3 updateElection：狀態檢查與寫入不再跨交易", () => {
     await approveAll(electionId);
     await advanceTo(electionId, "campaigning");
   }, 90_000);
+
+  it("P7：importRoster 的 Voter upsert 對 Election 取的 FOR KEY SHARE，不該卡住 updateElection", async () => {
+    const fkLock = await holdElectionLock(electionId, "key share");
+    let settled = false;
+    const form = new FormData();
+    form.set("title", "改個標題");
+    form.set("slug", SLUG);
+    form.set("kind", "other");
+    form.set("seats", "1");
+    form.set("maxChoices", "1");
+    const editing = as(MODERATOR, () => updateElection(electionId, null, form)).then((r) => {
+      settled = true;
+      return r;
+    });
+    try {
+      await settle();
+      expect(
+        settled,
+        "updateElection 被無關的 FOR KEY SHARE 卡住了，鎖模式選得比需要的強",
+      ).toBe(true);
+      await fkLock.release();
+      const edited = await editing;
+      expect(edited.ok, edited.ok ? "" : edited.error).toBe(true);
+    } catch (e) {
+      await fkLock.abort();
+      await editing.catch(() => {});
+      throw e;
+    }
+  }, 60_000);
 
   it("投票開放一旦 commit，卡住的 updateElection 必須讀到新狀態並被擋下", async () => {
     const lock = await holdElectionLock(electionId, "no key update");

@@ -23,7 +23,7 @@ export async function updateElection(
   const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) return { ok: false, error: "找不到選舉" };
   // 這裡的檢查只是先擋掉「本來就已經鎖定」的請求，省得白跑後面的表單驗證；
-  // 真正說了算的判斷在下面的交易裡用 FOR UPDATE 重讀一次（見該處註解）。
+  // 真正說了算的判斷在下面的交易裡用 FOR NO KEY UPDATE 重讀一次（見該處註解）。
   if (LOCKED_STATUSES.has(election.status)) {
     return { ok: false, error: "投票已開始，選舉基本資料已鎖定，不可再修改" };
   }
@@ -57,11 +57,17 @@ export async function updateElection(
 
   const result = await prisma.$transaction(async (tx) => {
     // 交易外的檢查讀到的是舊狀態——advanceStatus 能在「檢查完、還沒寫」的窗口插隊 commit
-    // 把投票開放（D7-3）。這裡在真正寫入前用 FOR UPDATE 重讀一次：因為這個交易接下來就是
-    // 對 Election 這一列本身寫入，用 FOR UPDATE 而不是 castBallot 那種 FOR SHARE，
-    // 避免「先 FOR SHARE、交易內再 UPDATE 同一列」在兩個選委同時送出編輯時互相等待造成死結。
+    // 把投票開放（D7-3）。這裡在真正寫入前用 FOR NO KEY UPDATE 重讀一次：因為這個交易
+    // 接下來就是對 Election 這一列本身寫入（Prisma 的 UPDATE 本來就只取 FOR NO KEY
+    // UPDATE），用 FOR NO KEY UPDATE 而不是 castBallot 那種 FOR SHARE，避免「先 FOR
+    // SHARE、交易內再 UPDATE 同一列」在兩個選委同時送出編輯時互相等待造成死結；
+    // FOR NO KEY UPDATE 自己跟自己互斥，一樣序列化、沒有死結。
+    // 不要升級到 FOR UPDATE：importRoster 對 Voter upsert 的外鍵檢查會對 Election
+    // 取 FOR KEY SHARE 並持有整個交易，FOR KEY SHARE 只跟 FOR UPDATE 衝突、跟
+    // FOR NO KEY UPDATE 相容，選 FOR UPDATE 會讓這裡跟著卡到交易逾時（見 P7 反例，
+    // tests/integration/race.test.ts）。
     const [locked] = await tx.$queryRaw<{ status: string }[]>`
-      SELECT status FROM "Election" WHERE id = ${electionId} FOR UPDATE
+      SELECT status FROM "Election" WHERE id = ${electionId} FOR NO KEY UPDATE
     `;
     if (!locked) return { ok: false as const, error: "找不到選舉" };
     if (LOCKED_STATUSES.has(locked.status)) {
