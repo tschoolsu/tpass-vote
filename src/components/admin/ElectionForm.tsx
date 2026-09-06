@@ -80,6 +80,20 @@ export function ElectionForm({
     Number(sv?.maxChoices ?? initial?.maxChoices ?? 1),
   );
 
+  // kindValue／maxChoicesValue 的 useState 初始值只在第一次掛載時讀一次 sv，送出失敗後
+  // useActionState 換了新的 state／sv，元件沒有重新掛載，這兩個 state 不會跟著更新
+  // ——連記警語（下方）就可能拿著送出前的舊值判斷。這裡在 render 期間偵測 sv 換了新物件
+  // 就同步重設，而不是用 effect（避免多一次多餘的 commit，見 React：Adjusting state
+  // when a prop changes）。
+  const [prevSv, setPrevSv] = useState(sv);
+  if (sv !== prevSv) {
+    setPrevSv(sv);
+    if (sv) {
+      if (sv.kind) setKindValue(sv.kind as ElectionFormValues["kind"]);
+      setMaxChoicesValue(Number(sv.maxChoices ?? 1));
+    }
+  }
+
   useEffect(() => {
     if (mode !== "create" || slugEdited || !titleValue.trim()) return;
     if (slugRef.current) slugRef.current.value = suggestSlug(titleValue, kindValue);
@@ -186,7 +200,10 @@ export function ElectionForm({
           <p className="mt-1 text-xs font-medium text-muted-foreground">
             學生代表採單記不可讓渡（§13），只能填 1。
           </p>
-          {kindValue !== "grade_rep" && maxChoicesValue > 1 && (
+          {/* fe.maxChoices 已經是伺服器判定的錯誤（含新加的複數席次全額連記擋下），
+              此時再疊一則 role="alert" 的提醒，螢幕閱讀器會唸兩次，且對已經定案的
+              錯誤沒有額外資訊，所以只在沒有伺服器錯誤時顯示這則「先提醒你想一下」。 */}
+          {!fe.maxChoices && kindValue !== "grade_rep" && maxChoicesValue > 1 && (
             <p role="alert" className="mt-1 font-mono text-xs font-bold text-destructive">
               每票可圈選多人＝連記投票，年級代表選舉依選罷法 §13 必須為 1
             </p>
