@@ -1,6 +1,7 @@
 // 資安測試（黑箱層）：對真正跑起來的 production server 發 HTTP 請求。
 // 這一層測的是「沒有 server action 可以呼叫的攻擊者，從外面看得到什麼」。
 import { describe, it, expect, beforeAll } from "vitest";
+import http from "node:http";
 import { prisma, resetDb } from "../helpers/db";
 import { APP_URL } from "../helpers/env";
 import { ADMIN, VOTER_A, VOTER_B, MODERATOR } from "../helpers/session";
@@ -176,6 +177,43 @@ describe("檔案端點的邊界", () => {
     });
     expect(res.status).toBe(415);
   });
+
+  it("D6-2：Content-Length 超過上限就先 413，不等 body 讀完（1 秒內回應）", async () => {
+    await prisma.election.update({ where: { id: electionId }, data: { status: "registration" } });
+    const url = new URL(`${APP_URL}/api/upload`);
+    const cookie = cookieHeader(await signTestToken(CAND));
+
+    const start = performance.now();
+    const req = http.request({
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname,
+      method: "POST",
+      headers: {
+        "Content-Type": "multipart/form-data; boundary=----d6boundary",
+        "Content-Length": String(50 * 1024 * 1024), // 50MB，遠超單檔 10MB 上限
+        Cookie: cookie,
+      },
+    });
+    try {
+      const status = await new Promise<number>((resolve, reject) => {
+        req.on("response", (res) => {
+          resolve(res.statusCode!);
+          res.resume();
+        });
+        req.on("error", reject);
+        // 只送一小段 body、刻意不送完（也不呼叫 req.end()）——現況是先
+        // `request.formData()` 把整包讀完才檢查大小，所以會一直等我們把
+        // 宣告的 50MB 送完，1 秒內等不到回應；修好後應該連 body 都不用讀就先 413。
+        req.write(Buffer.alloc(1024));
+      });
+      const wallMs = performance.now() - start;
+      expect(status).toBe(413);
+      expect(wallMs).toBeLessThan(1000);
+    } finally {
+      req.destroy();
+    }
+  }, 5_000);
 });
 
 describe("CSV 公式注入防護（roster／disclosures 的自由文字欄位）", () => {

@@ -18,6 +18,9 @@ const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
 // 公開大頭照只收圖片：這個檔會被 /api/photos/[id] 公開吐出去渲染，不能是 pdf 等非圖片類型。
 const ALLOWED_PHOTO_MIME = ["image/jpeg", "image/png", "image/webp"];
+// Content-Length 提早擋檢查用：單檔上限之外再留一點 multipart 表單本身（boundary、
+// 欄位名稱、electionId/kind 等欄位）的餘裕，避免把合法上傳誤判為超大請求。
+const MAX_CONTENT_LENGTH_BYTES = 11 * 1024 * 1024;
 const UPLOAD_KINDS = ["attachment", "photo"] as const;
 type UploadKind = (typeof UPLOAD_KINDS)[number];
 
@@ -57,6 +60,14 @@ export async function POST(request: Request) {
   const session = await tpass.getSession();
   if (!session) {
     return NextResponse.json({ error: "unauthenticated" }, { status: 401 });
+  }
+
+  // 在讀 body 之前先看 Content-Length：遠超上限的請求直接 413，不讓伺服器把整包
+  // multipart 讀進記憶體（單一使用者用一個大請求就能推高數百 MB RSS）。缺 header
+  // 時（例如 chunked transfer）照舊往下走，靠既有的 file.size 檢查把關。
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null && Number(contentLength) > MAX_CONTENT_LENGTH_BYTES) {
+    return NextResponse.json({ error: "file too large" }, { status: 413 });
   }
 
   const form = await request.formData();
