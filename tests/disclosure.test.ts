@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildDisclosures, verifyDisclosures, type DisclosureEntry } from "@/lib/disclosure";
-import { tallyBallots, type TallyInput } from "@/lib/tally";
+import { tallyBallots, type TallyInput, type TallyResult } from "@/lib/tally";
 import type { BallotPlain } from "@/lib/ballot-crypto";
 
 const E = "election-1";
@@ -124,5 +124,42 @@ describe("verifyDisclosures", () => {
       e.kind === "choose" ? { ...e, candidateIds: ["a", "b"] } : e,
     );
     expect(verifyDisclosures(tampered, codes.length, results, 1)).toBe("max-choices");
+  });
+});
+
+// D4-3：disclosure 端的 well-formed 判定曾比 tally.ts 寬鬆，讓「有效票數對得上、
+// 但沒有加給任何候選人（或票數被灌水）」的自洽假結果騙過 verifyDisclosures。
+// 這裡直接構造 results + entries，不經過 tallyBallots，隔離出 well-formed 這一項判定本身。
+describe("verifyDisclosures 的 well-formed 判定必須與 tally.ts 一致（D4-3）", () => {
+  const fakeResults = (votesA: number): TallyResult => ({
+    mode: "choose",
+    totalBallots: 1,
+    validCount: 1,
+    blankCount: 0,
+    invalidCount: 0,
+    rosterCount: 10,
+    turnoutPct: 10,
+    candidates: [
+      { candidateId: "a", votes: votesA, disagree: 0, elected: false, tied: false },
+      { candidateId: "b", votes: 0, disagree: 0, elected: false, tied: false },
+      { candidateId: "c", votes: 0, disagree: 0, elected: false, tied: false },
+    ],
+    hasTie: false,
+  });
+
+  it("空 candidateIds 不應被當有效票收下", () => {
+    const entries: DisclosureEntry[] = [{ code: code(1), kind: "choose", candidateIds: [] }];
+    expect(verifyDisclosures(entries, 1, fakeResults(0), 1)).not.toBeNull();
+  });
+
+  it("單張票內重複 candidateId 不應被當有效票收下", () => {
+    const entries: DisclosureEntry[] = [{ code: code(1), kind: "choose", candidateIds: ["a", "a"] }];
+    // maxChoices=2：刻意不觸發既有的「超額」檢查，隔離出重複圈選這一項
+    expect(verifyDisclosures(entries, 1, fakeResults(2), 2)).not.toBeNull();
+  });
+
+  it("空 approvals 不應被當有效票收下", () => {
+    const entries: DisclosureEntry[] = [{ code: code(1), kind: "approval", approvals: {} }];
+    expect(verifyDisclosures(entries, 1, fakeResults(0), 1)).not.toBeNull();
   });
 });

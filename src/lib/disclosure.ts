@@ -15,7 +15,7 @@
 // 造假結果的防線因此完全落在「兩位選委各自獨立開票比對」（docs/election-sop.md）。
 
 import type { BallotPlain } from "@/lib/ballot-crypto";
-import type { TallyResult } from "@/lib/tally";
+import { isWellFormedChoice, type TallyResult } from "@/lib/tally";
 
 export interface DisclosureEntry {
   code: string; // 12 碼可回溯代碼
@@ -60,25 +60,16 @@ function toEntry(
   if (choice.type === "blank") return { code, kind: "blank" };
 
   if (ballotMode === "choose") {
-    if (choice.type !== "choose") return { code, kind: "invalid" };
-    const ids = choice.candidateIds;
-    const unique = new Set(ids);
-    const wellFormed =
-      Array.isArray(ids) &&
-      ids.length >= 1 &&
-      ids.length <= maxChoices &&
-      unique.size === ids.length &&
-      ids.every((id) => idSet.has(id));
-    return wellFormed ? { code, kind: "choose", candidateIds: [...ids] } : { code, kind: "invalid" };
+    if (choice.type !== "choose" || !isWellFormedChoice(choice, idSet, maxChoices)) {
+      return { code, kind: "invalid" };
+    }
+    return { code, kind: "choose", candidateIds: [...choice.candidateIds] };
   }
 
-  if (choice.type !== "approval") return { code, kind: "invalid" };
-  const entries = Object.entries(choice.approvals ?? {});
-  const wellFormed =
-    entries.length >= 1 && entries.every(([id, v]) => idSet.has(id) && typeof v === "boolean");
-  return wellFormed
-    ? { code, kind: "approval", approvals: Object.fromEntries(entries) }
-    : { code, kind: "invalid" };
+  if (choice.type !== "approval" || !isWellFormedChoice(choice, idSet, maxChoices)) {
+    return { code, kind: "invalid" };
+  }
+  return { code, kind: "approval", approvals: { ...choice.approvals } };
 }
 
 export type DisclosureMismatch =
@@ -87,7 +78,8 @@ export type DisclosureMismatch =
   | "duplicate-code"
   | "class-count"
   | "votes"
-  | "max-choices";
+  | "max-choices"
+  | "malformed";
 
 /**
  * 交叉驗證：明細必須與票匭張數、以及選委提交的計票結果完全自洽。
@@ -116,6 +108,7 @@ export function verifyDisclosures(
     votes.set(c.candidateId, 0);
     disagrees.set(c.candidateId, 0);
   }
+  const idSet = new Set(votes.keys());
 
   for (const e of entries) {
     if (e.kind === "blank") {
@@ -125,14 +118,19 @@ export function verifyDisclosures(
     } else if (e.kind === "choose") {
       const ids = e.candidateIds ?? [];
       if (ids.length > maxChoices) return "max-choices";
-      for (const id of ids) {
-        if (!votes.has(id)) return "codes"; // 明細出現不在本場名單的候選人
-        votes.set(id, votes.get(id)! + 1);
+      if (!ids.every((id) => idSet.has(id))) return "codes"; // 明細出現不在本場名單的候選人
+      if (!isWellFormedChoice({ type: "choose", candidateIds: ids }, idSet, maxChoices)) {
+        return "malformed"; // 空白圈選或單張票內重複圈選，不是有效票
       }
+      for (const id of ids) votes.set(id, votes.get(id)! + 1);
       valid++;
     } else {
-      for (const [id, agree] of Object.entries(e.approvals ?? {})) {
-        if (!votes.has(id)) return "codes";
+      const approvals = e.approvals ?? {};
+      if (!Object.keys(approvals).every((id) => idSet.has(id))) return "codes";
+      if (!isWellFormedChoice({ type: "approval", approvals }, idSet, maxChoices)) {
+        return "malformed"; // 沒有任何候選人表態，不是有效票
+      }
+      for (const [id, agree] of Object.entries(approvals)) {
         if (agree) votes.set(id, votes.get(id)! + 1);
         else disagrees.set(id, disagrees.get(id)! + 1);
       }
@@ -157,4 +155,5 @@ export const DISCLOSURE_MISMATCH_MESSAGE: Record<DisclosureMismatch, string> = {
   "class-count": "選票明細的有效／廢票／無效票張數與計票結果不符",
   votes: "選票明細逐票加總的得票數與計票結果不符",
   "max-choices": "選票明細出現超過可圈選人數的選票",
+  malformed: "選票明細出現空白圈選、重複圈選或無人表態卻標記為有效票",
 };

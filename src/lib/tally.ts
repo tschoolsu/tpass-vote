@@ -7,7 +7,7 @@
 // - 同額/不足額（approval）：每位候選人「同意/不同意」，同意 > 不同意才當選。
 // - 廢票：明確投廢票（blank）與解不開/不合規的票（invalid）分開計，都算投票率。
 
-import type { BallotPlain } from "@/lib/ballot-crypto";
+import type { BallotChoice, BallotPlain } from "@/lib/ballot-crypto";
 
 export interface TallyInput {
   electionId: string;
@@ -39,6 +39,29 @@ export interface TallyResult {
   hasTie: boolean;
 }
 
+/**
+ * 單張票的 well-formed 判定：choose／approval 兩種模式各自的合規條件。
+ * tally.ts（計票）與 disclosure.ts（明細公告）共用同一份，兩處判定不得各寫一套
+ * ——否則能構造「有效票數對得上、但沒加給任何候選人」的自洽假結果。
+ *
+ * - choose：1 ≤ 圈選數 ≤ maxChoices，不重複，且都是本場候選人。
+ * - approval：至少一位候選人表態，且都是本場候選人、值為布林。
+ */
+export function isWellFormedChoice(
+  choice: Exclude<BallotChoice, { type: "blank" }>,
+  idSet: Set<string>,
+  maxChoices: number,
+): boolean {
+  if (choice.type === "choose") {
+    const ids = choice.candidateIds;
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > maxChoices) return false;
+    const unique = new Set(ids);
+    return unique.size === ids.length && ids.every((id) => idSet.has(id));
+  }
+  const entries = Object.entries(choice.approvals ?? {});
+  return entries.length >= 1 && entries.every(([id, v]) => idSet.has(id) && typeof v === "boolean");
+}
+
 export function tallyBallots(input: TallyInput): TallyResult {
   const { electionId, ballotMode, seats, maxChoices, candidateIds, plaintexts, rosterCount } =
     input;
@@ -61,38 +84,18 @@ export function tallyBallots(input: TallyInput): TallyResult {
       continue;
     }
     if (ballotMode === "choose") {
-      if (choice.type !== "choose") {
+      if (choice.type !== "choose" || !isWellFormedChoice(choice, idSet, maxChoices)) {
         invalidCount++;
         continue;
       }
-      const ids = choice.candidateIds;
-      const unique = new Set(ids);
-      const wellFormed =
-        Array.isArray(ids) &&
-        ids.length >= 1 &&
-        ids.length <= maxChoices &&
-        unique.size === ids.length &&
-        ids.every((id) => idSet.has(id));
-      if (!wellFormed) {
-        invalidCount++;
-        continue;
-      }
-      for (const id of ids) votes.set(id, votes.get(id)! + 1);
+      for (const id of choice.candidateIds) votes.set(id, votes.get(id)! + 1);
       validCount++;
     } else {
-      if (choice.type !== "approval") {
+      if (choice.type !== "approval" || !isWellFormedChoice(choice, idSet, maxChoices)) {
         invalidCount++;
         continue;
       }
-      const entries = Object.entries(choice.approvals ?? {});
-      const wellFormed =
-        entries.length >= 1 &&
-        entries.every(([id, v]) => idSet.has(id) && typeof v === "boolean");
-      if (!wellFormed) {
-        invalidCount++;
-        continue;
-      }
-      for (const [id, agree] of entries) {
+      for (const [id, agree] of Object.entries(choice.approvals)) {
         if (agree) votes.set(id, votes.get(id)! + 1);
         else disagrees.set(id, disagrees.get(id)! + 1);
       }
