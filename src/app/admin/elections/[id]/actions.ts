@@ -17,12 +17,27 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 // 開票私鑰永不上傳伺服器：這裡只收公鑰，看起來像私鑰的欄位一律直接拒絕，不「先存起來以後再說」。
 const PRIVATE_JWK_FIELDS = ["d", "p", "q", "dp", "dq", "qi"] as const;
 
+// 收票端 isValidCiphertextShape（src/lib/ballot-crypto.ts）硬性要求 ek 剛好 256 bytes，
+// 也就是只認 RSA-2048。這裡若放行別的模數長度，金鑰存進去之後每一張票都會被收票端
+// 拒收，而金鑰又不可覆寫——只能整場重辦。base64url 解碼後長度必須剛好是 256 bytes
+// （2048 bit÷8），刻意不接受「去掉前導 0」的鬆綁，因為 WebCrypto 匯出的 2048 bit JWK
+// n 就是 256 bytes，多一 byte 少一 byte 都代表模數長度不對。
+const RSA_2048_MODULUS_BYTES = 256;
+
+function base64UrlByteLength(s: string): number {
+  const padded = s.length % 4 === 0 ? s : s + "=".repeat(4 - (s.length % 4));
+  return Buffer.from(padded, "base64url").length;
+}
+
 function isPublicOnlyRsaJwk(jwk: unknown): jwk is JsonWebKey {
   if (!jwk || typeof jwk !== "object") return false;
   const o = jwk as Record<string, unknown>;
   if (o.kty !== "RSA") return false;
   if (typeof o.n !== "string" || typeof o.e !== "string") return false;
   if (PRIVATE_JWK_FIELDS.some((f) => f in o)) return false;
+  if (o.e !== "AQAB") return false;
+  if (typeof o.alg === "string" && o.alg !== "RSA-OAEP-256") return false;
+  if (base64UrlByteLength(o.n) !== RSA_2048_MODULUS_BYTES) return false;
   return true;
 }
 
@@ -35,7 +50,10 @@ export async function savePublicKey(
 
   if (shares !== 1 && shares !== 2) return { ok: false, error: "分持份數只能是 1 或 2" };
   if (!isPublicOnlyRsaJwk(publicKeyJwk)) {
-    return { ok: false, error: "金鑰格式不正確或疑似包含私鑰內容，已拒絕儲存" };
+    return {
+      ok: false,
+      error: "金鑰格式不正確、疑似包含私鑰內容，或開票金鑰必須是 RSA-2048，已拒絕儲存",
+    };
   }
 
   const election = await prisma.election.findUnique({ where: { id: electionId } });

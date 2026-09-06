@@ -323,6 +323,30 @@ describe("選票完整性", () => {
     expect(stored.tallyPublicKeyJwk).toBeNull();
   });
 
+  it("開票金鑰必須是 RSA-2048：模數太短的公鑰在存檔當下就被擋", async () => {
+    const created = await makeElection({ slug: "key-modulus" });
+    const id = created.electionId!;
+
+    // 1024 bit：格式跟正常公鑰一模一樣（kty/n/e/alg 齊全），差別只在模數長度。
+    const weakPair = await globalThis.crypto.subtle.generateKey(
+      { name: "RSA-OAEP", modulusLength: 1024, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["encrypt", "decrypt"],
+    );
+    const weakJwk = await globalThis.crypto.subtle.exportKey("jwk", weakPair.publicKey);
+    const r = await as(ADMIN, () => savePublicKey(id, weakJwk, 1));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("2048");
+
+    // 2048 bit：正常放行，且沒有因為上面那次失敗嘗試而把金鑰鎖死。
+    const { publicKeyJwk: okJwk } = await generateTallyKeyPair();
+    const r2 = await as(ADMIN, () => savePublicKey(id, okJwk, 1));
+    expect(r2.ok).toBe(true);
+
+    const stored = await prisma.election.findUniqueOrThrow({ where: { id } });
+    expect(stored.tallyPublicKeyJwk).not.toBeNull();
+  }, 30_000);
+
   it("資料庫全洩漏也看不出誰投給誰：彌封後連結不存在", async () => {
     const slug2 = "leak-test";
     const created = await makeElection({ slug: slug2 });
