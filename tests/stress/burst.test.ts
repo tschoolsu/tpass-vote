@@ -189,22 +189,31 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const voter = await prisma.voter.findUniqueOrThrow({
       where: { electionId_email: { electionId, email: victim.email } },
     });
+    // voterId 在 schema 是 @unique，一人多票在 DB 層就不可能發生；一次查詢兼查「有沒有
+    // 票」與「密文是什麼」即可，不必再另外 count 同一列確認「不超過一張」。
     const ballot = await prisma.encryptedBallot.findUnique({ where: { voterId: voter.id } });
-    const mine = await prisma.encryptedBallot.count({ where: { voterId: voter.id } });
-    expect(mine, "同一人留下超過一張票＝一人一票被打破").toBe(1);
+    expect(ballot, "同一人重投 200 次，票匭裡卻連一張都沒有").not.toBeNull();
     expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(VOTERS);
     expect(rejected, "有請求連 HTTP 層都沒回應").toHaveLength(0);
     expect(httpFailed, "castBallot 的 $transaction 在高併發同一人重投下出現 deadlock/serialization failure（伺服器回了非 200）").toHaveLength(0);
 
-    // 200 個並發請求全部合法（同一個已在名冊內的人、選舉狀態全程不變），伺服器該對每一個
-    // 都回 ok；只看 mine===1 抓不到「伺服器回 ok，但那次寫入其實被吃掉、留在票匭裡的是
-    // 別次請求的密文」——這裡直接核對：最後留下的密文必須屬於某個回 ok 的請求送出的值。
-    const okCiphertexts = new Set(
-      jobs.filter(
-        (_, i) => settled[i].status === "fulfilled" && (settled[i] as PromiseFulfilledResult<{ ok: boolean }>).value.ok,
-      ),
+    // 200 個並發請求全部合法（同一個已在名冊內的人、選舉狀態全程不變），業務層沒有理由
+    // 拒絕任何一個，所以 ok 的數量該剛好等於送出數——用確定性的 toBe 而不是
+    // toBeGreaterThan(0)，才擋得住「半數合法重投被錯誤拒絕」這類回歸（>0 對這種回歸無感）。
+    //
+    // 這條斷言辨識不出「伺服器回 ok、但那次寫入其實被悄悄丟棄」：last-write-wins 下，
+    // 只要曾經有任何一次 ok 的請求真的寫入過，票匭裡留下的密文就必然屬於某個 ok 請求，
+    // 這裡沒辦法逐一核對「每一個回 ok 的請求都真的寫進去了」，下面只驗證這個較弱的性質。
+    const okResults = settled.filter((r) => r.status === "fulfilled" && r.value.ok);
+    expect(okResults.length, "同一人重投的合法請求裡，有的被伺服器業務層錯誤拒絕").toBe(
+      SAME_PERSON_BURST,
     );
-    expect(okCiphertexts.size, "200 個合法請求裡沒有任何一個回 ok").toBeGreaterThan(0);
+    const okCiphertexts = new Set(
+      jobs.filter((_, i) => {
+        const r = settled[i];
+        return r.status === "fulfilled" && r.value.ok;
+      }),
+    );
     expect(
       ballot ? okCiphertexts.has(ballot.ciphertext) : false,
       "票匭裡留下的密文不屬於任何一個回 ok 的請求——伺服器說贏的那次其實沒真的寫進去",
