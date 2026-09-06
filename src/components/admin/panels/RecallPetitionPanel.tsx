@@ -7,6 +7,7 @@ import { Badge, cn } from "tpass-ui";
 import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
 import { KeyGenPanel } from "@/components/admin/KeyGenPanel";
 import { Markdown } from "@/components/public/Markdown";
+import { formatDateTime } from "@/components/public/shared";
 import { establishRecall, rejectRecall } from "@/app/admin/elections/[id]/recall/actions";
 
 interface CandidateMember {
@@ -122,7 +123,7 @@ export function RecallPetitionPanel({
                 {s.name && <p className="truncate font-mono text-[11px] text-muted-foreground">{s.email}</p>}
               </div>
               <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
-                {s.createdAt.toLocaleString("zh-TW")}
+                {formatDateTime(s.createdAt)}
               </span>
             </div>
           ))}

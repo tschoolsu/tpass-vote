@@ -1,6 +1,7 @@
 // 選舉建立／編輯表單共用的驗證與小工具。new/actions.ts 與 [id]/edit/actions.ts 共用同一份規則，
 // 避免兩處零散各寫一份 zod schema 導致新增與編輯的驗證漂移。
 import { z } from "zod";
+import { SITE_TIMEZONE } from "@/config/site";
 
 export const ELECTION_KINDS = ["leader", "grade_rep", "other"] as const;
 export type ElectionKind = (typeof ELECTION_KINDS)[number];
@@ -22,8 +23,54 @@ const MIN_VOTING_MS = MIN_VOTING_HOURS * 3_600_000;
 const blankToUndefined = (v: unknown) =>
   v === null || v === undefined || (typeof v === "string" && v.trim() === "") ? undefined : v;
 
-// datetime-local 的 <input> 值是空字串或 "YYYY-MM-DDTHH:mm"；空字串視為未設定。
-const optionalDatetimeLocal = z.preprocess(blankToUndefined, z.coerce.date().optional());
+// datetime-local 的 <input> 值是空字串或 "YYYY-MM-DDTHH:mm"（無時區資訊的「牆上時間」）。
+// 選委腦中想的一律是台北時間，不是 server 跑在哪個時區——不能用 z.coerce.date()／
+// new Date(str) 直接吃，那是用 server 的 process TZ 解讀。這裡固定以 SITE_TIMEZONE 解讀。
+
+/** 給定一個瞬間，回傳 timeZone 在該瞬間的 UTC 偏移（分鐘，東半球為正）。 */
+function tzOffsetMinutes(instant: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+    .formatToParts(instant)
+    .reduce<Record<string, string>>((acc, p) => {
+      acc[p.type] = p.value;
+      return acc;
+    }, {});
+  const asIfUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  );
+  return (asIfUtc - instant.getTime()) / 60_000;
+}
+
+/** 把 datetime-local 的「YYYY-MM-DDTHH:mm」牆上時間，以 timeZone 的觀點解讀成正確的 UTC 瞬間。 */
+export function parseDatetimeLocalInTimeZone(value: string, timeZone: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!m) return new Date(NaN);
+  const [, y, mo, d, hh, mi] = m;
+  const naiveUtcMs = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mi));
+  // Asia/Taipei 全年無 DST，偏移是常數，用哪個瞬間量測都一樣；一次修正即可得到精確瞬間。
+  const offsetMin = tzOffsetMinutes(new Date(naiveUtcMs), timeZone);
+  return new Date(naiveUtcMs - offsetMin * 60_000);
+}
+
+const optionalDatetimeLocal = z.preprocess((v) => {
+  const val = blankToUndefined(v);
+  if (val === undefined || typeof val !== "string") return val;
+  return parseDatetimeLocalInTimeZone(val, SITE_TIMEZONE);
+}, z.date().optional());
 
 export const electionFormSchema = z
   .object({
@@ -144,9 +191,23 @@ export function parseElectionForm(
   return { ok: true, data: parsed.data };
 }
 
-// <input type="datetime-local"> 需要的字串格式（本地時間，無時區）。
+// <input type="datetime-local"> 需要的字串格式（無時區）。用 SITE_TIMEZONE 回填，不是
+// server 的 process TZ／getHours() 那種本地時間，否則跟 parseDatetimeLocalInTimeZone 對不上。
 export function toDatetimeLocalValue(d: Date | null | undefined): string {
   if (!d) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: SITE_TIMEZONE,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+    .formatToParts(d)
+    .reduce<Record<string, string>>((acc, p) => {
+      acc[p.type] = p.value;
+      return acc;
+    }, {});
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }

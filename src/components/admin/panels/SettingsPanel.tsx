@@ -11,6 +11,7 @@ import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
 import { RedoElectionButton } from "@/components/admin/RedoElectionButton";
 import { updateElection } from "@/app/admin/elections/[id]/edit/actions";
 import { removeVoter } from "@/app/admin/elections/[id]/roster/actions";
+import { formatDateTime } from "@/components/public/shared";
 
 interface VoterRow {
   id: string;
@@ -20,7 +21,7 @@ interface VoterRow {
 }
 
 function fmt(d: Date | null): string {
-  return d ? d.toLocaleString("zh-TW") : "未設定";
+  return d ? formatDateTime(d) : "未設定";
 }
 
 export function SettingsPanel({

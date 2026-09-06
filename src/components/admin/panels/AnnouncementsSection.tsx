@@ -12,6 +12,7 @@ import { Megaphone, Plus, ChevronDown, ChevronRight, Info } from "lucide-react";
 import { Badge, Button } from "tpass-ui";
 import { CopyLinkButton } from "@/components/public/CopyLinkButton";
 import { AnnouncementEditor } from "@/components/admin/AnnouncementEditor";
+import { formatDateTime } from "@/components/public/shared";
 
 export interface AnnouncementRow {
   id: string;
@@ -31,7 +32,7 @@ function shiftDays(d: Date | null, days: number): Date | null {
 }
 
 function fmt(d: Date | null): string {
-  return d ? d.toLocaleString("zh-TW") : "未設定投票期程";
+  return d ? formatDateTime(d) : "未設定投票期程";
 }
 
 export function AnnouncementsSection({
@@ -185,7 +186,7 @@ export function AnnouncementsSection({
                   </Link>
                   <p className="font-mono text-[11px] text-muted-foreground">
                     {a.legalTag && <>{HISTORY_TAG_LABEL[a.legalTag] ?? a.legalTag}・</>}
-                    {a.publishedAt!.toLocaleString("zh-TW")}
+                    {formatDateTime(a.publishedAt)}
                   </p>
                 </div>
                 <CopyLinkButton url={shareUrl(a.id)} size="sm" />

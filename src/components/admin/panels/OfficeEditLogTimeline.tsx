@@ -1,6 +1,7 @@
 // 職務編輯記錄時間軸（純展示）。每筆顯示誰、何時、動作，展開看逐欄位 from→to。
 import { Badge } from "tpass-ui";
 import { SYSTEM_EDITOR } from "@/lib/office-upsert";
+import { formatDateTime } from "@/components/public/shared";
 
 const ACTION_LABEL: Record<string, string> = {
   create: "自動建立",
@@ -38,7 +39,7 @@ function renderValue(v: unknown): string {
     );
   }
   if (typeof v === "boolean") return v ? "是" : "否";
-  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v)) return new Date(v).toLocaleString("zh-TW");
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v)) return formatDateTime(new Date(v));
   return String(v);
 }
 
@@ -66,7 +67,7 @@ export function OfficeEditLogTimeline({ logs }: { logs: OfficeEditLogRow[] }) {
               <span className="font-bold text-sm">{log.summary}</span>
             </div>
             <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-              {isSystem ? "系統（選舉公告）" : log.editorEmail} · {log.createdAt.toLocaleString("zh-TW")}
+              {isSystem ? "系統（選舉公告）" : log.editorEmail} · {formatDateTime(log.createdAt)}
             </p>
             {Object.keys(diff).length > 0 && (
               <ul className="mt-2 flex flex-col gap-1">

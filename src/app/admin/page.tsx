@@ -7,6 +7,7 @@ import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
 import { STATUS_META, LINEAGE_LABEL, RECALL_KIND_META, type ElectionStatus } from "@/components/admin/status";
 import { ELECTION_KIND_LABEL, type ElectionKind } from "@/app/admin/elections/election-schema";
 import { restoreElection } from "@/app/admin/elections/[id]/actions";
+import { formatDateTime } from "@/components/public/shared";
 
 function KindBadges({ kind, lineage }: { kind: string; lineage: string | null }) {
   const kindMeta = kind === "recall" ? RECALL_KIND_META : { label: ELECTION_KIND_LABEL[kind as ElectionKind] ?? kind, badgeClass: "bg-card" };
@@ -116,7 +117,7 @@ export default async function AdminHomePage() {
                       <KindBadges kind={e.kind} lineage={e.lineage} />
                     </div>
                     <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                      /e/{e.slug} · 已於 {e.hiddenAt?.toLocaleString("zh-TW")} 刪除
+                      /e/{e.slug} · 已於 {formatDateTime(e.hiddenAt)} 刪除
                     </p>
                   </div>
                   <ConfirmActionButton

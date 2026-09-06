@@ -1,5 +1,6 @@
 // 公開端共用的純函式與標籤對照表。無 hooks、無 IO，server / client component 都能安全 import。
 // Tailwind class 一律寫死字面量（不用樣板字串組 class），否則 JIT 掃不到會漏樣式。
+import { SITE_TIMEZONE } from "@/config/site";
 
 export const STATUS_LABEL: Record<string, string> = {
   draft: "草稿",
@@ -72,6 +73,7 @@ export function formatDateTime(d: Date | string | null | undefined): string {
   if (!d) return "未定";
   const date = typeof d === "string" ? new Date(d) : d;
   return date.toLocaleString("zh-TW", {
+    timeZone: SITE_TIMEZONE,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

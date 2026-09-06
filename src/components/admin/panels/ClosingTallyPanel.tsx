@@ -10,6 +10,7 @@ import { Lock, CheckCircle2, ChevronDown, ChevronRight, Circle, AlertTriangle } 
 import { RedoElectionButton } from "@/components/admin/RedoElectionButton";
 import { Button, ConfirmDialog, cn } from "tpass-ui";
 import { TallyPanel } from "@/components/admin/panels/TallyPanel";
+import { formatDateTime } from "@/components/public/shared";
 
 type SubStepState = "done" | "current" | "pending";
 type SealResult =
@@ -163,7 +164,7 @@ export function ClosingTallyPanel({
         title="票匭已截止"
         description={
           votingEndsAt
-            ? `投票已於 ${votingEndsAt.toLocaleString("zh-TW")} 截止，票匭不再變動，等待彌封。`
+            ? `投票已於 ${formatDateTime(votingEndsAt)} 截止，票匭不再變動，等待彌封。`
             : "投票已截止，票匭不再變動，等待彌封。"
         }
         state="done"
@@ -177,7 +178,7 @@ export function ClosingTallyPanel({
       >
         {sealed ? (
           <p className="flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
-            已於 {sealedAt ? sealedAt.toLocaleString("zh-TW") : "?"} 由 {sealedBy ?? "?"} 彌封。
+            已於 {sealedAt ? formatDateTime(sealedAt) : "?"} 由 {sealedBy ?? "?"} 彌封。
           </p>
         ) : (
           <div className="flex flex-col gap-2">

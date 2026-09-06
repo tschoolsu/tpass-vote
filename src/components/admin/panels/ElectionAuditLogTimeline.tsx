@@ -1,6 +1,7 @@
 // 選舉稽核紀錄時間軸（純展示，唯讀）。陽春陳列：誰、何時、做了什麼、關鍵數字。
 // 不做篩選／分頁／匯出——量大時直接查資料庫。
 import { Badge } from "tpass-ui";
+import { formatDateTime } from "@/components/public/shared";
 
 const ACTION_LABEL: Record<string, string> = {
   advance_status: "狀態推進",
@@ -48,7 +49,7 @@ export function ElectionAuditLogTimeline({ logs }: { logs: ElectionAuditLogRow[]
               <span className="font-bold text-sm">{log.summary}</span>
             </div>
             <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-              {log.actorEmail} · {log.createdAt.toLocaleString("zh-TW")}
+              {log.actorEmail} · {formatDateTime(log.createdAt)}
             </p>
             {Object.keys(diff).length > 0 && (
               <ul className="mt-2 flex flex-col gap-1">

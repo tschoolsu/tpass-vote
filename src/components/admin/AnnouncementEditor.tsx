@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { Save, Megaphone, Pencil, Eye } from "lucide-react";
 import { Input, Textarea, Button, Badge, Label, cn, ConfirmDialog } from "tpass-ui";
 import { Markdown } from "@/components/public/Markdown";
+import { formatDateTime } from "@/components/public/shared";
 import {
   saveAnnouncementDraft,
   publishAnnouncement,
@@ -105,7 +106,7 @@ export function AnnouncementEditor({
         <h2 className="font-extrabold">{legalTagLabel ?? "一般公告"}</h2>
         {publishedAtState ? (
           <Badge className="bg-tone-green-badge text-tone-green-text">
-            已發布 {publishedAtState.toLocaleString("zh-TW")}
+            已發布 {formatDateTime(publishedAtState)}
           </Badge>
         ) : (
           <Badge className="bg-card">草稿</Badge>
