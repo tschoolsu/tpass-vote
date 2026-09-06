@@ -76,6 +76,9 @@ export function ElectionForm({
   const [kindValue, setKindValue] = useState<ElectionFormValues["kind"]>(
     (sv?.kind as ElectionFormValues["kind"] | undefined) ?? initial?.kind ?? "leader",
   );
+  const [maxChoicesValue, setMaxChoicesValue] = useState<number>(
+    Number(sv?.maxChoices ?? initial?.maxChoices ?? 1),
+  );
 
   useEffect(() => {
     if (mode !== "create" || slugEdited || !titleValue.trim()) return;
@@ -174,6 +177,7 @@ export function ElectionForm({
             min={1}
             required
             defaultValue={sv?.maxChoices ?? initial?.maxChoices ?? 1}
+            onChange={(e) => setMaxChoicesValue(Number(e.target.value))}
             className="mt-1"
           />
           {fe.maxChoices && (
@@ -182,6 +186,11 @@ export function ElectionForm({
           <p className="mt-1 text-xs font-medium text-muted-foreground">
             學生代表採單記不可讓渡（§13），只能填 1。
           </p>
+          {kindValue !== "grade_rep" && maxChoicesValue > 1 && (
+            <p role="alert" className="mt-1 font-mono text-xs font-bold text-destructive">
+              每票可圈選多人＝連記投票，年級代表選舉依選罷法 §13 必須為 1
+            </p>
+          )}
         </div>
       </div>
 

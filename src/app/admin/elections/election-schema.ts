@@ -136,6 +136,11 @@ export const electionFormSchema = z
   .refine((v) => v.kind !== "grade_rep" || v.maxChoices === 1, {
     message: "學生代表選舉採單記不可讓渡，可選人數只能是 1（選罷法 §13）",
     path: ["maxChoices"],
+  })
+  // 可選人數不能超過名額——超過席次的圈選數沒有意義（且非 grade_rep 類型沒有其他上限擋連記）。
+  .refine((v) => v.maxChoices <= v.seats, {
+    message: "可選人數不得超過名額（席次）",
+    path: ["maxChoices"],
   });
 
 export type ElectionFormValues = z.infer<typeof electionFormSchema>;
