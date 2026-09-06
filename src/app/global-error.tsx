@@ -8,10 +8,10 @@ import Link from "next/link";
 
 export default function GlobalError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  retry: () => void;
 }) {
   return (
     <html lang="zh-TW">
@@ -62,7 +62,7 @@ export default function GlobalError({
           <div style={{ marginTop: "1.25rem", display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
             <button
               type="button"
-              onClick={reset}
+              onClick={retry}
               style={{
                 border: "2px solid #111",
                 borderRadius: "0.75rem",

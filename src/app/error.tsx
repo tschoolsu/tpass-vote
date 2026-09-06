@@ -8,10 +8,10 @@ import { LinkButton } from "@/components/public/LinkButton";
 
 export default function Error({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  retry: () => void;
 }) {
   useEffect(() => {
     // 例外原文只進 console（＝主機 pm2 log），不進畫面：裡面可能有連線字串等內部細節。
@@ -38,7 +38,7 @@ export default function Error({
             </p>
           )}
           <div className="mt-6 flex flex-wrap gap-3">
-            <Button type="button" variant="primary" onClick={reset}>
+            <Button type="button" variant="primary" onClick={retry}>
               再試一次
             </Button>
             <LinkButton href="/">回首頁</LinkButton>
