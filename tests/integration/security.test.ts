@@ -347,6 +347,36 @@ describe("選票完整性", () => {
     expect(stored.tallyPublicKeyJwk).not.toBeNull();
   }, 30_000);
 
+  it("開票金鑰必須是 RSA-2048：把 1024 bit 模數補前導零湊成 256 bytes 也要被擋", async () => {
+    const created = await makeElection({ slug: "key-modulus-padded" });
+    const id = created.electionId!;
+
+    // 1024 bit 公鑰的 n 只有 128 bytes；在前面補 128 個 0 byte 湊成 256 bytes，
+    // 只看「解碼後長度是否等於 256」會被騙過，但實際模數長度仍是 1024 bit。
+    const weakPair = await globalThis.crypto.subtle.generateKey(
+      { name: "RSA-OAEP", modulusLength: 1024, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["encrypt", "decrypt"],
+    );
+    const weakJwk = await globalThis.crypto.subtle.exportKey("jwk", weakPair.publicKey);
+    const rawN = Buffer.from(weakJwk.n as string, "base64url");
+    expect(rawN.length).toBe(128);
+    const paddedN = Buffer.concat([Buffer.alloc(128, 0), rawN]).toString("base64url");
+    const evilJwk = { ...weakJwk, n: paddedN };
+
+    const r = await as(ADMIN, () => savePublicKey(id, evilJwk, 1));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("2048");
+
+    const stored = await prisma.election.findUniqueOrThrow({ where: { id } });
+    expect(stored.tallyPublicKeyJwk).toBeNull();
+
+    // 補救路徑：正常 2048 bit 金鑰仍應能正常存入（沒有被上面的攻擊嘗試鎖死）。
+    const { publicKeyJwk: okJwk } = await generateTallyKeyPair();
+    const r2 = await as(ADMIN, () => savePublicKey(id, okJwk, 1));
+    expect(r2.ok).toBe(true);
+  }, 30_000);
+
   it("資料庫全洩漏也看不出誰投給誰：彌封後連結不存在", async () => {
     const slug2 = "leak-test";
     const created = await makeElection({ slug: slug2 });
