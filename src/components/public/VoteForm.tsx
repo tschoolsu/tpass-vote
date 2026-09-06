@@ -8,6 +8,7 @@
 // 這一步的加密/送出邏輯本身沒有變，只是多了一個使用者必須主動確認的關卡。
 import * as React from "react";
 import { Loader2 } from "lucide-react";
+import { unstable_rethrow } from "next/navigation";
 import { Button, cn } from "tpass-ui";
 import { CandidateInfo, type PublicCandidate } from "@/components/public/CandidateCard";
 import { CopyLinkButton } from "@/components/public/CopyLinkButton";
@@ -15,6 +16,7 @@ import { Markdown } from "@/components/public/Markdown";
 import { candidateDisplayName, ballotModeExplainer } from "@/components/public/shared";
 import { encryptBallot, type BallotChoice } from "@/lib/ballot-crypto";
 import { castBallot, type CastResult } from "@/app/e/[slug]/vote/actions";
+import { draftStorageKey, serializeDraft, parseDraft, type VoteDraft } from "@/lib/vote-draft";
 
 interface Props {
   slug: string;
@@ -54,6 +56,29 @@ export function VoteForm({
   const [result, setResult] = React.useState<CastResult | null>(null);
   // 可回溯代碼只在這一刻存在於瀏覽器裡：伺服器收不到它，重整頁面也拿不回來。
   const [receipt, setReceipt] = React.useState<string | null>(null);
+  const [restoredNotice, setRestoredNotice] = React.useState(false);
+
+  // 頁面停留太久導致 token 過期時，castBallot 內的 requireSession 會導去登入頁，
+  // 讓這個元件被整個卸載——選擇內容只活在 state 裡，導航一發生就沒了。
+  // 送出前把選擇存一份到 sessionStorage，登入完回到這頁時撿回來，不必重選。
+  React.useEffect(() => {
+    let draft: VoteDraft | null = null;
+    try {
+      draft = parseDraft(sessionStorage.getItem(draftStorageKey(slug)));
+    } catch {
+      draft = null;
+    }
+    if (!draft) return;
+    // 這是一次性、掛載時對外部儲存（sessionStorage）的同步，不是衍生狀態；
+    // 依賴陣列刻意留空，這幾行 setState 不會造成連鎖重render。
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setBlank(draft.blank);
+    setSelected(new Set(draft.selected));
+    setApprovals(draft.approvals);
+    setRestoredNotice(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function toggleCandidate(id: string) {
     setBlank(false);
@@ -126,6 +151,17 @@ export function VoteForm({
         ? { type: "choose", candidateIds: [...selected] }
         : { type: "approval", approvals };
 
+    // 送出前先把選擇存起來：castBallot 若因 token 過期觸發 redirect，這個元件會被
+    // 整個卸載，state 就沒了；重登回來時靠這份草稿還原，不必重選一次。
+    try {
+      sessionStorage.setItem(
+        draftStorageKey(slug),
+        serializeDraft({ blank, selected: [...selected], approvals }),
+      );
+    } catch {
+      // sessionStorage 不可用（無痕模式關閉站台資料等）就放棄還原，不影響本次送出。
+    }
+
     setSubmitting(true);
     try {
       // 代碼在這裡產生、封進密文一起送走。伺服器只拿得到密文，永遠算不出代碼——
@@ -136,9 +172,18 @@ export function VoteForm({
         setError(res.error);
         return;
       }
+      try {
+        sessionStorage.removeItem(draftStorageKey(slug));
+      } catch {
+        // 同上：拿不到就算了，不影響已經成功的投票。
+      }
       setReceipt(code);
       setResult(res);
-    } catch {
+    } catch (err) {
+      // castBallot 內的 requireSession 在 token 過期時會呼叫 redirect()，
+      // 這會以拋錯的方式離開 castBallot——不是投票失敗，是要導去登入頁重新整理 session，
+      // 必須原樣往上丟給 Next 處理，不能被這裡吞掉顯示成錯誤訊息。
+      unstable_rethrow(err);
       setError("投票失敗，請重新整理頁面再試");
     } finally {
       setSubmitting(false);
@@ -236,6 +281,11 @@ export function VoteForm({
   return (
     <form onSubmit={handleReview} className="flex flex-col gap-4">
       {modeBanner}
+      {restoredNotice && (
+        <p className="rounded-xl border-2 border-foreground/20 bg-muted px-4 py-2.5 text-sm font-bold">
+          已還原你剛才的選擇
+        </p>
+      )}
       {candidates.length === 0 ? (
         <p className="text-sm font-medium text-muted-foreground">目前沒有核准候選人。</p>
       ) : isRecall && target ? (
