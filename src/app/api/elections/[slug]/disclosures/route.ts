@@ -107,13 +107,22 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/elections/[s
 // 單筆查詢：投票人拿收據來核對自己那一票。POST body 帶 code，不是 query string。
 export async function POST(req: NextRequest, ctx: RouteContext<"/api/elections/[slug]/disclosures">) {
   const { slug } = await ctx.params;
-  const body = (await req.json().catch(() => null)) as { code?: unknown } | null;
-  const code = typeof body?.code === "string" ? body.code.trim().toLowerCase() : "";
-  if (!code) return NextResponse.json({ error: "code required" }, { status: 400 });
+
+  // 這條路由免登入，route handler 不吃 Next 的 serverActions.bodySizeLimit——
+  // 代碼只有 12 碼 hex，body 超過 1KB 一定不是正常請求，先看 Content-Length 擋掉，
+  // 不要為了一個註定沒用的 body 去 await req.json()（匿名端點被灌大 body 會把記憶體推爆）。
+  const contentLength = Number(req.headers.get("content-length") ?? "0");
+  if (contentLength > 1024) {
+    return NextResponse.json({ error: "payload too large" }, { status: 413 });
+  }
 
   const loaded = await loadElection(slug);
   if (!loaded) return NextResponse.json({ error: "not found" }, { status: 404 });
   const { entries, labels, sealedHash } = loaded;
+
+  const body = (await req.json().catch(() => null)) as { code?: unknown } | null;
+  const code = typeof body?.code === "string" ? body.code.trim().toLowerCase() : "";
+  if (!code) return NextResponse.json({ error: "code required" }, { status: 400 });
 
   // 存在性檢查一定要在條件請求判斷之前：ETag 只由 sealedHash＋code 組成，
   // sealedHash 本身透過 /sealed-box 公開可查，猜一個代碼配上就能拼出合法格式的

@@ -217,6 +217,16 @@ describe("彌封快照端點（§26-1 Ⅵ）", () => {
     expect(miss.status).toBe(404);
   });
 
+  it("收據查詢的 POST body 超過 1KB 直接 413，不讀完整個 body（代碼只有 12 碼 hex）", async () => {
+    const oversized = "a".repeat(2000);
+    const res = await post(`/api/elections/${slug}/disclosures`, { code: oversized });
+    expect(res.status).toBe(413);
+
+    // 不存在的 slug 也一樣先擋大 body，不會為了查一個註定查不到的選舉去解析整包 JSON。
+    const resMissingSlug = await post(`/api/elections/does-not-exist/disclosures`, { code: oversized });
+    expect(resMissingSlug.status).toBe(413);
+  });
+
   it("偽造的 If-None-Match 配不存在的代碼，仍要回 404——存在性檢查不能被快取命中蓋過", async () => {
     const e = await prisma.election.findFirstOrThrow({ where: { slug } });
     // sealedHash 本身透過 /sealed-box 端點公開可查，攻擊者能自己拼出 `"<sealedHash>-<猜的代碼>"`
