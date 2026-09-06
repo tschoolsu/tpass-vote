@@ -311,7 +311,12 @@ describe("D7-3 updateElection：狀態檢查與寫入不再跨交易", () => {
     await advanceTo(electionId, "campaigning");
   }, 90_000);
 
-  it("P7：importRoster 的 Voter upsert 對 Election 取的 FOR KEY SHARE，不該卡住 updateElection", async () => {
+  it("P7：slug 沒有變動時，importRoster 的 FOR KEY SHARE 不該卡住 updateElection", async () => {
+    // 這裡刻意送出跟現有 slug 相同的值：這是 updateElection 真正的常見路徑（表單預填
+    // 原 slug、選委沒去動它），此時 Prisma 的 UPDATE 不需要碰 slug 這個唯一鍵欄位，
+    // 停在 FOR NO KEY UPDATE 就夠，跟 FOR KEY SHARE 相容、不會被 importRoster 卡住。
+    // 反例（slug 真的變動時仍會卡住）見下一個測試——那不是鎖模式選錯，見
+    // edit/actions.ts 交易內的註解。
     const fkLock = await holdElectionLock(electionId, "key share");
     let settled = false;
     const form = new FormData();
@@ -330,6 +335,38 @@ describe("D7-3 updateElection：狀態檢查與寫入不再跨交易", () => {
         settled,
         "updateElection 被無關的 FOR KEY SHARE 卡住了，鎖模式選得比需要的強",
       ).toBe(true);
+      await fkLock.release();
+      const edited = await editing;
+      expect(edited.ok, edited.ok ? "" : edited.error).toBe(true);
+    } catch (e) {
+      await fkLock.abort();
+      await editing.catch(() => {});
+      throw e;
+    }
+  }, 60_000);
+
+  it("P7 反例：slug 真的變動時，updateElection 仍會被 FOR KEY SHARE 卡住——這是 Postgres 對唯一鍵欄位的鎖升級，不是鎖模式選錯", async () => {
+    // Postgres 的 heap_update 只要偵測到會寫入的欄位是唯一鍵（slug 是 @unique）且新值
+    // 真的不同，就會把這一列的 tuple lock 升級成排他等級，這發生在實際執行 UPDATE 的
+    // 那一刻，跟交易一開始用 SELECT ... FOR NO KEY UPDATE 或 FOR UPDATE 重讀狀態
+    // 無關——換成 FOR UPDATE 一樣救不了，因為衝突點在後面的 UPDATE 本身，不在前面
+    // 的 SELECT。所以這裡卡住是正確、預期的行為：等 importRoster 放手後，
+    // updateElection 照樣正確完成，不是死結、也沒有資料損毀。
+    const fkLock = await holdElectionLock(electionId, "key share");
+    let settled = false;
+    const form = new FormData();
+    form.set("title", "改個標題");
+    form.set("slug", "d7-edit-p7-changed");
+    form.set("kind", "other");
+    form.set("seats", "1");
+    form.set("maxChoices", "1");
+    const editing = as(MODERATOR, () => updateElection(electionId, null, form)).then((r) => {
+      settled = true;
+      return r;
+    });
+    try {
+      await settle();
+      expect(settled, "slug 真的變動時，這裡應該被 FOR KEY SHARE 卡住").toBe(false);
       await fkLock.release();
       const edited = await editing;
       expect(edited.ok, edited.ok ? "" : edited.error).toBe(true);
