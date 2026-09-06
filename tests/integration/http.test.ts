@@ -227,6 +227,25 @@ describe("彌封快照端點（§26-1 Ⅵ）", () => {
     expect(resMissingSlug.status).toBe(413);
   });
 
+  it("body 沒有 Content-Length（chunked 傳輸）一樣要被擋，不能靠缺 header 繞過大小檢查", async () => {
+    const oversized = "a".repeat(2_000_000);
+    // 用 ReadableStream 當 body：undici 量不出長度，會送 Transfer-Encoding: chunked
+    // 而不是 Content-Length——這是攻擊者不帶 Content-Length 就能重現的真實路徑。
+    const chunkedBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({ code: oversized })));
+        controller.close();
+      },
+    });
+    const res = await fetch(`${APP_URL}/api/elections/${slug}/disclosures`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: chunkedBody,
+      duplex: "half",
+    } as RequestInit);
+    expect(res.status).toBe(413);
+  });
+
   it("偽造的 If-None-Match 配不存在的代碼，仍要回 404——存在性檢查不能被快取命中蓋過", async () => {
     const e = await prisma.election.findFirstOrThrow({ where: { slug } });
     // sealedHash 本身透過 /sealed-box 端點公開可查，攻擊者能自己拼出 `"<sealedHash>-<猜的代碼>"`

@@ -111,8 +111,13 @@ export async function POST(req: NextRequest, ctx: RouteContext<"/api/elections/[
   // 這條路由免登入，route handler 不吃 Next 的 serverActions.bodySizeLimit——
   // 代碼只有 12 碼 hex，body 超過 1KB 一定不是正常請求，先看 Content-Length 擋掉，
   // 不要為了一個註定沒用的 body 去 await req.json()（匿名端點被灌大 body 會把記憶體推爆）。
-  const contentLength = Number(req.headers.get("content-length") ?? "0");
-  if (contentLength > 1024) {
+  //
+  // 沒有 Content-Length（例如 Transfer-Encoding: chunked）不能當成「長度是 0」放行：
+  // 正常瀏覽器 fetch 傳字串 body 一定會帶這個 header，缺這個 header 本身就是可疑，
+  // 一律當作超過上限擋掉，不要讓它繞過檢查直接落到 req.json()。
+  const contentLengthHeader = req.headers.get("content-length");
+  const contentLength = contentLengthHeader === null ? NaN : Number(contentLengthHeader);
+  if (!Number.isFinite(contentLength) || contentLength > 1024) {
     return NextResponse.json({ error: "payload too large" }, { status: 413 });
   }
 
