@@ -198,6 +198,17 @@ describe("彌封快照端點（§26-1 Ⅵ）", () => {
     expect(miss.status).toBe(404);
   });
 
+  it("偽造的 If-None-Match 配不存在的代碼，仍要回 404——存在性檢查不能被快取命中蓋過", async () => {
+    const e = await prisma.election.findFirstOrThrow({ where: { slug } });
+    // sealedHash 本身透過 /sealed-box 端點公開可查，攻擊者能自己拼出 `"<sealedHash>-<猜的代碼>"`
+    // 這個 ETag 格式去打 ?code= 查詢。
+    const forgedEtag = `"${e.sealedHash}-ffffffffffff"`;
+    const res = await fetch(`${APP_URL}/api/elections/${slug}/disclosures?code=ffffffffffff`, {
+      headers: { "If-None-Match": forgedEtag },
+    });
+    expect(res.status, "帶著猜中的 ETag 查一個不存在的代碼，不該被當成「快取命中」放行").toBe(404);
+  });
+
   it("名冊 CSV 只給登入會員，內容是姓名與投票狀態、不含投給誰", async () => {
     const res = await get(`/api/elections/${slug}/roster`, VOTER_B);
     expect(res.status).toBe(200);

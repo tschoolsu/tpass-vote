@@ -76,12 +76,15 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/elections/[s
   // 單筆查詢：投票人拿收據來核對自己那一票。
   const code = req.nextUrl.searchParams.get("code")?.trim().toLowerCase();
   if (code) {
+    // 存在性檢查一定要在條件請求判斷之前：ETag 只由 sealedHash＋code 組成，
+    // sealedHash 本身透過 /sealed-box 公開可查，猜一個代碼配上就能拼出合法格式的
+    // If-None-Match——先信它就等於讓偽造的快取命中蓋過「這代碼到底存不存在」。
+    const found = entries.find((e) => e.code === code);
+    if (!found) return NextResponse.json({ found: false }, { status: 404 });
     const etag = `"${election.sealedHash ?? "none"}-${code}"`;
     if (req.headers.get("if-none-match") === etag) {
       return new NextResponse(null, { status: 304, headers: { ETag: etag, "Cache-Control": cacheControl } });
     }
-    const found = entries.find((e) => e.code === code);
-    if (!found) return NextResponse.json({ found: false }, { status: 404 });
     return NextResponse.json(
       { found: true, code: found.code, summary: describe(found, labels) },
       { headers: { "Cache-Control": cacheControl, ETag: etag } },
