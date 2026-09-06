@@ -5,9 +5,10 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { prisma, resetDb } from "../helpers/db";
 import { as } from "../helpers/session";
+import { APP_URL } from "../helpers/env";
 import { advanceTo, generateKeys, makeElection, registerAs } from "../helpers/flow";
 import { signRecall, withdrawSignature } from "@/app/e/[slug]/recall/actions";
-import type { TestIdentity } from "../helpers/jwks";
+import { signTestToken, cookieHeader, type TestIdentity } from "../helpers/jwks";
 
 // 同一個真人＝同一個 Google sub，但兩次登入拿到的 email 大小寫不同。
 const SAME_SUB = "sub-same-real-person";
@@ -77,6 +78,39 @@ describe("身分大小寫正規化", () => {
       expect(withdrawn.ok, withdrawn.ok ? "" : withdrawn.error).toBe(true);
       const remaining = await prisma.recallSignature.findMany({ where: { electionId } });
       expect(remaining.length).toBe(0);
+    }, 30_000);
+  });
+
+  describe("連署後用不同大小寫身分看頁面，狀態要跟 DB 一致", () => {
+    const slug = "d1-case-recall-page";
+
+    beforeAll(async () => {
+      await resetDb();
+      await prisma.election.create({
+        data: {
+          slug,
+          title: "身分正規化頁面測試用罷免案",
+          kind: "recall",
+          status: "petition",
+          ballotMode: "approval",
+          seats: 1,
+          maxChoices: 1,
+        },
+      });
+    }, 30_000);
+
+    it("小寫身分連署後，大寫身分看頁面應顯示「已連署」並給撤回鈕，而不是「我要連署」", async () => {
+      const signed = await as(LOWER, () => signRecall(slug));
+      expect(signed.ok, signed.ok ? "" : signed.error).toBe(true);
+
+      const res = await fetch(`${APP_URL}/e/${slug}`, {
+        headers: { Cookie: cookieHeader(await signTestToken(UPPER)) },
+      });
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain("已連署");
+      expect(html).toContain("撤回連署");
+      expect(html).not.toContain("我要連署");
     }, 30_000);
   });
 });

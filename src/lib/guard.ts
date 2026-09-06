@@ -20,7 +20,9 @@ export async function requireSession(returnPath = "/"): Promise<TPassClaims> {
   // 正常情況下 authorize 就會擋下不簽票，這裡是舊票在 TTL 內仍帶著 ban 前狀態時的第二道保險。
   if (!tpass.permOf(session).read) redirect(deniedUrlFor());
   // auth 簽出的 email claim 不保證恆為小寫，這裡收斂成唯一的正規化點——
-  // 全 repo 用 session.email 做 unique／比對的地方都吃到同一份正規化值。
+  // 經過 requireSession() 這條路徑的 session.email 都吃到同一份正規化值。
+  // 例外：不強制登入的公開頁（如 e/[slug]/page.tsx）直接呼叫 tpass.getSession()，
+  // 繞過這裡，若該頁要用 session.email 做 unique／比對，得自己正規化一次。
   return { ...session, email: session.email.trim().toLowerCase() };
 }
 

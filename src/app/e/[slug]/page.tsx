@@ -104,9 +104,18 @@ export default async function ElectionDetailPage({
     recallCount = await prisma.recallSignature.count({ where: { electionId: election.id } });
 
     // 連署開放全校：登入即可連署，只看是否已署（不查選區名冊）。
+    // 這頁本身不登入也能看，走的是 tpass.getSession() 而非 guard.ts 的
+    // requireSession()，吃不到那邊的正規化，所以這裡的查詢要自己正規化一次，
+    // 否則跟 signRecall/withdrawSignature（都經 requireSession）用不同的
+    // signerEmail 大小寫去比對，會出現「明明連署了卻顯示未連署」的不一致。
     if (session) {
       const signature = await prisma.recallSignature.findUnique({
-        where: { electionId_signerEmail: { electionId: election.id, signerEmail: session.email } },
+        where: {
+          electionId_signerEmail: {
+            electionId: election.id,
+            signerEmail: session.email.trim().toLowerCase(),
+          },
+        },
       });
       recallRosterState = signature ? "signed" : "not_signed";
     }
