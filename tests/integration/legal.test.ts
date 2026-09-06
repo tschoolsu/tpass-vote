@@ -156,6 +156,21 @@ describe("D2-3／D12-1 投票截止前不能關票", () => {
     const r = await as(MODERATOR, () => advanceStatus(electionId));
     expect(r.ok, r.ok ? "" : r.error).toBe(true);
   });
+
+  it("強制關票理由超過 200 字會被截斷，不會整段塞進稽核紀錄", async () => {
+    const electionId = await setupAtVoting("close-gate-reason-cap");
+    const longReason = "理由".repeat(150); // 300 字
+    const r = await as(ADMIN, () => advanceStatus(electionId, longReason));
+    expect(r.ok, r.ok ? "" : r.error).toBe(true);
+
+    const log = await prisma.electionAuditLog.findFirst({
+      where: { electionId, action: "advance_status" },
+      orderBy: { createdAt: "desc" },
+    });
+    const diff = log?.diff as { reason?: string } | null;
+    expect(diff?.reason?.length).toBe(200);
+    expect(longReason.length).toBeGreaterThan(200);
+  });
 });
 
 describe("§13 學生代表：複數選區單記不可讓渡", () => {

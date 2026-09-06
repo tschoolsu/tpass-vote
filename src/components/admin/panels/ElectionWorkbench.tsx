@@ -9,7 +9,8 @@
 // mutation 一律呼叫既有 server action（各 panel 自己 import，這裡只 bind 需要 electionId 的
 // 狀態機按鈕：advanceStatus／sealElection）。
 import Link from "next/link";
-import { useRef } from "react";
+import { useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import {
   Settings2,
   UserCheck,
@@ -21,7 +22,7 @@ import {
   Gavel,
   History,
 } from "lucide-react";
-import { Badge } from "tpass-ui";
+import { Badge, Button, Textarea } from "tpass-ui";
 import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
 import {
   STATUS_META,
@@ -118,18 +119,41 @@ export function ElectionWorkbench({
   selfUrl,
   recallInfo,
   offices,
+  isSuperAdmin,
 }: {
   election: ElectionData;
   uploads: { id: string; filename: string }[];
   selfUrl: string;
   recallInfo: RecallInfo | null;
   offices: { id: string; title: string }[];
+  // 只給「投票截止前強制關票」的理由輸入框判斷要不要顯示（D2-3／D12-1），
+  // 不做別的授權判斷——一般管理員一律看不到這個入口，跟一般管理員按下方
+  // 「推進到已截止」按鈕時伺服器回的錯誤訊息一致。
+  isSuperAdmin: boolean;
 }) {
   const status = election.status as ElectionStatus;
   const meta = STATUS_META[status] ?? STATUS_META.draft;
   const isRecall = election.kind === "recall";
   const next = nextStatus(status, election.kind);
   const accordionRef = useRef<WorkbenchAccordionHandle>(null);
+  const router = useRouter();
+  const [forceReason, setForceReason] = useState("");
+  const [forcePending, startForceTransition] = useTransition();
+  const [forceError, setForceError] = useState<string | null>(null);
+
+  // D2-3／D12-1 逃生門的送出：獨立於 CurrentStageCard 的「推進到已截止」按鈕（那顆一律
+  // 不帶理由，超管沒填理由一樣會被伺服器擋下），只有 canForceClose 為真時才會被渲染出來。
+  function handleForceClose() {
+    setForceError(null);
+    startForceTransition(async () => {
+      const result = await advanceStatus(election.id, forceReason);
+      if (!result.ok) {
+        setForceError(result.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
 
   const approvedCandidates = election.candidates.filter((c) => c.status === "approved");
   const rosterCount = election.voters.length;
@@ -143,6 +167,10 @@ export function ElectionWorkbench({
   // 不代表投票時間到了——選民端 vote/page.tsx 用同一套 castDecision 擋，這裡也要在前置檢查列出來，
   // 不要讓選委推了狀態卻以為選民已經能投票。
   const votingStartReached = !election.votingStartsAt || new Date() >= election.votingStartsAt;
+  // D12-1：時程排錯或選委拖到太晚才按，導致整段投票期間已經過去——同一條規則在
+  // actions.ts 的 advanceStatus 裡是真正的閘門，這裡只是把同一個判斷先顯示出來，
+  // 讓選委在按下去之前就看得到「已過去」，不必等伺服器回錯誤訊息才知道。
+  const votingWindowElapsed = !!election.votingEndsAt && new Date() >= election.votingEndsAt;
   const votingPrecheck = [
     { label: "已產生開票金鑰", ok: hasKey },
     isRecall
@@ -160,8 +188,16 @@ export function ElectionWorkbench({
         ? undefined
         : `${formatDateTime(election.votingStartsAt)}（${describeRemaining(election.votingStartsAt, new Date())}）`,
     },
+    {
+      label: "整段投票期間尚未過去",
+      ok: !votingWindowElapsed,
+      detail: votingWindowElapsed ? `已於 ${formatDateTime(election.votingEndsAt)} 結束` : undefined,
+    },
   ];
   const votingBlocked = next === "voting" && votingPrecheck.some((c) => !c.ok);
+  // D2-3／D12-1 的逃生門：只有超級管理員、只有截止時間還沒到時才看得到——一般管理員按
+  // 「推進到已截止」一樣會被伺服器擋下，錯誤訊息跟這裡不能用的原因一致。
+  const canForceClose = isSuperAdmin && next === "closed" && !!election.votingEndsAt && new Date() < election.votingEndsAt;
   const previewBallotMode = isRecall
     ? "同意／不同意模式"
     : approvedCandidates.length > election.seats
@@ -444,6 +480,35 @@ export function ElectionWorkbench({
         closingLabel={closingLabel}
         publishedLabel={publishedLabel}
       />
+
+      {canForceClose && (
+        <div className="flex flex-col gap-2 rounded-md border-2 border-dashed border-destructive/60 p-4">
+          <h3 className="font-extrabold text-sm">超級管理員：截止時間未到，強制關票</h3>
+          <p className="text-xs text-muted-foreground">
+            投票截止時間為 {formatDateTime(election.votingEndsAt)}，尚未到期。僅限重大事故（例如選情膠著、
+            資安事件）使用，理由會寫進稽核紀錄且無法回頭。
+          </p>
+          <Textarea
+            value={forceReason}
+            onChange={(e) => setForceReason(e.target.value)}
+            rows={2}
+            maxLength={200}
+            placeholder="強制關票的理由（必填，會記錄於稽核紀錄）"
+          />
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={forcePending || forceReason.trim().length === 0}
+              onClick={handleForceClose}
+            >
+              {forcePending ? "處理中…" : "強制關票"}
+            </Button>
+            {forceError && <p role="alert" className="font-mono text-xs font-bold text-destructive">{forceError}</p>}
+          </div>
+        </div>
+      )}
 
       <AnnouncementsSection
         electionId={election.id}

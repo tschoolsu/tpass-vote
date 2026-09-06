@@ -245,9 +245,11 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
 
     // 同時發動：一半的票（HTTP，打真正的伺服器）、以及「推進到 closed」（選委在後台按的
     // in-process admin action——這不是投票尖峰的一部分，不必跟著改走 HTTP）。
+    // 這裡要測的是關票競態本身，不是 D2-3／D12-1 的截止時間閘門，而 makeElection 預設窗口
+    // 還沒到期，所以跟 advanceTo helper 一樣以 ADMIN（本測試環境的超級管理員）附理由強制關票。
     const rssBefore = appRssMb();
     const voting = jobs.map((job) => castViaHttp(job.voter, job.ciphertext));
-    const closing = as(ADMIN, () => advanceStatus(electionId));
+    const closing = as(ADMIN, () => advanceStatus(electionId, "壓力測試：強制關票以驗證競態"));
     const [closeResult, ...responses] = await Promise.all([closing, ...voting]);
 
     expect(closeResult.ok, "截止動作本身失敗了").toBe(true);

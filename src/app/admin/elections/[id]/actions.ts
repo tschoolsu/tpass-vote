@@ -202,7 +202,9 @@ export async function advanceStatus(electionId: string, reason?: string): Promis
         error: `投票截止時間為 ${formatDateTime(election.votingEndsAt)}，尚不能關票`,
       };
     }
-    closeReason = trimmedReason;
+    // audit log 的 summary／diff 都會原文收下這段字，長度上限只是不讓稽核紀錄被灌爆，
+    // 不是安全邊界——超過的部分直接截斷，不視為錯誤擋下操作。
+    closeReason = trimmedReason.slice(0, 200);
   }
 
   const result = await prisma.$transaction(async (tx) => {

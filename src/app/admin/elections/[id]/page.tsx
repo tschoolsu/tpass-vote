@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { authConfig } from "@/config/auth";
+import { isSuperAdmin } from "@/config/admin";
 import { recallThreshold } from "@/lib/recall";
 import { ElectionWorkbench, type RecallInfo } from "@/components/admin/panels/ElectionWorkbench";
 
@@ -18,7 +19,7 @@ export default async function ElectionWorkbenchPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  await requireAdmin(`/admin/elections/${id}`);
+  const admin = await requireAdmin(`/admin/elections/${id}`);
 
   const election = await prisma.election.findUnique({
     where: { id },
@@ -63,6 +64,13 @@ export default async function ElectionWorkbenchPage({
   }
 
   return (
-    <ElectionWorkbench election={election} uploads={uploads} selfUrl={authConfig.selfUrl} recallInfo={recallInfo} offices={offices} />
+    <ElectionWorkbench
+      election={election}
+      uploads={uploads}
+      selfUrl={authConfig.selfUrl}
+      recallInfo={recallInfo}
+      offices={offices}
+      isSuperAdmin={isSuperAdmin(admin)}
+    />
   );
 }
