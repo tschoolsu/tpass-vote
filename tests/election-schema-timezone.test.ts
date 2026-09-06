@@ -38,4 +38,13 @@ describe("時區：datetime-local 解析／回填不依賴 process TZ", () => {
     expect(toDatetimeLocalValue(null)).toBe("");
     expect(toDatetimeLocalValue(undefined)).toBe("");
   });
+
+  // 反例 C（審查駁回附件）：regex 只驗格式（\d{2}）不驗值域，month=13／day=45／hour=99／
+  // minute=99 這種越界輸入，Date.UTC 會靜默進位成別的日期，讓「格式錯誤」的輸入被當成合法值收下。
+  it("越界的日曆值（月/日/時/分超過合法範圍）視為無效日期，不靜默進位", () => {
+    const invalids = ["2026-13-45T99:99", "2026-02-30T00:00", "2026-04-31T12:00", "2026-00-01T00:00"];
+    for (const v of invalids) {
+      expect(Number.isNaN(parseDatetimeLocalInTimeZone(v, SITE_TIMEZONE).getTime()), v).toBe(true);
+    }
+  });
 });

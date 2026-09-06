@@ -4,6 +4,7 @@ import { Plus, Briefcase, ChevronRight } from "lucide-react";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { Badge, Button } from "tpass-ui";
+import { formatDateTime } from "@/components/public/shared";
 
 interface Member {
   name: string;
@@ -62,7 +63,7 @@ export default async function OfficesPage() {
                   {o.isVacant ? "（目前無現任）" : memberNames(o.currentMembers) || "（未填姓名）"}
                 </p>
                 <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
-                  {o.startedAt ? `入職 ${o.startedAt.toLocaleDateString("zh-TW")}` : "入職日未定"}
+                  {o.startedAt ? `入職 ${formatDateTime(o.startedAt)}` : "入職日未定"}
                   {src ? ` · 來源：${src.title}` : ""}
                 </p>
               </div>

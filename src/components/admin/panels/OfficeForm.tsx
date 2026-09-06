@@ -6,13 +6,16 @@ import { useRouter } from "next/navigation";
 import { Plus, X, Loader2 } from "lucide-react";
 import { Button, Card, Input, Label, Textarea } from "tpass-ui";
 import { createOffice, updateOffice, type OfficeInput, type OfficeMemberInput } from "@/app/admin/offices/actions";
+import { toDatetimeLocalValue } from "@/app/admin/elections/election-schema";
 
 type MemberRow = { name: string; email: string; grade: string };
 
+// <input type="date"> 需要「YYYY-MM-DD」，跟 actions.ts 的 parseStartedAt 一樣以
+// SITE_TIMEZONE 解讀——不能用 getFullYear/getMonth/getDate，那是主機的 process TZ。
+// toDatetimeLocalValue 已回填成「YYYY-MM-DDTHH:mm」，取前 10 碼就是日期部分。
 function toDateInputValue(d: Date | null | undefined): string {
   if (!d) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return toDatetimeLocalValue(d).slice(0, 10);
 }
 
 export function OfficeForm({

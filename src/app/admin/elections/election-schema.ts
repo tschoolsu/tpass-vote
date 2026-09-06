@@ -27,9 +27,13 @@ const blankToUndefined = (v: unknown) =>
 // 選委腦中想的一律是台北時間，不是 server 跑在哪個時區——不能用 z.coerce.date()／
 // new Date(str) 直接吃，那是用 server 的 process TZ 解讀。這裡固定以 SITE_TIMEZONE 解讀。
 
-/** 給定一個瞬間，回傳 timeZone 在該瞬間的 UTC 偏移（分鐘，東半球為正）。 */
-function tzOffsetMinutes(instant: Date, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
+/** 把某個瞬間在 timeZone 的牆上時間拆成欄位。withSeconds 只有 tzOffsetMinutes 算偏移時需要。 */
+function partsInTimeZone(
+  instant: Date,
+  timeZone: string,
+  withSeconds: boolean,
+): Record<string, string> {
+  return new Intl.DateTimeFormat("en-US", {
     timeZone,
     hourCycle: "h23",
     year: "numeric",
@@ -37,13 +41,18 @@ function tzOffsetMinutes(instant: Date, timeZone: string): number {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
+    ...(withSeconds ? { second: "2-digit" as const } : {}),
   })
     .formatToParts(instant)
     .reduce<Record<string, string>>((acc, p) => {
       acc[p.type] = p.value;
       return acc;
     }, {});
+}
+
+/** 給定一個瞬間，回傳 timeZone 在該瞬間的 UTC 偏移（分鐘，東半球為正）。 */
+function tzOffsetMinutes(instant: Date, timeZone: string): number {
+  const parts = partsInTimeZone(instant, timeZone, true);
   const asIfUtc = Date.UTC(
     Number(parts.year),
     Number(parts.month) - 1,
@@ -63,7 +72,16 @@ export function parseDatetimeLocalInTimeZone(value: string, timeZone: string): D
   const naiveUtcMs = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mi));
   // Asia/Taipei 全年無 DST，偏移是常數，用哪個瞬間量測都一樣；一次修正即可得到精確瞬間。
   const offsetMin = tzOffsetMinutes(new Date(naiveUtcMs), timeZone);
-  return new Date(naiveUtcMs - offsetMin * 60_000);
+  const instant = new Date(naiveUtcMs - offsetMin * 60_000);
+  // regex 只驗格式，不驗值域——month=13／day=45 這種越界輸入會被 Date.UTC 靜默進位成別的
+  // 日期。用「解析完再格式化回去比對」抓出這種格式對但值域錯的輸入，而不是信任進位結果。
+  if (formatInTimeZone(instant, timeZone) !== value) return new Date(NaN);
+  return instant;
+}
+
+function formatInTimeZone(instant: Date, timeZone: string): string {
+  const parts = partsInTimeZone(instant, timeZone, false);
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
 const optionalDatetimeLocal = z.preprocess((v) => {
@@ -195,19 +213,5 @@ export function parseElectionForm(
 // server 的 process TZ／getHours() 那種本地時間，否則跟 parseDatetimeLocalInTimeZone 對不上。
 export function toDatetimeLocalValue(d: Date | null | undefined): string {
   if (!d) return "";
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: SITE_TIMEZONE,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-    .formatToParts(d)
-    .reduce<Record<string, string>>((acc, p) => {
-      acc[p.type] = p.value;
-      return acc;
-    }, {});
-  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+  return formatInTimeZone(d, SITE_TIMEZONE);
 }

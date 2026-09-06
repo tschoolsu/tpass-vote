@@ -7,6 +7,8 @@ import { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { buildDiff } from "@/lib/office-upsert";
+import { parseDatetimeLocalInTimeZone } from "@/app/admin/elections/election-schema";
+import { SITE_TIMEZONE } from "@/config/site";
 
 export interface OfficeMemberInput {
   name: string;
@@ -34,9 +36,13 @@ function cleanMembers(members: OfficeMemberInput[]): OfficeMemberInput[] {
     .filter((m) => m.name !== "");
 }
 
+// <input type="date"> 給的是「YYYY-MM-DD」牆上日期，選委腦中想的是台北時間的那一天。
+// new Date(v) 會把它當 UTC 午夜解讀（ECMA-262 的 date-only 字串規則），主機 TZ=UTC 時
+// 存進去的瞬間會早了 8 小時，變成台北時間前一天 16:00——跟 election-schema.ts 的
+// datetime-local 是同一類 bug，一併借用它已驗證過的 SITE_TIMEZONE 解析。
 function parseStartedAt(v: string | null): Date | null {
   if (!v) return null;
-  const d = new Date(v);
+  const d = parseDatetimeLocalInTimeZone(`${v}T00:00`, SITE_TIMEZONE);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 

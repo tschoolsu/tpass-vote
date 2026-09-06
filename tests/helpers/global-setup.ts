@@ -41,7 +41,10 @@ export async function setup() {
     [path.join("node_modules", "next", "dist", "bin", "next"), "start", "-p", String(TEST_PORTS.app), "-H", "127.0.0.1"],
     {
       cwd: process.cwd(),
-      env: { ...process.env, ...testEnv(), NODE_ENV: "production" },
+      // 固定 TZ=Etc/UTC：正式主機時區就是 UTC。開發機常是 Asia/Taipei，跟 SITE_TIMEZONE
+      // 剛好同值，若不強制 server 用 UTC 起，時區相關的迴歸（D2）在開發機上永遠測不出來
+      // ——非要人記得手動 export TZ=Etc/UTC 才會紅，這道防線形同虛設（見稽核附件）。
+      env: { ...process.env, ...testEnv(), NODE_ENV: "production", TZ: "Etc/UTC" },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );

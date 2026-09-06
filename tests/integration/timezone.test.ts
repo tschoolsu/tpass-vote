@@ -12,6 +12,8 @@ import { ADMIN, as } from "../helpers/session";
 import { APP_URL } from "../helpers/env";
 import { createElection } from "@/app/admin/elections/new/actions";
 import { advanceStatus } from "@/app/admin/elections/[id]/actions";
+import { createOffice } from "@/app/admin/offices/actions";
+import { signTestToken, cookieHeader } from "../helpers/jwks";
 
 const SERVER_TZ = process.env.TZ ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -67,6 +69,35 @@ describe("D2 時區", () => {
     console.log(`[D2-2] TZ=${SERVER_TZ} 台北時刻應為 ${taipei}；頁面含 08:00=${html.includes("08:00")} 含 16:00=${html.includes("16:00")}`);
 
     // 不變量：頁面印的必須是台北時刻。
-    expect(html).toContain(taipei.replace(/ /g, " "));
+    expect(html).toContain(taipei);
+  });
+
+  // D2-5：職務登記表（/admin/offices）的入職日過去用沒有 timeZone 的 toLocaleDateString 印，
+  // 跟公開端 /offices（已用 formatDateTime）不一致，主機 TZ=UTC 時兩邊會差到一整天。
+  it("D2-5：/admin/offices 的入職日一律以 Asia/Taipei 印出，與公開端一致", async () => {
+    const r = await as(ADMIN, () =>
+      createOffice({
+        title: "時區測試職務",
+        members: [{ name: "測試學生" }],
+        isVacant: false,
+        startedAt: "2026-10-01", // 選委腦中的是台北時間 10/1 這一天
+        note: null,
+      }),
+    );
+    if (!r.ok) throw new Error(`建職務失敗：${r.error}`);
+    const office = await prisma.office.findUniqueOrThrow({ where: { id: r.officeId } });
+    console.log(`[D2-5] TZ=${SERVER_TZ} 選委填 2026-10-01 → DB 存 ${office.startedAt!.toISOString()}`);
+
+    // 不變量一：入職日以台北時間解讀，存進去的瞬間必須是台北 10/1 00:00。
+    expect(office.startedAt!.toISOString()).toBe("2026-09-30T16:00:00.000Z");
+
+    // 不變量二：管理端列表印出的日期是台北時刻的日期，不是主機 TZ 的日期。
+    const html = await (
+      await fetch(`${APP_URL}/admin/offices`, {
+        headers: { Cookie: cookieHeader(await signTestToken(ADMIN)) },
+      })
+    ).text();
+    expect(html).toContain("2026/10/01");
+    expect(html).not.toContain("2026/9/30");
   });
 });
