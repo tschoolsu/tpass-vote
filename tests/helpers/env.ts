@@ -1,9 +1,11 @@
 // 整合測試的固定設定：所有 port、網址、資料庫都集中在這裡，測試檔不自己拼字串。
 // 這些值同時餵給 vitest 的 globalSetup（起 JWKS stub 與 next server）與各測試檔。
 
+// 平行 worktree 各自跑整合／壓測時，用 TEST_PORT_BASE 與 TEST_DATABASE_URL 錯開；預設值與單一 checkout 相同。
+const PORT_BASE = Number(process.env.TEST_PORT_BASE ?? 39000);
 export const TEST_PORTS = {
-  jwks: 39012,
-  app: 39066,
+  jwks: PORT_BASE + 12,
+  app: PORT_BASE + 66,
 } as const;
 
 export const JWKS_URL = `http://127.0.0.1:${TEST_PORTS.jwks}/.well-known/jwks.json`;

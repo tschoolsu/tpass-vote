@@ -28,8 +28,8 @@ export async function resetDb(): Promise<void> {
   const [{ current_database }] = await prisma.$queryRawUnsafe<{ current_database: string }[]>(
     "SELECT current_database()",
   );
-  if (current_database !== "t_vote_test") {
-    throw new Error(`拒絕清庫：連線指向 ${current_database}，不是 t_vote_test`);
+  if (!current_database.startsWith("t_vote_test")) {
+    throw new Error(`拒絕清庫：連線指向 ${current_database}，不是 t_vote_test*`);
   }
   await prisma.$executeRawUnsafe(
     `TRUNCATE ${TABLES.map((t) => `"${t}"`).join(", ")} RESTART IDENTITY CASCADE`,
