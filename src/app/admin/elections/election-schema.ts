@@ -138,16 +138,11 @@ export const electionFormSchema = z
     path: ["maxChoices"],
   })
   // 可選人數不能超過名額——超過席次的圈選數沒有意義（且非 grade_rep 類型沒有其他上限擋連記）。
+  // 注意：這條只擋「無意義的數字」，不擋全額連記（maxChoices === seats）——那是 leader／
+  // other 場次本來就合法的制度設計。§13 只限制學生代表選舉，schema 分不出「這場其實該選
+  // grade_rep 但類型選錯」的意圖，真正的防線是 ElectionForm 的警語 + SOP 檢查清單。
   .refine((v) => v.maxChoices <= v.seats, {
     message: "可選人數不得超過名額（席次）",
-    path: ["maxChoices"],
-  })
-  // 複數席次時，可選人數不得等於名額：等於名額＝每票可圈滿所有候選人（全額連記／block
-  // vote），這正是「年級代表選成其他類型」時規避 §13 單記限制的具體形狀（規格 D12-2）。
-  // 只擋「等於」——非 grade_rep 的限制連記（maxChoices < seats，例如 5 席限 3）仍然合法，
-  // 不受影響；單一席次（seats=1）本來就已被前一條規則鎖到 maxChoices=1，不受此規則影響。
-  .refine((v) => v.seats === 1 || v.maxChoices < v.seats, {
-    message: "複數席次時，可選人數須小於名額（等於名額即全額連記，違反選罷法 §13 精神）",
     path: ["maxChoices"],
   });
 

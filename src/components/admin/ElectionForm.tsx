@@ -200,10 +200,7 @@ export function ElectionForm({
           <p className="mt-1 text-xs font-medium text-muted-foreground">
             學生代表採單記不可讓渡（§13），只能填 1。
           </p>
-          {/* fe.maxChoices 已經是伺服器判定的錯誤（含新加的複數席次全額連記擋下），
-              此時再疊一則 role="alert" 的提醒，螢幕閱讀器會唸兩次，且對已經定案的
-              錯誤沒有額外資訊，所以只在沒有伺服器錯誤時顯示這則「先提醒你想一下」。 */}
-          {!fe.maxChoices && kindValue !== "grade_rep" && maxChoicesValue > 1 && (
+          {kindValue !== "grade_rep" && maxChoicesValue > 1 && (
             <p role="alert" className="mt-1 font-mono text-xs font-bold text-destructive">
               每票可圈選多人＝連記投票，年級代表選舉依選罷法 §13 必須為 1
             </p>
