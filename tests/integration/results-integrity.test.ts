@@ -10,6 +10,7 @@ import {
   generateKeys,
   importVoters,
   makeElection,
+  publishResult,
   registerAs,
   seal,
   voteAs,
@@ -20,6 +21,7 @@ import { castBallot } from "@/app/e/[slug]/vote/actions";
 import type { TallyResult } from "@/lib/tally";
 import type { DisclosureEntry } from "@/lib/disclosure";
 import { combineKeyFiles, decryptBallot, type BallotPlain, type TallyKeyFile } from "@/lib/ballot-crypto";
+import { APP_URL } from "../helpers/env";
 
 const SLUG = "results-integrity";
 const V = (n: number) => ({ email: `ri-v${n}@test.local`, name: `投票人${n}` });
@@ -307,5 +309,17 @@ describe("重複代碼（D12-3）：串通投票人送出同代碼，開票端�
     const dupEntries = disclosures.filter((d) => d.code === COLLUDING_CODE);
     expect(dupEntries).toHaveLength(2);
     expect(dupEntries.every((d) => d.kind === "invalid")).toBe(true);
+
+    // 規格第四項：撞號的無效票在公開明細要能與「純粹解不開的爛票」分開顯示，
+    // 不能兩者都變成同一句「無效票」——否則投票人查自己的收據看不出發生了什麼事。
+    // reason 要能撐過 submitResults 的 disclosureSchema、存進 disclosuresJson，
+    // 再由 /disclosures 端點的收據查詢原樣講出來。
+    await publishResult(electionId);
+    const receipt = await fetch(
+      `${APP_URL}/api/elections/${DUP_SLUG}/disclosures?code=${COLLUDING_CODE}`,
+    );
+    expect(receipt.status).toBe(200);
+    const receiptBody = (await receipt.json()) as { found: boolean; summary: string };
+    expect(receiptBody.summary).toBe("代碼重複，無效");
   }, 180_000);
 });

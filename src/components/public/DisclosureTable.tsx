@@ -37,8 +37,9 @@ export function DisclosureTable({
             </tr>
           </thead>
           <tbody>
-            {preview.map((e) => (
-              <tr key={e.code} className="border-b border-foreground/10">
+            {preview.map((e, i) => (
+              // D12-3 之後重複代碼是合法狀態（撞號票都標 invalid），code 不再保證唯一。
+              <tr key={`${e.code}-${i}`} className="border-b border-foreground/10">
                 <td className="px-3 py-1.5 font-mono text-xs">{e.code}</td>
                 <td className="px-3 py-1.5 font-medium">{describeDisclosure(e, candidateLabels)}</td>
               </tr>

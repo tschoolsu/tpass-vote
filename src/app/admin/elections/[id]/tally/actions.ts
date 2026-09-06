@@ -105,12 +105,16 @@ const tallyResultSchema = z.object({
 });
 
 // 去識別化選票明細（§26-1 Ⅳ）：只有代碼與意思，不得出現任何身分欄位。
+// reason 是 kind="invalid" 的細分理由（D12-3：撞號無效票），目前只有 "duplicate-code"
+// 這一種——沒有它，開票端標好的理由會在這裡被 zod 預設的 strip 行為吃掉，公開明細／
+// CSV／收據查詢就沒辦法把撞號票跟「純粹解不開的爛票」分開講給人看（見 disclosure.ts）。
 const disclosureSchema = z.array(
   z.object({
     code: z.string().regex(/^[0-9a-f]{12}$/, "代碼格式不正確"),
     kind: z.enum(["choose", "approval", "blank", "invalid"]),
     candidateIds: z.array(z.string()).optional(),
     approvals: z.record(z.string(), z.boolean()).optional(),
+    reason: z.literal("duplicate-code").optional(),
   }),
 );
 

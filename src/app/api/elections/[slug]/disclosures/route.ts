@@ -43,7 +43,9 @@ function describe(entry: DisclosureEntry, labels: Map<string, string>): string {
     case "blank":
       return "廢票（不圈選）";
     default:
-      return "無效票";
+      // D12-3：撞號的無效票要跟「純粹解不開的爛票」分開講，不然投票人查自己的
+      // 收據看不出發生了什麼事（見 lib/disclosure.ts 的 markDuplicateCodesInvalid）。
+      return entry.reason === "duplicate-code" ? "代碼重複，無效" : "無效票";
   }
 }
 

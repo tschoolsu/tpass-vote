@@ -156,7 +156,12 @@ export function ballotModeExplainer(params: {
  * labels 是「候選人 id → 顯示名稱」的對照表，由頁面端從核准候選人組出來。
  */
 export function describeDisclosure(
-  entry: { kind: string; candidateIds?: string[]; approvals?: Record<string, boolean> },
+  entry: {
+    kind: string;
+    candidateIds?: string[];
+    approvals?: Record<string, boolean>;
+    reason?: string;
+  },
   labels: Record<string, string>,
 ): string {
   const label = (id: string) => labels[id] ?? id;
@@ -172,7 +177,9 @@ export function describeDisclosure(
     case "blank":
       return "廢票（不圈選）";
     default:
-      return "無效票";
+      // D12-3：撞號的無效票要跟「純粹解不開的爛票」分開講，不然投票人查自己的
+      // 收據看不出發生了什麼事（見 disclosure.ts 的 markDuplicateCodesInvalid）。
+      return entry.reason === "duplicate-code" ? "代碼重複，無效" : "無效票";
   }
 }
 
