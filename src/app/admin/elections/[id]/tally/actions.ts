@@ -258,69 +258,87 @@ export async function submitResults(
     candidatesForDraft,
   );
 
-  await prisma.$transaction(async (tx) => {
-    await tx.election.update({
-      where: { id: electionId },
-      data: {
-        resultsJson: finalResults as unknown as Prisma.InputJsonValue,
-        disclosuresJson: sortedDisclosures,
-      },
-    });
+  try {
+    await prisma.$transaction(async (tx) => {
+      // 上面 election.status !== "sealed" 的檢查是交易外的一般 SELECT——公告發布
+      // （publishAnnouncement）能在「檢查完、還沒寫」的窗口插隊把 sealed → published
+      // commit 掉，讓這裡照樣覆寫已公告的結果（D7-5）。這個交易接下來就是對 Election
+      // 這一列本身寫入 resultsJson，所以跟 sealElection 一樣用 FOR UPDATE 重讀一次，
+      // 而不是 FOR SHARE——否則兩次重新提交（isResubmit）同時發生時，兩邊都持 FOR SHARE
+      // 再各自嘗試 UPDATE 同一列會互相等待造成死結。
+      const [locked] = await tx.$queryRaw<{ status: string }[]>`
+        SELECT status FROM "Election" WHERE id = ${electionId} FOR UPDATE
+      `;
+      if (!locked || locked.status !== "sealed") throw new Error("CONFLICT");
 
-    await tx.electionAuditLog.create({
-      data: {
-        electionId,
-        actorEmail: admin.email,
-        action: "submit_results",
-        summary: isResubmit ? "重新提交計票結果（覆寫舊結果）" : "提交計票結果",
-        diff: {
-          resubmit: isResubmit,
-          totalBallots: finalResults.totalBallots,
-          validCount: finalResults.validCount,
-          blankCount: finalResults.blankCount,
-          invalidCount: finalResults.invalidCount,
-          electedCount: finalResults.candidates.filter((c) => c.elected).length,
-          hasTie: finalResults.hasTie,
-          clientMismatch,
-        } as Prisma.InputJsonValue,
-      },
-    });
+      await tx.election.update({
+        where: { id: electionId },
+        data: {
+          resultsJson: finalResults as unknown as Prisma.InputJsonValue,
+          disclosuresJson: sortedDisclosures,
+        },
+      });
 
-    const existingResultAnnouncement = await tx.announcement.findFirst({
-      where: { electionId, legalTag: "result" },
-    });
-    if (!existingResultAnnouncement) {
-      await tx.announcement.create({
-        data: { electionId, legalTag: "result", title: draft.title, body: draft.body },
+      await tx.electionAuditLog.create({
+        data: {
+          electionId,
+          actorEmail: admin.email,
+          action: "submit_results",
+          summary: isResubmit ? "重新提交計票結果（覆寫舊結果）" : "提交計票結果",
+          diff: {
+            resubmit: isResubmit,
+            totalBallots: finalResults.totalBallots,
+            validCount: finalResults.validCount,
+            blankCount: finalResults.blankCount,
+            invalidCount: finalResults.invalidCount,
+            electedCount: finalResults.candidates.filter((c) => c.elected).length,
+            hasTie: finalResults.hasTie,
+            clientMismatch,
+          } as Prisma.InputJsonValue,
+        },
       });
-    } else if (!existingResultAnnouncement.publishedAt) {
-      await tx.announcement.update({
-        where: { id: existingResultAnnouncement.id },
-        data: { title: draft.title, body: draft.body },
-      });
-    }
 
-    // 罷免通過 → 同一交易內自動生成補選草稿（以罷免案的 parent＝原職位選舉為本）。
-    // 防重複：parent 底下已有 lineage='by_election' 的子場就跳過，不重複建立。
-    const target = finalResults.candidates[0];
-    if (election.kind === "recall" && election.parentId && target && recallPassed(target.votes, target.disagree)) {
-      const existingByElection = await tx.election.findFirst({
-        where: { parentId: election.parentId, lineage: "by_election" },
-        select: { id: true },
+      const existingResultAnnouncement = await tx.announcement.findFirst({
+        where: { electionId, legalTag: "result" },
       });
-      if (!existingByElection) {
-        const parent = await tx.election.findUnique({ where: { id: election.parentId } });
-        if (parent) {
-          await cloneElection(tx, parent, {
-            lineage: "by_election",
-            titleSuffix: "（補選）",
-            copyCandidates: "none",
-            copyRoster: true,
-          });
+      if (!existingResultAnnouncement) {
+        await tx.announcement.create({
+          data: { electionId, legalTag: "result", title: draft.title, body: draft.body },
+        });
+      } else if (!existingResultAnnouncement.publishedAt) {
+        await tx.announcement.update({
+          where: { id: existingResultAnnouncement.id },
+          data: { title: draft.title, body: draft.body },
+        });
+      }
+
+      // 罷免通過 → 同一交易內自動生成補選草稿（以罷免案的 parent＝原職位選舉為本）。
+      // 防重複：parent 底下已有 lineage='by_election' 的子場就跳過，不重複建立。
+      const target = finalResults.candidates[0];
+      if (election.kind === "recall" && election.parentId && target && recallPassed(target.votes, target.disagree)) {
+        const existingByElection = await tx.election.findFirst({
+          where: { parentId: election.parentId, lineage: "by_election" },
+          select: { id: true },
+        });
+        if (!existingByElection) {
+          const parent = await tx.election.findUnique({ where: { id: election.parentId } });
+          if (parent) {
+            await cloneElection(tx, parent, {
+              lineage: "by_election",
+              titleSuffix: "（補選）",
+              copyCandidates: "none",
+              copyRoster: true,
+            });
+          }
         }
       }
+    }, { timeout: 10_000 });
+  } catch (e) {
+    if (e instanceof Error && e.message === "CONFLICT") {
+      return { ok: false, error: "選舉狀態已改變（可能已發布結果或被其他選委變更），請重新整理頁面" };
     }
-  }, { timeout: 10_000 });
+    throw e;
+  }
 
   return { ok: true };
 }

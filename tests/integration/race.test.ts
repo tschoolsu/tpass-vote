@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { Client } from "pg";
 import { prisma, resetDb, TEST_DATABASE_URL } from "../helpers/db";
-import { ADMIN, VOTER_A, VOTER_B, as } from "../helpers/session";
+import { ADMIN, MODERATOR, VOTER_A, VOTER_B, as } from "../helpers/session";
 import {
   advanceTo,
   approveAll,
@@ -18,10 +18,18 @@ import {
   importVoters,
   makeElection,
   registerAs,
+  seal,
+  tallyAndSubmit,
+  toLocalInput,
+  voteAs,
+  HOUR,
 } from "../helpers/flow";
 import { encryptBallot } from "@/lib/ballot-crypto";
 import { castBallot } from "@/app/e/[slug]/vote/actions";
-import { sealElection } from "@/app/admin/elections/[id]/tally/actions";
+import { sealElection, submitResults } from "@/app/admin/elections/[id]/tally/actions";
+import { approveCandidate, rejectCandidate } from "@/app/admin/elections/[id]/candidates/actions";
+import { updateElection } from "@/app/admin/elections/[id]/edit/actions";
+import { removeVoter } from "@/app/admin/elections/[id]/roster/actions";
 
 const CAND = { email: "racecand@test.local", name: "候選人" };
 const SLUG = "race";
@@ -168,6 +176,257 @@ describe("收票與關票／彌封的競態", () => {
         await prisma.encryptedBallot.count({ where: { electionId } }),
         "票匭裡出現了隱藏之後才寫入的票",
       ).toBe(0);
+    } catch (e) {
+      await lock.abort();
+      throw e;
+    }
+  }, 60_000);
+});
+
+// D7-2／D7-3／D7-4／D7-5（搬自 tests/audit/D7-races.test.ts）：四支 admin action 的狀態檢查
+// 曾經在交易外，advanceStatus／publishAnnouncement 能在「檢查完、還沒寫」的窗口插隊 commit，
+// 讓已經讀到舊狀態的 action 照樣把寫入落地。手法統一用 holdElectionLock("no key update")
+// 卡住 action 交易內的鎖讀取，在鎖窗內直接用另一條連線把狀態改掉（尚未 commit，模擬另一位
+// 選委的動作正要 commit），放行後斷言 action 讀到的是「鎖釋放當下的最新狀態」。
+const CAND_A = { email: "d7cand-a@test.local", name: "候選人甲" };
+const CAND_B = { email: "d7cand-b@test.local", name: "候選人乙" };
+
+describe("D7-2 候選人審核：狀態檢查與寫入不再跨交易", () => {
+  const SLUG = "d7-cand";
+  let electionId: string;
+  let candA: string;
+  let candB: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    const created = await makeElection({ slug: SLUG });
+    electionId = created.electionId!;
+    await generateKeys(electionId, SLUG);
+    await importVoters(electionId, [VOTER_A, VOTER_B, CAND_A, CAND_B]);
+    await advanceTo(electionId, "registration");
+    await registerAs(SLUG, electionId, CAND_A);
+    await registerAs(SLUG, electionId, CAND_B);
+    const approved = await approveAll(electionId);
+    candA = approved[0].id;
+    candB = approved[1].id;
+    await advanceTo(electionId, "campaigning");
+  }, 90_000);
+
+  it("投票開放的狀態改動一旦 commit，卡住的 rejectCandidate 必須讀到新狀態並被擋下", async () => {
+    const lock = await holdElectionLock(electionId, "no key update");
+    try {
+      // 鎖窗內把狀態改成 voting（尚未 commit，模擬 advanceStatus 正要 commit）。
+      await lock.client.query(`UPDATE "Election" SET status = 'voting' WHERE id = $1`, [
+        electionId,
+      ]);
+
+      const rejecting = as(ADMIN, () => rejectCandidate(electionId, candB, "臨時退選"));
+      await settle();
+      await lock.release();
+      const rejected = await rejecting;
+
+      expect(rejected.ok, "投票已開放，退回動作本應被 LOCKED_STATUSES 擋下").toBe(false);
+
+      const b = await prisma.candidate.findUniqueOrThrow({ where: { id: candB } });
+      const a = await prisma.candidate.findUniqueOrThrow({ where: { id: candA } });
+      expect(b.status, "候選人狀態不該被改動").toBe("approved");
+      expect(b.number, "號次不該被抽掉").not.toBeNull();
+      expect(a.number, "另一位候選人的號次不該被重排").toBe(1);
+    } catch (e) {
+      await lock.abort();
+      throw e;
+    }
+  }, 60_000);
+
+  it("兩位選委同時核准兩位不同候選人：不再死結，兩邊都成功且號次不衝突", async () => {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await prisma.candidate.updateMany({
+        where: { electionId },
+        data: { status: "pending", number: null },
+      });
+      const results = await Promise.allSettled([
+        as(ADMIN, () => approveCandidate(electionId, candA)),
+        as(MODERATOR, () => approveCandidate(electionId, candB)),
+      ]);
+      for (const r of results) {
+        expect(r.status, `第 ${attempt} 次同時核准出現未處理例外`).toBe("fulfilled");
+        if (r.status === "fulfilled") {
+          expect(r.value.ok, r.value.ok ? "" : r.value.error).toBe(true);
+        }
+      }
+      const numbers = (
+        await prisma.candidate.findMany({
+          where: { electionId, status: "approved" },
+          select: { number: true },
+        })
+      ).map((c) => c.number);
+      expect(new Set(numbers).size, "兩位候選人的號次撞號").toBe(2);
+      expect(numbers.every((n) => n !== null), "有候選人沒被編號").toBe(true);
+    }
+  }, 120_000);
+});
+
+describe("D7-3 updateElection：狀態檢查與寫入不再跨交易", () => {
+  const SLUG = "d7-edit";
+  let electionId: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    const created = await makeElection({ slug: SLUG });
+    electionId = created.electionId!;
+    await generateKeys(electionId, SLUG);
+    await importVoters(electionId, [VOTER_A, CAND_A]);
+    await advanceTo(electionId, "registration");
+    await registerAs(SLUG, electionId, CAND_A);
+    await approveAll(electionId);
+    await advanceTo(electionId, "campaigning");
+  }, 90_000);
+
+  it("投票開放一旦 commit，卡住的 updateElection 必須讀到新狀態並被擋下", async () => {
+    const lock = await holdElectionLock(electionId, "no key update");
+    try {
+      await lock.client.query(`UPDATE "Election" SET status = 'voting' WHERE id = $1`, [
+        electionId,
+      ]);
+
+      const start = new Date(Date.now() - 100 * HOUR);
+      const end = new Date(Date.now() - HOUR);
+      const form = new FormData();
+      form.set("title", "被改掉的選舉");
+      form.set("slug", "d7-edit-changed");
+      form.set("kind", "other");
+      form.set("seats", "7");
+      form.set("maxChoices", "7");
+      form.set("votingStartsAt", toLocalInput(start));
+      form.set("votingEndsAt", toLocalInput(end));
+      const editing = as(MODERATOR, () => updateElection(electionId, null, form));
+      await settle();
+      await lock.release();
+      const edited = await editing;
+
+      expect(edited.ok, "投票已開放，編輯本應被 LOCKED_STATUSES 擋下").toBe(false);
+
+      const e = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+      expect(e.status).toBe("voting");
+      expect(e.slug, "公開連結不該被換掉").toBe(SLUG);
+      expect(e.seats, "名額不該在投票期間被改").not.toBe(7);
+      expect(
+        e.votingEndsAt === null || e.votingEndsAt.getTime() >= Date.now() - HOUR,
+        "投票截止時間不該被改成過去",
+      ).toBe(true);
+    } catch (e) {
+      await lock.abort();
+      throw e;
+    }
+  }, 60_000);
+});
+
+describe("D7-4 removeVoter：狀態檢查與寫入不再跨交易", () => {
+  const SLUG = "d7-roster";
+  let electionId: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    const created = await makeElection({ slug: SLUG });
+    electionId = created.electionId!;
+    await generateKeys(electionId, SLUG);
+    await importVoters(electionId, [VOTER_A, VOTER_B, CAND_A]);
+    await advanceTo(electionId, "registration");
+    await registerAs(SLUG, electionId, CAND_A);
+    await approveAll(electionId);
+    await advanceTo(electionId, "campaigning");
+  }, 90_000);
+
+  it("投票開放一旦 commit，卡住的 removeVoter 必須讀到新狀態並被擋下，票不會被靜默 cascade 刪掉", async () => {
+    const voter = await prisma.voter.findUniqueOrThrow({
+      where: { electionId_email: { electionId, email: VOTER_A.email } },
+    });
+
+    const lock = await holdElectionLock(electionId, "no key update");
+    try {
+      await lock.client.query(`UPDATE "Election" SET status = 'voting' WHERE id = $1`, [
+        electionId,
+      ]);
+
+      const removing = as(ADMIN, () => removeVoter(electionId, voter.id));
+      await settle();
+      await lock.release();
+      const removed = await removing;
+
+      expect(removed.ok, "投票已開放，名冊刪除本應被擋下").toBe(false);
+      expect(
+        await prisma.voter.count({ where: { id: voter.id } }),
+        "投票人不該被從名冊移除",
+      ).toBe(1);
+    } catch (e) {
+      await lock.abort();
+      throw e;
+    }
+  }, 60_000);
+});
+
+describe("D7-5 submitResults：狀態檢查與寫入不再跨交易", () => {
+  const SLUG = "d7-publish";
+  let electionId: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    const created = await makeElection({ slug: SLUG });
+    electionId = created.electionId!;
+    const { publicKeyJwk, keyFiles } = await generateKeys(electionId, SLUG);
+    await importVoters(electionId, [VOTER_A, VOTER_B, CAND_A, CAND_B]);
+    await advanceTo(electionId, "registration");
+    await registerAs(SLUG, electionId, CAND_A);
+    await registerAs(SLUG, electionId, CAND_B);
+    const approved = await approveAll(electionId);
+    await advanceTo(electionId, "voting");
+    await voteAs(SLUG, electionId, VOTER_A, publicKeyJwk, {
+      type: "choose",
+      candidateIds: [approved[0].id],
+    });
+    await voteAs(SLUG, electionId, VOTER_B, publicKeyJwk, {
+      type: "choose",
+      candidateIds: [approved[0].id],
+    });
+    await advanceTo(electionId, "closed");
+    await seal(electionId);
+    const t = await tallyAndSubmit(electionId, SLUG, keyFiles);
+    expect(t.submitted.ok, "首次提交結果應成功").toBe(true);
+  }, 120_000);
+
+  it("公告一旦把狀態 commit 成 published，卡住的重新提交必須讀到新狀態並被擋下，結果不被覆寫", async () => {
+    const before = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    const results = JSON.parse(JSON.stringify(before.resultsJson)) as {
+      candidates: { candidateId: string; elected: boolean }[];
+    };
+    const disclosures = JSON.parse(JSON.stringify(before.disclosuresJson));
+    // 只翻當選旗標：verifyDisclosures 不驗 elected，所以形狀檢查照樣過。
+    for (const c of results.candidates) c.elected = !c.elected;
+
+    const lock = await holdElectionLock(electionId, "no key update");
+    try {
+      // 模擬 publishAnnouncement 正要把 sealed → published commit 掉。
+      await lock.client.query(`UPDATE "Election" SET status = 'published' WHERE id = $1`, [
+        electionId,
+      ]);
+
+      const submitting = as(MODERATOR, () => submitResults(electionId, results, disclosures));
+      await settle();
+      await lock.release();
+      const sub = await submitting;
+
+      expect(sub.ok, "已公告的選舉不該再接受結果提交").toBe(false);
+
+      const after = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+      expect(after.status).toBe("published");
+      const stored = after.resultsJson as unknown as {
+        candidates: { candidateId: string; elected: boolean }[];
+      };
+      const flipped = stored.candidates.map((c) => c.elected);
+      const original = (
+        before.resultsJson as unknown as { candidates: { elected: boolean }[] }
+      ).candidates.map((c) => c.elected);
+      expect(flipped, "公告之後結果不該被改寫").toEqual(original);
     } catch (e) {
       await lock.abort();
       throw e;
