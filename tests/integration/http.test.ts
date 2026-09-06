@@ -154,6 +154,28 @@ describe("檔案端點的邊界", () => {
     });
     expect(res.status).toBe(415);
   });
+
+  it("WebP magic bytes 比對要看真正的位元組，不能被 ascii 轉換的高位元遮罩騙過", async () => {
+    await prisma.election.update({ where: { id: electionId }, data: { status: "registration" } });
+    // 這些位元組把 "RIFF"/"WEBP" 每個字元的高位元都設成 1（例如 0x52 'R' -> 0xD2）。
+    // 用 Buffer#toString("ascii") 比對時，Node 會遮掉每個位元組的高位元，
+    // 於是這串「根本不是 RIFF/WEBP」的假資料會被誤判成合法的 WebP 檔頭。
+    const fakeRiffWebp = new Uint8Array([
+      0xd2, 0xc9, 0xc6, 0xc6, // 遮罩後才會變成 "RIFF"
+      0, 0, 0, 0,
+      0xd7, 0xc5, 0xc2, 0xd0, // 遮罩後才會變成 "WEBP"
+    ]);
+    const form = new FormData();
+    form.set("electionId", electionId);
+    form.set("kind", "photo");
+    form.set("file", new File([fakeRiffWebp], "fake.webp", { type: "image/webp" }));
+    const res = await fetch(`${APP_URL}/api/upload`, {
+      method: "POST",
+      headers: { Cookie: cookieHeader(await signTestToken(CAND)) },
+      body: form,
+    });
+    expect(res.status).toBe(415);
+  });
 });
 
 describe("CSV 公式注入防護（roster／disclosures 的自由文字欄位）", () => {

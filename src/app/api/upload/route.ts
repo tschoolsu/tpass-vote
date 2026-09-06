@@ -29,6 +29,12 @@ function isUploadKind(v: unknown): v is UploadKind {
 // 所以要另外驗證檔案開頭的 magic bytes 真的是圖片，非圖片（含偽裝成 image/png 的文字/HTML）一律拒收。
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
+// WebP：前 4 bytes "RIFF"，第 9~12 bytes "WEBP"（中間 4 bytes 是檔案大小，不用比對）。
+// 注意：一定要用 Buffer 比對位元組，不能 toString("ascii") 再比字串——
+// Node 的 ascii 編碼會遮掉每個位元組的高位元，讓「根本不是 RIFF/WEBP」的
+// 資料被誤判成合法檔頭。
+const RIFF_MAGIC = Buffer.from("RIFF", "latin1");
+const WEBP_MAGIC = Buffer.from("WEBP", "latin1");
 
 function isValidPhotoBytes(buf: Buffer): boolean {
   if (buf.length >= PNG_MAGIC.length && buf.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) {
@@ -37,11 +43,10 @@ function isValidPhotoBytes(buf: Buffer): boolean {
   if (buf.length >= JPEG_MAGIC.length && buf.subarray(0, JPEG_MAGIC.length).equals(JPEG_MAGIC)) {
     return true;
   }
-  // WebP：前 4 bytes "RIFF"，第 9~12 bytes "WEBP"（中間 4 bytes 是檔案大小，不用比對）。
   if (
     buf.length >= 12 &&
-    buf.subarray(0, 4).toString("ascii") === "RIFF" &&
-    buf.subarray(8, 12).toString("ascii") === "WEBP"
+    buf.subarray(0, 4).equals(RIFF_MAGIC) &&
+    buf.subarray(8, 12).equals(WEBP_MAGIC)
   ) {
     return true;
   }
