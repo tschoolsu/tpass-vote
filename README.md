@@ -154,4 +154,5 @@ envelope 加密，沒開票私鑰誰都打不開）、**外信封＝你的身分
 - 資料庫走 Prisma 7 + `@prisma/adapter-pg`（`src/lib/db.ts`），client 生成在 `src/generated/`（不進 git，`pnpm install` 的 postinstall 會產）；schema 改動只透過 `prisma migrate dev` 產 migration。準則見 tpass-ops `docs/handbook/01-new-service.md`〈資料庫〉。
 - 開票私鑰永不落地：`Election.tallyPublicKeyJwk` 只存公鑰；`sealedBox` 是彌封（去識別、洗牌）後的密文快照。細節與紅線見 `AGENTS.md`。
 - 檔案儲存 `src/lib/storage.ts` 預設 `local` driver（寫 `./.uploads`，本機 demo 用）；
-  上線把 `STORAGE_DRIVER=s3` 接 Supabase Storage / S3，URL 全 env 驅動。
+  正式站也用 `local` 寫主機本機目錄 `.uploads/`（pm2 cwd 釘在服務目錄，備份腳本涵蓋，與 tpass-appeals 相同做法）。
+  `STORAGE_DRIVER=s3` 只是預留接口，driver 裡是三個 throw，未實作，**不要設**。
