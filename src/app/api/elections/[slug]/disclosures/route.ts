@@ -2,7 +2,10 @@
 //
 // 為什麼不把整份明細塞進結果頁：全校在結果公告後同時來看，每頁多幾百 KB 就會把
 // 服務的記憶體推到 pm2 的重啟門檻（壓力測試量過）。頁面只渲染前幾十筆，
-// 要全部的人從這裡下載，要查自己那張票的人用 ?code= 查單筆。
+// 要全部的人從這裡下載；要查自己那張票的人用 POST 查單筆。
+//
+// 單筆查詢一定要走 POST body、不能是 GET 的 ?code=：query string 會留在
+// nginx／Cloudflare 的存取記錄與瀏覽器歷史裡，等於把「誰在查哪個代碼」永久留痕。
 //
 // 安全邊界：只在結果已公告時開放；明細本身已去識別（代碼與選舉人的連結在彌封時銷毀），
 // 所以不需要登入即可取得——法規要求的就是「公開」。
@@ -49,8 +52,13 @@ function describe(entry: DisclosureEntry, labels: Map<string, string>): string {
   }
 }
 
-export async function GET(req: NextRequest, ctx: RouteContext<"/api/elections/[slug]/disclosures">) {
-  const { slug } = await ctx.params;
+interface LoadedElection {
+  entries: DisclosureEntry[];
+  labels: Map<string, string>;
+  sealedHash: string | null;
+}
+
+async function loadElection(slug: string): Promise<LoadedElection | null> {
   const election = await prisma.election.findFirst({
     where: { slug, hiddenAt: null, status: "published" },
     select: {
@@ -64,34 +72,23 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/elections/[s
       },
     },
   });
-  if (!election || !Array.isArray(election.disclosuresJson)) {
-    return NextResponse.json({ error: "not found" }, { status: 404 });
-  }
+  if (!election || !Array.isArray(election.disclosuresJson)) return null;
+  return {
+    entries: election.disclosuresJson as unknown as DisclosureEntry[],
+    labels: labelOf(election.kind, election.candidates),
+    sealedHash: election.sealedHash,
+  };
+}
 
-  const entries = election.disclosuresJson as unknown as DisclosureEntry[];
-  const labels = labelOf(election.kind, election.candidates);
+export async function GET(req: NextRequest, ctx: RouteContext<"/api/elections/[slug]/disclosures">) {
+  const { slug } = await ctx.params;
+  const loaded = await loadElection(slug);
+  if (!loaded) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const { entries, labels, sealedHash } = loaded;
+
   // 內容只由彌封決定，公告後不會再變——用 sealedHash 當 ETag，命中就 304 免序列化。
   const cacheControl = "public, max-age=300, s-maxage=3600";
-
-  // 單筆查詢：投票人拿收據來核對自己那一票。
-  const code = req.nextUrl.searchParams.get("code")?.trim().toLowerCase();
-  if (code) {
-    // 存在性檢查一定要在條件請求判斷之前：ETag 只由 sealedHash＋code 組成，
-    // sealedHash 本身透過 /sealed-box 公開可查，猜一個代碼配上就能拼出合法格式的
-    // If-None-Match——先信它就等於讓偽造的快取命中蓋過「這代碼到底存不存在」。
-    const found = entries.find((e) => e.code === code);
-    if (!found) return NextResponse.json({ found: false }, { status: 404 });
-    const etag = `"${election.sealedHash ?? "none"}-${code}"`;
-    if (req.headers.get("if-none-match") === etag) {
-      return new NextResponse(null, { status: 304, headers: { ETag: etag, "Cache-Control": cacheControl } });
-    }
-    return NextResponse.json(
-      { found: true, code: found.code, summary: describe(found, labels) },
-      { headers: { "Cache-Control": cacheControl, ETag: etag } },
-    );
-  }
-
-  const etag = `"${election.sealedHash ?? "none"}"`;
+  const etag = `"${sealedHash ?? "none"}"`;
   if (req.headers.get("if-none-match") === etag) {
     return new NextResponse(null, { status: 304, headers: { ETag: etag, "Cache-Control": cacheControl } });
   }
@@ -105,4 +102,32 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/elections/[s
       ETag: etag,
     },
   });
+}
+
+// 單筆查詢：投票人拿收據來核對自己那一票。POST body 帶 code，不是 query string。
+export async function POST(req: NextRequest, ctx: RouteContext<"/api/elections/[slug]/disclosures">) {
+  const { slug } = await ctx.params;
+  const body = (await req.json().catch(() => null)) as { code?: unknown } | null;
+  const code = typeof body?.code === "string" ? body.code.trim().toLowerCase() : "";
+  if (!code) return NextResponse.json({ error: "code required" }, { status: 400 });
+
+  const loaded = await loadElection(slug);
+  if (!loaded) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const { entries, labels, sealedHash } = loaded;
+
+  // 存在性檢查一定要在條件請求判斷之前：ETag 只由 sealedHash＋code 組成，
+  // sealedHash 本身透過 /sealed-box 公開可查，猜一個代碼配上就能拼出合法格式的
+  // If-None-Match——先信它就等於讓偽造的快取命中蓋過「這代碼到底存不存在」。
+  const found = entries.find((e) => e.code === code);
+  if (!found) return NextResponse.json({ found: false }, { status: 404 });
+
+  const cacheControl = "private, max-age=300";
+  const etag = `"${sealedHash ?? "none"}-${code}"`;
+  if (req.headers.get("if-none-match") === etag) {
+    return new NextResponse(null, { status: 304, headers: { ETag: etag, "Cache-Control": cacheControl } });
+  }
+  return NextResponse.json(
+    { found: true, code: found.code, summary: describe(found, labels) },
+    { headers: { "Cache-Control": cacheControl, ETag: etag } },
+  );
 }

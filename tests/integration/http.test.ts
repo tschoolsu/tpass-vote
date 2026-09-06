@@ -26,6 +26,18 @@ async function get(path: string, identity: TestIdentity | null = null, redirect:
   return fetch(`${APP_URL}${path}`, { headers, redirect });
 }
 
+/** 帶著某人的通行證發 JSON POST；identity 傳 null 就是未登入。 */
+async function post(
+  path: string,
+  body: unknown,
+  identity: TestIdentity | null = null,
+  extraHeaders: Record<string, string> = {},
+) {
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...extraHeaders };
+  if (identity) headers.Cookie = cookieHeader(await signTestToken(identity));
+  return fetch(`${APP_URL}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+}
+
 const XSS = '<script>alert("xss")</script>';
 const CAND: TestIdentity = { email: "httpcand@test.local", name: `候選人${XSS}` };
 
@@ -187,25 +199,35 @@ describe("彌封快照端點（§26-1 Ⅵ）", () => {
     expect(csv).not.toContain(VOTER_A.name!);
   });
 
-  it("收據可以用 ?code= 查到自己那一票，查不到的代碼回 404", async () => {
+  it("收據代碼查詢改用 POST，不再吃 GET 的 ?code=（代碼不進存取記錄）", async () => {
     const e = await prisma.election.findFirstOrThrow({ where: { slug } });
     const entries = e.disclosuresJson as unknown as { code: string }[];
-    const hit = await get(`/api/elections/${slug}/disclosures?code=${entries[0].code}`);
+
+    // GET 帶 ?code= 不再觸發查詢：等同沒帶 code，只回完整明細 CSV。
+    const getWithCode = await get(`/api/elections/${slug}/disclosures?code=${entries[0].code}`);
+    expect(getWithCode.status).toBe(200);
+    expect(getWithCode.headers.get("content-type")).toContain("text/csv");
+
+    // POST body 帶 code 才能查到自己那一票。
+    const hit = await post(`/api/elections/${slug}/disclosures`, { code: entries[0].code });
     expect(hit.status).toBe(200);
     expect(((await hit.json()) as { found: boolean }).found).toBe(true);
 
-    const miss = await get(`/api/elections/${slug}/disclosures?code=ffffffffffff`);
+    const miss = await post(`/api/elections/${slug}/disclosures`, { code: "ffffffffffff" });
     expect(miss.status).toBe(404);
   });
 
   it("偽造的 If-None-Match 配不存在的代碼，仍要回 404——存在性檢查不能被快取命中蓋過", async () => {
     const e = await prisma.election.findFirstOrThrow({ where: { slug } });
     // sealedHash 本身透過 /sealed-box 端點公開可查，攻擊者能自己拼出 `"<sealedHash>-<猜的代碼>"`
-    // 這個 ETag 格式去打 ?code= 查詢。
+    // 這個 ETag 格式去打 POST 查詢。
     const forgedEtag = `"${e.sealedHash}-ffffffffffff"`;
-    const res = await fetch(`${APP_URL}/api/elections/${slug}/disclosures?code=ffffffffffff`, {
-      headers: { "If-None-Match": forgedEtag },
-    });
+    const res = await post(
+      `/api/elections/${slug}/disclosures`,
+      { code: "ffffffffffff" },
+      null,
+      { "If-None-Match": forgedEtag },
+    );
     expect(res.status, "帶著猜中的 ETag 查一個不存在的代碼，不該被當成「快取命中」放行").toBe(404);
   });
 

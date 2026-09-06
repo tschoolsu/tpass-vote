@@ -26,9 +26,11 @@ export function ReceiptLookup({ slug }: { slug: string }) {
     if (code === "") return;
     setState({ kind: "loading" });
     try {
-      const res = await fetch(
-        `/api/elections/${encodeURIComponent(slug)}/disclosures?code=${encodeURIComponent(code)}`,
-      );
+      const res = await fetch(`/api/elections/${encodeURIComponent(slug)}/disclosures`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
       if (res.status === 404) {
         setState({ kind: "missing" });
         return;
