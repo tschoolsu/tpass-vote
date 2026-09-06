@@ -33,7 +33,7 @@ export async function castBallot(slug: string, ciphertext: string): Promise<Cast
   if (!election) return { ok: false, error: "找不到這場選舉" };
 
   const voter = await prisma.voter.findUnique({
-    where: { electionId_email: { electionId: election.id, email: session.email.trim().toLowerCase() } },
+    where: { electionId_email: { electionId: election.id, email: session.email } },
   });
 
   // 交易外先擋一次：名冊外、時程未到這類註定失敗的請求不必進去排隊搶鎖。

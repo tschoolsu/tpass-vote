@@ -44,7 +44,7 @@ export default async function VotePage({
   const shareUrl = new URL(`/e/${slug}/vote`, authConfig.selfUrl).toString();
 
   const voter = await prisma.voter.findUnique({
-    where: { electionId_email: { electionId: election.id, email: session.email.trim().toLowerCase() } },
+    where: { electionId_email: { electionId: election.id, email: session.email } },
   });
 
   // 不在名冊：不管選舉狀態，先擋在這——這是身分/資格問題，不是時程問題。

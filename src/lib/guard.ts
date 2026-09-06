@@ -19,7 +19,9 @@ export async function requireSession(returnPath = "/"): Promise<TPassClaims> {
   // ban（restriction=ban 尚未過期）：read=false，導去 auth 的 /denied 頁看原因。
   // 正常情況下 authorize 就會擋下不簽票，這裡是舊票在 TTL 內仍帶著 ban 前狀態時的第二道保險。
   if (!tpass.permOf(session).read) redirect(deniedUrlFor());
-  return session;
+  // auth 簽出的 email claim 不保證恆為小寫，這裡收斂成唯一的正規化點——
+  // 全 repo 用 session.email 做 unique／比對的地方都吃到同一份正規化值。
+  return { ...session, email: session.email.trim().toLowerCase() };
 }
 
 export async function requireAdmin(returnPath = "/admin"): Promise<TPassClaims> {
