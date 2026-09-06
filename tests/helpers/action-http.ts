@@ -124,13 +124,16 @@ export interface CallActionOptions {
 }
 
 /** 對 `${APP_URL}${routePath}` 發一個真正的 server action HTTP 請求。
- * 不解析 Flight 回應本體——呼叫端靠狀態碼＋回 DB 查副作用斷言就夠了。 */
+ * 不完整解析 Flight 回應本體，只用子字串比對抓出業務層的 ok/false（body 是純文字的
+ * `1:{"ok":true,...}` 這類 Flight 編碼，"ok":true 一定原樣出現在裡面）；呼叫端仍應
+ * 靠回 DB 查副作用做最終斷言——`ok` 只用來對得上「伺服器說成功」跟「真的寫進去了」
+ * 是不是同一件事，不能單獨當作成功的證明。 */
 export async function callAction(
   exportedName: string,
   routePath: string,
   args: unknown[],
   opts: CallActionOptions = {},
-): Promise<{ status: number; text: string }> {
+): Promise<{ status: number; text: string; ok: boolean }> {
   const { id } = resolveAction(exportedName, routePath);
 
   const headers: Record<string, string> = {
@@ -150,5 +153,6 @@ export async function callAction(
     body: JSON.stringify(args),
     redirect: "manual",
   });
-  return { status: res.status, text: await res.text() };
+  const text = await res.text();
+  return { status: res.status, text, ok: text.includes('"ok":true') };
 }

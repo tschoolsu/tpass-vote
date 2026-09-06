@@ -12,8 +12,10 @@
 // 投票本身一律經 HTTP 打真正跑起來的 next start（tests/helpers/action-http.ts），
 // 不在 vitest process 內直接 `import { castBallot }` 呼叫——後者走的是測試 process 自己
 // 的 Prisma pool，appRssMb() 盯的 next start 反而在旁邊閒置，量出來的 RSS／連線池數字
-// 跟正式服務在投票尖峰的行為無關。castBallot 回傳值是 React Flight 編碼，這裡不解析，
-// 一律靠 HTTP 狀態碼＋回 DB 查副作用斷言。
+// 跟正式服務在投票尖峰的行為無關。castBallot 回傳值是 React Flight 編碼，這裡不完整解析，
+// 只靠 callAction 回傳的 ok（body 是否含 `"ok":true` 的子字串比對）判斷業務層成敗，
+// 真正的斷言一律回 DB 查副作用——「伺服器說 ok」跟「票真的躺在票匭裡」是兩件事，
+// 兩個都要對上。
 import { describe, it, expect, beforeAll } from "vitest";
 import { prisma, resetDb } from "../helpers/db";
 import { APP_URL } from "../helpers/env";
@@ -127,6 +129,31 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     // 請求真的打到伺服器的證據：DB 票數剛好等於名冊人數。settled.length 恆等於
     // jobs.length（Promise.allSettled 的定義），拿它斷言證明不了任何事，這裡不寫。
     expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(VOTERS);
+
+    // 光看總數等於 VOTERS 抓不到「伺服器回 ok，交易卻沒真的 commit」——逐一核對每個人：
+    // 回 ok 就該在票匭裡看到這次送出的密文，沒回 ok 就不該有票。
+    const ballotRows = await prisma.encryptedBallot.findMany({
+      where: { electionId },
+      select: { voterId: true, ciphertext: true },
+    });
+    const voterRows = await prisma.voter.findMany({
+      where: { electionId, email: { in: voters.map((v) => v.email) } },
+      select: { id: true, email: true },
+    });
+    const voterIdByEmail = new Map(voterRows.map((v) => [v.email, v.id]));
+    const ciphertextByVoterId = new Map(ballotRows.map((b) => [b.voterId, b.ciphertext]));
+    jobs.forEach((job, i) => {
+      const res = settled[i];
+      if (res.status !== "fulfilled") return; // 例外已經在上面 rejected 斷言裡處理
+      const voterId = voterIdByEmail.get(job.voter.email)!;
+      const stored = ciphertextByVoterId.get(voterId) ?? null;
+      if (res.value.ok) {
+        expect(stored, `${job.voter.email} 的請求回 ok，票匭裡卻沒有這張票`).toBe(job.ciphertext);
+      } else {
+        expect(stored, `${job.voter.email} 的請求沒回 ok，票匭裡卻多了一張票`).toBeNull();
+      }
+    });
+
     console.log(`  ▸ RSS 灌爆前後：${rssBefore ?? "?"}MB → ${appRssMb() ?? "?"}MB`);
     trackRss("投票灌爆");
   });
@@ -265,27 +292,31 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const total = await prisma.encryptedBallot.count({ where: { electionId } });
     expect(total, "票匭張數超過名冊人數＝有人投了不只一張").toBeLessThanOrEqual(VOTERS);
 
-    // 不解析 Flight body，所以分不出誰的請求被伺服器判定 ok、誰被拒——但不管輸贏，票位的
-    // 密文只能是兩種值之一：這次送出的新密文（被接受覆寫），或競速前的舊密文（被拒絕、
-    // 原封不動）。出現第三種值＝關票競態把票位寫壞了（例如竄進了別人的密文）。
-    const ctByVoterId = new Map(
-      jobs.map((j) => [raceVoters.find((v) => v.email === j.voter.email)!.id, j.ciphertext]),
-    );
+    // callAction 現在會回傳 ok（有沒有真的判定成功），不必再靠「密文屬於兩個可能值之一」
+    // 這種弱斷言去猜誰贏了——直接核對「回 ok 的，密文就該是這次送出的值；沒回 ok 的，密文
+    // 就該原封不動」，抓得到「伺服器回 ok，但交易其實回滾／被關票競態插隊」這種情況。
     const raceBallots = await prisma.encryptedBallot.findMany({
       where: { voterId: { in: raceVoters.map((v) => v.id) } },
       select: { voterId: true, ciphertext: true },
     });
-    const emailByVoterId = new Map(raceVoters.map((v) => [v.id, v.email]));
+    const ciphertextByVoterId = new Map(raceBallots.map((b) => [b.voterId, b.ciphertext]));
     let accepted = 0;
-    for (const b of raceBallots) {
-      const submitted = ctByVoterId.get(b.voterId);
-      const beforeCt = beforeCtByVoterId.get(b.voterId) ?? null;
-      if (b.ciphertext === submitted) accepted++;
-      expect(
-        [submitted, beforeCt],
-        `${emailByVoterId.get(b.voterId)} 的票位密文既不是這次送出的、也不是競速前的舊值——被關票競態寫壞了`,
-      ).toContain(b.ciphertext);
-    }
+    jobs.forEach((job, i) => {
+      const res = responses[i];
+      const voterId = raceVoters.find((v) => v.email === job.voter.email)!.id;
+      const stored = ciphertextByVoterId.get(voterId) ?? null;
+      const beforeCt = beforeCtByVoterId.get(voterId) ?? null;
+      if (res.ok) {
+        accepted++;
+        expect(stored, `${job.voter.email} 的請求回 ok，票位密文卻不是這次送出的值`).toBe(
+          job.ciphertext,
+        );
+      } else {
+        expect(stored, `${job.voter.email} 的請求沒回 ok，票位密文卻被改成這次送出的值`).toBe(
+          beforeCt,
+        );
+      }
+    });
     console.log(
       `  ▸ ${latecomers.length} 位競速投票人裡，這次請求被接受覆寫 ${accepted} 張，其餘維持舊票或未投過`,
     );
@@ -297,8 +328,9 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
       where: { electionId_email: { electionId, email: voters[3].email } },
     });
     const before = await prisma.encryptedBallot.findUnique({ where: { voterId: target.id } });
-    await castViaHttp(voters[3], jobs[0].ciphertext);
+    const lateRes = await castViaHttp(voters[3], jobs[0].ciphertext);
     const after = await prisma.encryptedBallot.findUnique({ where: { voterId: target.id } });
+    expect(lateRes.ok, "投票已截止，這張補送的票卻回 ok").toBe(false);
     expect(after?.ciphertext ?? null, "投票已截止，票匭裡的密文卻被改寫了").toBe(
       before?.ciphertext ?? null,
     );
@@ -306,12 +338,13 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     trackRss("截止瞬間");
   });
 
-  it("彌封與開票在大票匭下不會爆記憶體", async () => {
+  it("彌封與開票在大票匭下耗時合理", async () => {
+    // seal()／tallyAndSubmit() 是 in-process 直接呼叫（見檔頭說明），不是經 HTTP 打伺服器，
+    // 這裡量的是「伺服器」process 的 RSS，量到的其實是伺服器閒置時的數字，跟這兩個操作
+    // 實際吃掉多少記憶體無關——不再假裝那是伺服器的用量，只留執行耗時。
     const sealed = await timed(() => seal(electionId));
-    trackRss("彌封");
     const tallied = await timed(() => tallyAndSubmit(electionId, SLUG, keyFiles));
     expect(tallied.value.submitted.ok).toBe(true);
-    trackRss("開票");
     console.log(
       `  ▸ 彌封 ${Math.round(sealed.ms)}ms・開票 ${Math.round(tallied.ms)}ms（${VOTERS} 張）`,
     );
