@@ -153,6 +153,9 @@ envelope 加密，沒開票私鑰誰都打不開）、**外信封＝你的身分
 - 「誰能管選舉」只讀通行證的 `permissions` claim（`src/config/admin.ts` 的 `isAdmin`／`isSuperAdmin`），不查 DB、不讀 env；名單在 auth 的 `/admin` panel 管（2026-07-27 起，Admin 表已由 migration 砍掉）。
 - 資料庫走 Prisma 7 + `@prisma/adapter-pg`（`src/lib/db.ts`），client 生成在 `src/generated/`（不進 git，`pnpm install` 的 postinstall 會產）；schema 改動只透過 `prisma migrate dev` 產 migration。準則見 tpass-ops `docs/handbook/01-new-service.md`〈資料庫〉。
 - 開票私鑰永不落地：`Election.tallyPublicKeyJwk` 只存公鑰；`sealedBox` 是彌封（去識別、洗牌）後的密文快照。細節與紅線見 `AGENTS.md`。
-- 檔案儲存 `src/lib/storage.ts` 預設 `local` driver（寫 `./.uploads`，本機 demo 用）；
-  正式站也用 `local` 寫主機本機目錄 `.uploads/`（pm2 cwd 釘在服務目錄，備份腳本涵蓋，與 tpass-appeals 相同做法）。
+- 檔案儲存 `src/lib/storage.ts` 的 `local` driver 是唯一能用、也是正式站要用的方案
+  （寫主機服務目錄下的 `.uploads/`，pm2 cwd 釘在服務目錄，與 tpass-appeals 相同做法）。
   `STORAGE_DRIVER=s3` 只是預留接口，driver 裡是三個 throw，未實作，**不要設**。
+  ⚠️ 備份腳本的 `STATE_DIRS` 平常收 `.uploads/`，但**投票視窗期間主機會設
+  `BACKUP_EXCLUDE_SERVICES=vote`**（見 tpass-ops `docs/ONBOARDING.md`〈投票期間排除備份〉），
+  那段期間 `.uploads/`（含候選人相片）完全不進備份——選舉進行中主機掛了，相片沒有備份可還原。

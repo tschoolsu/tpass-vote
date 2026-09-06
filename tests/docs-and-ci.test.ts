@@ -45,3 +45,46 @@ describe("C-5：CI 補查核 + 文件與文案修正", () => {
     expect(missingBlock).toMatch(/最後一次/);
   });
 });
+
+// F-11：README 的儲存方案說法、election-sop.md 的雙人比對清單，兩處都要跟真相一致。
+//
+// - README 舊文案要嘛叫人上線設 STORAGE_DRIVER=s3（driver 是三個 throw，會 500），要嘛
+//   自己在同一顆 bullet 裡先說「本機 demo 用」又說「正式站也用 local」，自相矛盾。改寫後
+//   要單一自洽地講「local 是正式站方案」，並老實揭露投票視窗期間備份腳本會用
+//   BACKUP_EXCLUDE_SERVICES=vote 整個排除 .uploads/（見 tpass-ops ONBOARDING.md），
+//   不能無條件宣稱「備份腳本涵蓋」。
+// - SOP 比對清單新增的「當選」欄位，字樣要跟畫面（TallyClient.tsx：當選／未當選／同票）
+//   一致，且第 3 步（兩人各自算什麼）要跟第 4 步（比對什麼）對得起來。
+// - SOP 補充段要老實區分：「當選」「投票率」是 tally.ts 在瀏覽器本地算出來的，雙人比對
+//   擋得住；「選舉人總數」（rosterCount）只是伺服器算好直接傳給瀏覽器顯示，兩人畫面看到
+//   同一個數字，比對擋不住竄改。
+describe("F-11：儲存方案文案不自相矛盾、SOP 比對清單字樣對得上畫面", () => {
+  it("README 的檔案儲存段落沒有「本機 demo 用」跟「正式站也用 local」自相矛盾，且誠實揭露投票期間備份被排除", () => {
+    const readme = readFileSync(path.join(repoRoot, "README.md"), "utf8");
+    const storageBlock = readme.slice(
+      readme.indexOf("檔案儲存"),
+      readme.indexOf("檔案儲存") + 700,
+    );
+    expect(storageBlock).not.toMatch(/本機 demo 用/);
+    expect(storageBlock).toMatch(/STORAGE_DRIVER=s3/);
+    expect(storageBlock).toMatch(/三個 throw/);
+    expect(storageBlock).toMatch(/BACKUP_EXCLUDE_SERVICES=vote/);
+    expect(storageBlock).toMatch(/不進備份/);
+  });
+
+  it("election-sop.md 比對清單的當選狀態字樣跟畫面一致（當選／未當選／同票），且第 3 步就有算當選標示", () => {
+    const sop = readFileSync(path.join(repoRoot, "docs/election-sop.md"), "utf8");
+    expect(sop).toContain("每位候選人的當選／未當選／同票標示");
+    expect(sop).not.toMatch(/當選／落選／同票/);
+    const step3 = sop.slice(sop.indexOf("3. 兩人各自讓瀏覽器"), sop.indexOf("4. 兩人對照"));
+    expect(step3).toMatch(/是否當選/);
+  });
+
+  it("election-sop.md 老實區分：當選／投票率是瀏覽器本地算的（比對擋得住），選舉人總數只是伺服器傳過去顯示（比對擋不住）", () => {
+    const sop = readFileSync(path.join(repoRoot, "docs/election-sop.md"), "utf8");
+    expect(sop).not.toMatch(/目前由選委的瀏覽器算出後原封提交，伺服器不重算/);
+    const tailBlock = sop.slice(sop.indexOf("兩份金鑰檔只要遺失其中一份"));
+    expect(tailBlock).toMatch(/rosterCount/);
+    expect(tailBlock).toMatch(/擋不住/);
+  });
+});
