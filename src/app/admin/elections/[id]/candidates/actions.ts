@@ -47,7 +47,7 @@ async function renumberApproved(tx: Prisma.TransactionClient, electionId: string
 }
 
 export async function approveCandidate(electionId: string, candidateId: string): Promise<ActionResult> {
-  await requireAdmin(`/admin/elections/${electionId}/candidates`);
+  const admin = await requireAdmin(`/admin/elections/${electionId}/candidates`);
 
   const candidate = await prisma.candidate.findUnique({ where: { id: candidateId } });
   if (!candidate || candidate.electionId !== electionId) return { ok: false, error: "找不到候選人" };
@@ -59,6 +59,15 @@ export async function approveCandidate(electionId: string, candidateId: string):
 
     await tx.candidate.update({ where: { id: candidateId }, data: { status: "approved" } });
     await renumberApproved(tx, electionId);
+    await tx.electionAuditLog.create({
+      data: {
+        electionId,
+        actorEmail: admin.email,
+        action: "approve_candidate",
+        summary: `核准候選人（登記者：${candidate.createdBy}）`,
+        diff: { candidateId } as Prisma.InputJsonValue,
+      },
+    });
     return { ok: true as const };
   }, { timeout: 10_000 });
 
@@ -73,7 +82,7 @@ export async function sendBackForFix(
   candidateId: string,
   reviewNote: string,
 ): Promise<ActionResult> {
-  await requireAdmin(`/admin/elections/${electionId}/candidates`);
+  const admin = await requireAdmin(`/admin/elections/${electionId}/candidates`);
 
   const note = reviewNote.trim();
   if (note === "") return { ok: false, error: "退回補正需要填寫審核意見" };
@@ -91,6 +100,15 @@ export async function sendBackForFix(
       data: { status: "needs_fix", reviewNote: note },
     });
     await renumberApproved(tx, electionId);
+    await tx.electionAuditLog.create({
+      data: {
+        electionId,
+        actorEmail: admin.email,
+        action: "send_back_candidate",
+        summary: `退回候選人補正（登記者：${candidate.createdBy}），理由：${note}`,
+        diff: { candidateId, reviewNote: note } as Prisma.InputJsonValue,
+      },
+    });
     return { ok: true as const };
   }, { timeout: 10_000 });
 
@@ -104,10 +122,12 @@ export async function rejectCandidate(
   candidateId: string,
   reviewNote?: string,
 ): Promise<ActionResult> {
-  await requireAdmin(`/admin/elections/${electionId}/candidates`);
+  const admin = await requireAdmin(`/admin/elections/${electionId}/candidates`);
 
   const candidate = await prisma.candidate.findUnique({ where: { id: candidateId } });
   if (!candidate || candidate.electionId !== electionId) return { ok: false, error: "找不到候選人" };
+
+  const note = reviewNote?.trim() || null;
 
   const result = await prisma.$transaction(async (tx) => {
     const status = await lockElectionStatus(tx, electionId);
@@ -116,9 +136,20 @@ export async function rejectCandidate(
 
     await tx.candidate.update({
       where: { id: candidateId },
-      data: { status: "rejected", reviewNote: reviewNote?.trim() || null },
+      data: { status: "rejected", reviewNote: note },
     });
     await renumberApproved(tx, electionId);
+    await tx.electionAuditLog.create({
+      data: {
+        electionId,
+        actorEmail: admin.email,
+        action: "reject_candidate",
+        summary: note
+          ? `拒絕候選人（登記者：${candidate.createdBy}），理由：${note}`
+          : `拒絕候選人（登記者：${candidate.createdBy}）`,
+        diff: { candidateId, reviewNote: note } as Prisma.InputJsonValue,
+      },
+    });
     return { ok: true as const };
   }, { timeout: 10_000 });
 

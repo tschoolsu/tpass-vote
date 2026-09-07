@@ -10,6 +10,7 @@
 //   母數＝罷免對象職務落地時的 Office.termValidCount 快照）。
 // - §36：同意罷免票數多於不同意罷免票數者，通過。
 import { revalidatePath } from "next/cache";
+import type { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { recallThreshold } from "@/lib/recall";
@@ -17,7 +18,7 @@ import { recallThreshold } from "@/lib/recall";
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
 export async function establishRecall(id: string): Promise<ActionResult> {
-  await requireAdmin(`/admin/elections/${id}`);
+  const admin = await requireAdmin(`/admin/elections/${id}`);
 
   const election = await prisma.election.findUnique({ where: { id } });
   if (!election) return { ok: false, error: "找不到罷免案" };
@@ -38,9 +39,23 @@ export async function establishRecall(id: string): Promise<ActionResult> {
     return { ok: false, error: `連署數 ${count} 未達門檻 ${threshold}，無法成立罷免案` };
   }
 
-  const updated = await prisma.election.updateMany({
-    where: { id, status: "petition" }, // 樂觀鎖：防兩個選委同時推進
-    data: { status: "established" },
+  const updated = await prisma.$transaction(async (tx) => {
+    const result = await tx.election.updateMany({
+      where: { id, status: "petition" }, // 樂觀鎖：防兩個選委同時推進
+      data: { status: "established" },
+    });
+    if (result.count > 0) {
+      await tx.electionAuditLog.create({
+        data: {
+          electionId: id,
+          actorEmail: admin.email,
+          action: "establish_recall",
+          summary: `罷免案成立（連署 ${count} ／門檻 ${threshold}）`,
+          diff: { signatureCount: count, threshold } as Prisma.InputJsonValue,
+        },
+      });
+    }
+    return result;
   });
   if (updated.count === 0) {
     return { ok: false, error: "狀態已被其他選委變更，請重新整理頁面" };
@@ -51,18 +66,30 @@ export async function establishRecall(id: string): Promise<ActionResult> {
   return { ok: true };
 }
 
-// petition 期間駁回：軟刪除（hiddenAt），資料完全保留。reason 目前僅供呼叫端顯示/記錄用途，
-// schema 尚無專屬留痕欄位，不寫入 DB（若未來要稽核追蹤，需另加欄位，不在本階段範圍）。
+// petition 期間駁回：軟刪除（hiddenAt），資料完全保留。reason 寫進 ElectionAuditLog.diff
+// 供事後追查駁回理由（schema 沒有專屬欄位，稽核紀錄本身就是給這種用途用的）。
 export async function rejectRecall(id: string, reason?: string): Promise<ActionResult> {
-  await requireAdmin(`/admin/elections/${id}`);
-  void reason;
+  const admin = await requireAdmin(`/admin/elections/${id}`);
 
   const election = await prisma.election.findUnique({ where: { id } });
   if (!election) return { ok: false, error: "找不到罷免案" };
   if (election.status !== "petition") return { ok: false, error: "只有連署期間的罷免案才能駁回" };
   if (election.hiddenAt) return { ok: false, error: "此罷免案已經是隱藏狀態" };
 
-  await prisma.election.update({ where: { id }, data: { hiddenAt: new Date() } });
+  const trimmedReason = reason?.trim() || null;
+
+  await prisma.$transaction([
+    prisma.election.update({ where: { id }, data: { hiddenAt: new Date() } }),
+    prisma.electionAuditLog.create({
+      data: {
+        electionId: id,
+        actorEmail: admin.email,
+        action: "reject_recall",
+        summary: trimmedReason ? `駁回罷免案，理由：${trimmedReason}` : "駁回罷免案",
+        diff: { reason: trimmedReason } as Prisma.InputJsonValue,
+      },
+    }),
+  ]);
 
   revalidatePath(`/admin/elections/${id}`);
   revalidatePath("/admin");
@@ -70,7 +97,7 @@ export async function rejectRecall(id: string, reason?: string): Promise<ActionR
 }
 
 export async function saveRecallDefense(id: string, text: string): Promise<ActionResult> {
-  await requireAdmin(`/admin/elections/${id}`);
+  const admin = await requireAdmin(`/admin/elections/${id}`);
 
   const election = await prisma.election.findUnique({ where: { id } });
   if (!election) return { ok: false, error: "找不到罷免案" };
@@ -78,7 +105,18 @@ export async function saveRecallDefense(id: string, text: string): Promise<Actio
     return { ok: false, error: "只有已成立的罷免案才能提交答辯書" };
   }
 
-  await prisma.election.update({ where: { id }, data: { recallDefense: text } });
+  await prisma.$transaction([
+    prisma.election.update({ where: { id }, data: { recallDefense: text } }),
+    prisma.electionAuditLog.create({
+      data: {
+        electionId: id,
+        actorEmail: admin.email,
+        action: "save_recall_defense",
+        summary: "更新罷免答辯書",
+        diff: { length: text.length } as Prisma.InputJsonValue,
+      },
+    }),
+  ]);
 
   revalidatePath(`/admin/elections/${id}`);
   return { ok: true };

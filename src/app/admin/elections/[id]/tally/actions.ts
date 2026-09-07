@@ -114,6 +114,16 @@ export async function sealElection(
       // §26-1 Ⅳ：本會不得記錄可回溯代碼與個別選舉人之連結。密文已全數進入洗牌後的
       // sealedBox，這裡把 voterId↔ciphertext 的對應永久刪掉；名冊（Voter.votedAt）保留。
       await tx.encryptedBallot.deleteMany({ where: { electionId } });
+
+      await tx.electionAuditLog.create({
+        data: {
+          electionId,
+          actorEmail: admin.email,
+          action: "seal_election",
+          summary: `彌封選舉（共 ${box.length} 張票）`,
+          diff: { ballotCount: box.length, sealedHash } as Prisma.InputJsonValue,
+        },
+      });
     }, { timeout: 10_000 });
   } catch (e) {
     if (e instanceof Error && e.message === "CONFLICT") {

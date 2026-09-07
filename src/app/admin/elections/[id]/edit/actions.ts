@@ -1,24 +1,59 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { Prisma } from "@/generated/prisma/client";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import {
   parseElectionForm,
   extractFormValues,
   type ElectionFormResult,
+  type ElectionFormValues,
 } from "@/app/admin/elections/election-schema";
 import { LOCKED_STATUSES } from "@/lib/election-status";
 
 // 投票開始後（含之後的每個狀態）選舉基本資料一律鎖定，避免改動 seats/maxChoices
 // 弄亂已經定案的 ballotMode 判定或已公告的期程。
 
+// 供稽核 diff 用：把改動前後的欄位值收斂成同一種可比對、可 JSON 化的形式
+// （Date 轉成 ISO 字串、undefined 轉成 null），只回傳「真的有變」的欄位。
+const DIFF_FIELDS = [
+  "title",
+  "slug",
+  "kind",
+  "seats",
+  "maxChoices",
+  "registrationStartsAt",
+  "registrationEndsAt",
+  "votingStartsAt",
+  "votingEndsAt",
+  "officeId",
+] as const;
+
+function normalizeForDiff(v: unknown): unknown {
+  if (v instanceof Date) return v.toISOString();
+  return v ?? null;
+}
+
+function buildUpdateDiff(
+  before: Record<(typeof DIFF_FIELDS)[number], unknown>,
+  after: ElectionFormValues,
+): Record<string, { from: unknown; to: unknown }> {
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const field of DIFF_FIELDS) {
+    const from = normalizeForDiff(before[field]);
+    const to = normalizeForDiff(after[field]);
+    if (from !== to) changes[field] = { from, to };
+  }
+  return changes;
+}
+
 export async function updateElection(
   electionId: string,
   _prev: ElectionFormResult | null,
   formData: FormData,
 ): Promise<ElectionFormResult> {
-  await requireAdmin(`/admin/elections/${electionId}/edit`);
+  const admin = await requireAdmin(`/admin/elections/${electionId}/edit`);
 
   const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) return { ok: false, error: "找不到選舉" };
@@ -79,6 +114,8 @@ export async function updateElection(
       return { ok: false as const, error: "投票已開始，選舉基本資料已鎖定，不可再修改" };
     }
 
+    const diff = buildUpdateDiff(election, v);
+
     await tx.election.update({
       where: { id: electionId },
       data: {
@@ -92,6 +129,18 @@ export async function updateElection(
         votingStartsAt: v.votingStartsAt ?? null,
         votingEndsAt: v.votingEndsAt ?? null,
         officeId: v.officeId ?? null,
+      },
+    });
+    await tx.electionAuditLog.create({
+      data: {
+        electionId,
+        actorEmail: admin.email,
+        action: "update_election",
+        summary:
+          Object.keys(diff).length > 0
+            ? `修改選舉基本資料（${Object.keys(diff).join("、")}）`
+            : "修改選舉基本資料（無實質變更）",
+        diff: diff as Prisma.InputJsonValue,
       },
     });
     return { ok: true as const };

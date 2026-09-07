@@ -81,6 +81,16 @@ export async function initiateRecall(officeId: string, reason: string): Promise<
         data: { electionId: election.id, signerEmail: session.email },
       });
 
+      await tx.electionAuditLog.create({
+        data: {
+          electionId: election.id,
+          actorEmail: session.email,
+          action: "initiate_recall",
+          summary: `發起罷免（領銜人：${session.email}）`,
+          diff: { officeId: office.id, leadEmail: session.email } as Prisma.InputJsonValue,
+        },
+      });
+
       return election;
     }, { timeout: 10_000 });
 

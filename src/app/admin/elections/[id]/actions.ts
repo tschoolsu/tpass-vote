@@ -260,7 +260,7 @@ export async function createRunoff(
   electionId: string,
   tiedCandidateIds: string[],
 ): Promise<RunoffResult> {
-  await requireAdmin(`/admin/elections/${electionId}`);
+  const admin = await requireAdmin(`/admin/elections/${electionId}`);
 
   const election = await prisma.election.findUnique({
     where: { id: electionId },
@@ -291,16 +291,25 @@ export async function createRunoff(
     if (!same) return { ok: false, error: "同票名單與已提交的計票結果不符" };
   }
 
-  const runoff = await prisma.$transaction((tx) =>
-    cloneElection(tx, election, {
+  const runoff = await prisma.$transaction(async (tx) => {
+    const created = await cloneElection(tx, election, {
       lineage: "runoff",
       titleSuffix: "（重選）",
       copyCandidates: "tied",
       copyRoster: true,
       tiedCandidateIds: tiedIds,
-    }),
-    { timeout: 10_000 },
-  );
+    });
+    await tx.electionAuditLog.create({
+      data: {
+        electionId,
+        actorEmail: admin.email,
+        action: "create_runoff",
+        summary: `建立重選場次，新場次 id＝${created.id}`,
+        diff: { newElectionId: created.id, tiedCandidateIds: tiedIds } as Prisma.InputJsonValue,
+      },
+    });
+    return created;
+  }, { timeout: 10_000 });
 
   revalidatePath("/admin");
   return { ok: true, electionId: runoff.id };
@@ -308,20 +317,29 @@ export async function createRunoff(
 
 // 補選：以出缺職位的原選舉為本，只複製名冊，候選人從零登記（走完整登記/審核流程）。
 export async function createByElection(sourceId: string): Promise<ElectionCloneResult> {
-  await requireAdmin(`/admin/elections/${sourceId}`);
+  const admin = await requireAdmin(`/admin/elections/${sourceId}`);
 
   const source = await prisma.election.findUnique({ where: { id: sourceId } });
   if (!source) return { ok: false, error: "找不到原選舉" };
 
-  const byElection = await prisma.$transaction((tx) =>
-    cloneElection(tx, source, {
+  const byElection = await prisma.$transaction(async (tx) => {
+    const created = await cloneElection(tx, source, {
       lineage: "by_election",
       titleSuffix: "（補選）",
       copyCandidates: "none",
       copyRoster: true,
-    }),
-    { timeout: 10_000 },
-  );
+    });
+    await tx.electionAuditLog.create({
+      data: {
+        electionId: sourceId,
+        actorEmail: admin.email,
+        action: "create_by_election",
+        summary: `建立補選場次，新場次 id＝${created.id}`,
+        diff: { newElectionId: created.id } as Prisma.InputJsonValue,
+      },
+    });
+    return created;
+  }, { timeout: 10_000 });
 
   revalidatePath("/admin");
   return { ok: true, electionId: byElection.id };
