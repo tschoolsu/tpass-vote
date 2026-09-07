@@ -88,3 +88,46 @@ describe("F-11：儲存方案文案不自相矛盾、SOP 比對清單字樣對�
     expect(tailBlock).toMatch(/擋不住/);
   });
 });
+
+// V2-7：sealedHash 算法沒有文件寫出、SOP 投票前檢查缺分持份數、收據代碼保密提醒缺失。
+describe("V2-7：sealedHash 驗算公式、SOP 補分持份數檢查、收據代碼保密提醒", () => {
+  it("README 完整性自檢寫出 sealedHash 公式與一行驗算指令", () => {
+    const readme = readFileSync(path.join(repoRoot, "README.md"), "utf8");
+    const block = readme.slice(
+      readme.indexOf("完整性自檢"),
+      readme.indexOf("選委會實際操作的關票／彌封／開票步驟"),
+    );
+    expect(block).toMatch(/sha256/);
+    expect(block).toMatch(/JSON\.stringify/);
+    expect(block).toMatch(/ballots/);
+    expect(block).toMatch(/node -e/);
+  });
+
+  it("election-sop.md 投票前檢查有「開票金鑰分持份數為 2」這一項", () => {
+    const sop = readFileSync(path.join(repoRoot, "docs/election-sop.md"), "utf8");
+    const checklist = sop.slice(sop.indexOf("## 投票前檢查"), sop.indexOf("## 一、關票後"));
+    expect(checklist).toMatch(/分持份數/);
+    expect(checklist).toMatch(/2/);
+  });
+
+  it("election-sop.md 開票段提醒收據代碼外流會讓該票（撞號）失效", () => {
+    const sop = readFileSync(path.join(repoRoot, "docs/election-sop.md"), "utf8");
+    const tallySection = sop.slice(sop.indexOf("## 二、開票"));
+    expect(tallySection).toMatch(/撞號/);
+    expect(tallySection).toMatch(/失效|無效/);
+    expect(tallySection).toMatch(/自行保管|不要張貼/);
+  });
+
+  it("VoteForm 在收據代碼旁提醒：代碼外流可讓這張票失效，不要給別人看", () => {
+    const component = readFileSync(
+      path.join(repoRoot, "src/components/public/VoteForm.tsx"),
+      "utf8",
+    );
+    const receiptBlock = component.slice(
+      component.indexOf("投票收據"),
+      component.indexOf("投票收據") + 2000,
+    );
+    expect(receiptBlock).toMatch(/不要給別人看|不要張貼|自行保管/);
+    expect(receiptBlock).toMatch(/失效|無效/);
+  });
+});

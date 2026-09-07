@@ -108,6 +108,17 @@ envelope 加密，沒開票私鑰誰都打不開）、**外信封＝你的身分
 與計票結果一致，不自洽就拒收——但**驗不了代碼本身**（代碼封在密文裡，伺服器算不出來）。
 結果頁公開票數、領票數與每張票的去識別化內容，任何人可驗「沒有幽靈票」。
 
+`sealedHash` 的算法：對快照裡的密文陣列（即上述端點回傳 JSON 的 `ballots` 欄位，**緊湊序列化、
+不帶縮排**）取 SHA-256。任何人下載到 `sealed-box-<slug>.json` 後都可以自行驗算，不吃伺服器：
+
+```
+node -e 'const c=require("crypto"),d=require("./sealed-box-<slug>.json");console.log(c.createHash("sha256").update(JSON.stringify(d.ballots)).digest("hex")===d.sealedHash)'
+```
+
+印出 `true` 就代表快照與公開的 `sealedHash` 相符（沒有被事後竄改）。注意檔案本身是
+`JSON.stringify(payload, null, 2)` 美化縮排過的，直接對整個檔案內容取雜湊算不出一樣的值——
+一定要先取出 `ballots` 陣列、用 `JSON.stringify(d.ballots)`（無縮排）重新序列化再雜湊。
+
 選委會實際操作的關票／彌封／開票步驟見 [`docs/election-sop.md`](docs/election-sop.md)。
 
 ## 選罷法對應

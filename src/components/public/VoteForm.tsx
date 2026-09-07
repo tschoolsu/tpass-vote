@@ -237,6 +237,9 @@ export function VoteForm({
             <span className="underline">這是唯一一次顯示，離開或重新整理就再也拿不回來</span>，請現在就複製保存。
           </li>
           <li>・拿到代碼的人查得出該票內容，請自行保管；代碼本身連結不到你的身分。</li>
+          <li className="font-bold text-foreground">
+            ・請自行保管，不要給別人看：知道代碼的人可以讓這張票失效。
+          </li>
         </ul>
       </div>
     );
