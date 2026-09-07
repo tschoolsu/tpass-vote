@@ -17,6 +17,10 @@ import { encryptBallot } from "@/lib/ballot-crypto";
 const SLUG = "action-http";
 const VOTER: TestIdentity = { email: "action-http-voter@test.local", name: "投票人" };
 const CAND: TestIdentity = { email: "action-http-cand@test.local", name: "候選人" };
+// (b)(c) 各自需要一個沒投過票的人，才能乾淨地斷言「DB 沒有票」——同一人會被 (a) 的票蓋過去。
+// 名冊在投票開放後不能再匯入（D7-11），所以這兩人得跟 VOTER/CAND 一起在投票開放前匯入。
+const SECOND_VOTER: TestIdentity = { email: "action-http-voter2@test.local", name: "投票人乙" };
+const THIRD_VOTER: TestIdentity = { email: "action-http-voter3@test.local", name: "投票人丙" };
 
 describe("callAction：HTTP 層真的能打到 server action", () => {
   let electionId: string;
@@ -31,7 +35,7 @@ describe("callAction：HTTP 層真的能打到 server action", () => {
     const keys = await generateKeys(electionId, SLUG);
     publicKeyJwk = keys.publicKeyJwk;
 
-    await importVoters(electionId, [VOTER, CAND]);
+    await importVoters(electionId, [VOTER, CAND, SECOND_VOTER, THIRD_VOTER]);
     await advanceTo(electionId, "registration");
     await registerAs(SLUG, electionId, CAND);
     await approveAll(electionId);
@@ -57,12 +61,8 @@ describe("callAction：HTTP 層真的能打到 server action", () => {
     const before = await prisma.encryptedBallot.count({ where: { electionId } });
     const { ciphertext } = await encryptBallot(publicKeyJwk, { electionId, choice: { type: "blank" } });
 
-    // 換一個沒投過票的人，這樣「DB 沒有票」的斷言才乾淨——用同一人會被 (a) 的票蓋過去，看不出差異。
-    const secondVoter: TestIdentity = { email: "action-http-voter2@test.local", name: "投票人乙" };
-    await importVoters(electionId, [secondVoter]);
-
     const res = await callAction("castBallot", routePath, [SLUG, ciphertext], {
-      identity: secondVoter,
+      identity: SECOND_VOTER,
       origin: "https://evil.example",
     });
     console.log(`  ▸ (b) 錯誤 Origin（https://evil.example）：HTTP ${res.status}`);
@@ -71,15 +71,13 @@ describe("callAction：HTTP 層真的能打到 server action", () => {
     const after = await prisma.encryptedBallot.count({ where: { electionId } });
     expect(after, "CSRF 應該被 Next 擋在 action handler，票不該進 DB").toBe(before);
     const voter = await prisma.voter.findUniqueOrThrow({
-      where: { electionId_email: { electionId, email: secondVoter.email } },
+      where: { electionId_email: { electionId, email: SECOND_VOTER.email } },
     });
     expect(voter.votedAt, "CSRF 被擋下，votedAt 不該被設").toBeNull();
   });
 
   it("(c) 沒有 Cookie：requireSession 導向登入，DB 不動", async () => {
     const before = await prisma.encryptedBallot.count({ where: { electionId } });
-    const thirdVoter: TestIdentity = { email: "action-http-voter3@test.local", name: "投票人丙" };
-    await importVoters(electionId, [thirdVoter]);
     const { ciphertext } = await encryptBallot(publicKeyJwk, { electionId, choice: { type: "blank" } });
 
     const res = await callAction("castBallot", routePath, [SLUG, ciphertext], { identity: null });
@@ -92,7 +90,7 @@ describe("callAction：HTTP 層真的能打到 server action", () => {
     const after = await prisma.encryptedBallot.count({ where: { electionId } });
     expect(after, "未登入不該收得下票").toBe(before);
     const voter = await prisma.voter.findUniqueOrThrow({
-      where: { electionId_email: { electionId, email: thirdVoter.email } },
+      where: { electionId_email: { electionId, email: THIRD_VOTER.email } },
     });
     expect(voter.votedAt).toBeNull();
   });

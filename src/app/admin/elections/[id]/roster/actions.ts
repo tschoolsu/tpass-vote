@@ -45,7 +45,19 @@ export async function importRoster(electionId: string, raw: string): Promise<Ros
   // 不會留下半套名冊。名冊上限以 3000 列估算，分批只是避免單一 statement 過大，
   // 分批之間仍共用同一個 tx，30 秒 statement_timeout 內足夠。
   const BATCH_SIZE = 500;
-  await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
+    // 跟 removeVoter 同一個模式：交易外的一般 SELECT 讀到「未鎖定」後，advanceStatus
+    // 能在檢查完、還沒寫之間插隊把投票開放，讓匯入把 rosterCount／投票率改掉。
+    // 用 FOR SHARE 重讀最新 status——多個 importRoster/removeVoter 互不阻塞，只跟
+    // 會改變 Election 狀態的那個 UPDATE（advanceStatus 隱含的 FOR NO KEY UPDATE）互斥。
+    const [locked] = await tx.$queryRaw<{ status: string }[]>`
+      SELECT status FROM "Election" WHERE id = ${electionId} FOR SHARE
+    `;
+    if (!locked) return { ok: false as const, error: "找不到選舉" };
+    if (LOCKED_STATUSES.has(locked.status)) {
+      return { ok: false as const, error: "投票開放後不能再匯入名冊" };
+    }
+
     for (let i = 0; i < rows.length; i += BATCH_SIZE) {
       const batch = rows.slice(i, i + BATCH_SIZE);
       await Promise.all(
@@ -68,7 +80,10 @@ export async function importRoster(electionId: string, raw: string): Promise<Ros
         diff: { imported: rows.length, skipped: invalid } as Prisma.InputJsonValue,
       },
     });
+    return { ok: true as const };
   }, { timeout: 30_000 });
+
+  if (!result.ok) return result;
 
   revalidatePath(`/admin/elections/${electionId}/roster`);
   revalidatePath(`/admin/elections/${electionId}`);
