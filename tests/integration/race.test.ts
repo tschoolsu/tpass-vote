@@ -37,7 +37,10 @@ const CAND = { email: "racecand@test.local", name: "候選人" };
 const SLUG = "race";
 
 /** 開一條獨立連線並鎖住某場選舉，回傳「放行」函式。 */
-async function holdElectionLock(electionId: string, mode: "key share" | "no key update" | "update") {
+async function holdElectionLock(
+  electionId: string,
+  mode: "key share" | "share" | "no key update" | "update",
+) {
   const client = new Client({ connectionString: TEST_DATABASE_URL });
   await client.connect();
   await client.query("BEGIN");
@@ -895,4 +898,45 @@ describe("V2-2 publishAnnouncement：交易內持鎖重讀結果，鎖序與 sub
       }
     }
   }, 120_000);
+});
+
+// V2-2 迴歸（獨立審查發現）：上面那個修法把 FOR NO KEY UPDATE 放在 publishAnnouncement
+// 交易第一步、對「所有」公告發布生效，不分 legalTag。但一般公告（legalTag=null）從不動
+// Election 那一列，不需要這把鎖——卻因此被 importRoster／removeVoter／castBallot 對
+// Election 取的 FOR SHARE 卡住（FOR NO KEY UPDATE 與 FOR SHARE 互斥）。持續整個投票期間
+// 都能發的一般公告，因此可能被一次合法的大量名冊匯入（現有交易預算長達 30 秒）擋到
+// publishAnnouncement 自己的 10 秒交易逾時，丟出未接住的 P2028 變成 500。
+describe("V2-2 迴歸：一般公告不該被 Election 列鎖卡住", () => {
+  let electionId: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    const created = await makeElection({ slug: "v2-2-regression" });
+    electionId = created.electionId!;
+  });
+
+  it("importRoster 持有的 FOR SHARE 不該卡住一般公告的發布", async () => {
+    // FOR SHARE 模擬 importRoster 正在進行中（它對 Election 取的就是這個鎖）。
+    // 這個鎖跟 Announcement 建立時 FK 檢查隱含取的 FOR KEY SHARE 相容，
+    // 只跟「一般公告也去顯式鎖 Election」這個多餘動作衝突。
+    const lock = await holdElectionLock(electionId, "share");
+    try {
+      const publishing = as(ADMIN, () =>
+        publishAnnouncement(electionId, null, null, "投票期間的一般公告", "內容"),
+      );
+      const settled = await Promise.race([
+        publishing.then(() => "resolved" as const),
+        settle().then(() => "still-pending" as const),
+      ]);
+      expect(
+        settled,
+        "一般公告不需要動 Election 那一列，不該被 importRoster 持有的 FOR SHARE 卡住",
+      ).toBe("resolved");
+
+      const r = await publishing;
+      expect(r.ok, r.ok ? "" : r.error).toBe(true);
+    } finally {
+      await lock.release();
+    }
+  }, 15_000);
 });

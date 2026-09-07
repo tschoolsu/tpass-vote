@@ -120,6 +120,13 @@ export async function publishAnnouncement(
     }
   }
 
+  // 只有「結果公告的第一次發布」需要鎖 Election 那一列（要保護 sealed→published
+  // 這個狀態轉換、且要讓 Office 落地讀到鎖定後的最新 resultsJson）。一般公告
+  // （legalTag=null）貫穿投票全程都能發、從不動 Election，若也跟著取
+  // FOR NO KEY UPDATE，會被 importRoster／removeVoter／castBallot 對 Election
+  // 取的 FOR SHARE 卡住——一次合法的大量名冊匯入就能把選委的公告發布卡到逾時。
+  const isResultPublish = legalTag === "result" && isFirstPublish;
+
   let savedId: string;
   try {
     savedId = await prisma.$transaction(async (tx) => {
@@ -129,10 +136,13 @@ export async function publishAnnouncement(
       // 底下所有判斷與 upsertOfficesForElection 一律用這份 locked，不用交易外
       // 那份可能已經過期的快照（submitResults 若在窗口內插隊 commit 新結果，
       // 舊快照落地的就會是舊的當選人）。
-      const [locked] = await tx.$queryRaw<
-        { status: string; hiddenAt: Date | null; resultsJson: unknown }[]
-      >`SELECT status, "hiddenAt", "resultsJson" FROM "Election" WHERE id = ${electionId} FOR NO KEY UPDATE`;
-      if (!locked) throw new Error("CONFLICT");
+      let locked: { status: string; hiddenAt: Date | null; resultsJson: unknown } | undefined;
+      if (isResultPublish) {
+        [locked] = await tx.$queryRaw<
+          { status: string; hiddenAt: Date | null; resultsJson: unknown }[]
+        >`SELECT status, "hiddenAt", "resultsJson" FROM "Election" WHERE id = ${electionId} FOR NO KEY UPDATE`;
+        if (!locked) throw new Error("CONFLICT");
+      }
 
       const saved = target.existing
         ? await tx.announcement.update({
@@ -144,10 +154,10 @@ export async function publishAnnouncement(
           });
 
       // sealed→published 觸發方式維持現況不動：發布 legalTag='result' 的公告時翻 published。
-      if (legalTag === "result" && isFirstPublish) {
+      if (isResultPublish) {
         // hiddenAt／status／resultsJson 都用鎖定後讀到的 locked，不用交易外那份：
         // 擋掉「交易外檢查完、hideElection 或 submitResults 才插隊 commit」的窗口。
-        if (locked.hiddenAt || locked.status !== "sealed" || !locked.resultsJson) {
+        if (locked!.hiddenAt || locked!.status !== "sealed" || !locked!.resultsJson) {
           throw new Error("CONFLICT");
         }
 
@@ -171,7 +181,7 @@ export async function publishAnnouncement(
             officeId: election.officeId,
             recallTargetOfficeId: election.recallTargetOfficeId,
           },
-          locked.resultsJson as unknown as TallyResult,
+          locked!.resultsJson as unknown as TallyResult,
           candidates,
         );
       }
@@ -181,10 +191,9 @@ export async function publishAnnouncement(
           electionId,
           actorEmail: admin.email,
           action: "publish_announcement",
-          summary:
-            legalTag === "result" && isFirstPublish
-              ? `發布結果公告「${t}」，選舉狀態轉為 published`
-              : `發布公告「${t}」`,
+          summary: isResultPublish
+            ? `發布結果公告「${t}」，選舉狀態轉為 published`
+            : `發布公告「${t}」`,
           diff: { announcementId: saved.id, legalTag, isFirstPublish } as Prisma.InputJsonValue,
         },
       });
@@ -196,7 +205,10 @@ export async function publishAnnouncement(
       return { ok: false, error: "選舉狀態已被其他選委變更，請重新整理頁面" };
     }
     if (isResultTagConflict(e)) return { ok: false, error: RESULT_TAG_CONFLICT_ERROR };
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2034") {
+    if (
+      e instanceof Prisma.PrismaClientKnownRequestError &&
+      (e.code === "P2034" || e.code === "P2028")
+    ) {
       return { ok: false, error: "有人同時在操作這場選舉，請重新整理後再試" };
     }
     throw e;
