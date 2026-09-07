@@ -26,7 +26,7 @@ export type SealedBoxResult = { ok: true; sealedBox: string[] } | { ok: false; e
 // 開票面板（TallyClient）在需要時才呼叫這裡取票匭快照，不讓它跟著整場選舉的資料
 // 一起塞進工作台頁面的 RSC payload（3000 票時票匭本身就有幾 MB，見 D8 稽核）。
 export async function getSealedBoxForTally(electionId: string): Promise<SealedBoxResult> {
-  await requireAdmin();
+  await requireAdmin(`/admin/elections/${electionId}/tally`);
 
   const election = await prisma.election.findUnique({
     where: { id: electionId },

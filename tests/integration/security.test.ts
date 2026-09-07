@@ -24,7 +24,7 @@ import { importRoster, removeVoter } from "@/app/admin/elections/[id]/roster/act
 import { approveCandidate } from "@/app/admin/elections/[id]/candidates/actions";
 import { registerCandidate } from "@/app/e/[slug]/register/actions";
 import { castBallot } from "@/app/e/[slug]/vote/actions";
-import { sealElection } from "@/app/admin/elections/[id]/tally/actions";
+import { sealElection, getSealedBoxForTally } from "@/app/admin/elections/[id]/tally/actions";
 import { signRecall } from "@/app/e/[slug]/recall/actions";
 import { encryptBallot, generateTallyKeyPair, decryptBallot } from "@/lib/ballot-crypto";
 
@@ -559,6 +559,11 @@ describe("重登回跳路徑", () => {
 
   it("sealElection 過期重登應回到該場選舉的開票頁，不是後台首頁", async () => {
     const url = await captureRedirect(() => as(null, () => sealElection("some-election-id")));
+    expect(nextParamOf(url)).toBe("/admin/elections/some-election-id/tally");
+  });
+
+  it("getSealedBoxForTally 過期重登應回到該場選舉的開票頁，不是後台首頁", async () => {
+    const url = await captureRedirect(() => as(null, () => getSealedBoxForTally("some-election-id")));
     expect(nextParamOf(url)).toBe("/admin/elections/some-election-id/tally");
   });
 });
