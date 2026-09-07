@@ -119,6 +119,13 @@ describe("D2-4／D12-2 開放投票時距截止不足 48 小時（選委晚按�
     return electionId;
   }
 
+  /** 從錯誤訊息「距投票截止只剩 X 小時」抓出 X，斷言真的算出「快沒了」而不是隨便一個含 48 的數字。 */
+  function remainingHoursIn(message: string): number {
+    const m = /距投票截止只剩 (-?\d+(?:\.\d+)?) 小時/.exec(message);
+    if (!m) throw new Error(`錯誤訊息格式不符，抓不到剩餘小時數：${message}`);
+    return Number(m[1]);
+  }
+
   it("排程跨度仍有 48 小時，但選委晚按導致距截止只剩 1 小時，一般管理員不能開放投票", async () => {
     const electionId = await setupAtCampaigning("voting-force-mod");
     await prisma.election.update({
@@ -132,9 +139,38 @@ describe("D2-4／D12-2 開放投票時距截止不足 48 小時（選委晚按�
     const r = await as(MODERATOR, () => advanceStatus(electionId));
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.error).toContain("距投票截止只剩");
-      expect(r.error).toContain("48");
+      // 剩餘時數要確實反映「只剩 1 小時左右」，不是隨便一個字串巧合含有 "48"（法定下限本身
+      // 就含 "48"，光斷言 toContain("48") 就算訊息壞掉也會過）。
+      const hours = remainingHoursIn(r.error);
+      expect(hours).toBeGreaterThan(0);
+      expect(hours).toBeLessThan(1.5);
+      expect(r.error).toContain(`法定投票期間為 ${48} 小時`);
     }
+  });
+
+  it("投票已排定但尚未開始，即使排程剛好卡在 48 小時法定下限，選委提早按下也能正常開放（不是只有超管逃生門這一條路）", async () => {
+    // 反例：D2-4 的閘門若用「按下這一刻」而非「max(按下這一刻, votingStartsAt)」當起點，
+    // 這種剛好 48 小時、選委提早按的合法場次會被閘門永久擋下——選委只能等到 votingStartsAt
+    // 那一刻按，但那一刻一過就立刻不足 48 小時，等於整場沒有任何時間點按得下去。
+    const created = await makeElection({
+      slug: "voting-exact-48-early-press",
+      votingHours: 48,
+      votingStartsAt: new Date(Date.now() + 3 * 60_000),
+    });
+    const electionId = created.electionId!;
+    await generateKeys(electionId, "voting-exact-48-early-press");
+    await importVoters(electionId, [VOTER_A]);
+    await advanceTo(electionId, "registration");
+    await registerAs("voting-exact-48-early-press", electionId, CAND);
+    await approveAll(electionId);
+    await advanceTo(electionId, "campaigning");
+
+    const election = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(election.votingStartsAt!.getTime()).toBeGreaterThan(Date.now()); // 還沒開始
+    expect(election.votingEndsAt!.getTime() - election.votingStartsAt!.getTime()).toBe(48 * HOUR);
+
+    const r = await as(MODERATOR, () => advanceStatus(electionId));
+    expect(r.ok, r.ok ? "" : r.error).toBe(true);
   });
 
   it("同樣只剩 1 小時，超級管理員附理由可以強制開放，audit log 記下理由", async () => {
@@ -171,7 +207,11 @@ describe("D2-4／D12-2 開放投票時距截止不足 48 小時（選委晚按�
 
     const r = await as(ADMIN, () => advanceStatus(electionId));
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain("距投票截止只剩");
+    if (!r.ok) {
+      const hours = remainingHoursIn(r.error);
+      expect(hours).toBeGreaterThan(0);
+      expect(hours).toBeLessThan(1.5);
+    }
   });
 
   it("距截止還有 49 小時，一般管理員可以正常開放投票", async () => {

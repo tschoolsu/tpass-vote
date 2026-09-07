@@ -168,16 +168,21 @@ export function ElectionWorkbench({
 
   // 狀態機的 status 與時程（votingStartsAt）是兩套獨立真相：推進到 voting 只代表選委按了按鈕，
   // 不代表投票時間到了——選民端 vote/page.tsx 用同一套 castDecision 擋，這裡也要在前置檢查列出來，
-  // 不要讓選委推了狀態卻以為選民已經能投票。
+  // 不要讓選委推了狀態卻以為選民已經能投票。這項純粹是提醒，不擋按鈕（見下方 blocking:false）：
+  // 選委提早按下沒有壞處，選民照樣要等 votingStartsAt 到才投得了票。
   const votingStartReached = !election.votingStartsAt || new Date() >= election.votingStartsAt;
   // D12-1：時程排錯或選委拖到太晚才按，導致整段投票期間已經過去——同一條規則在
   // actions.ts 的 advanceStatus 裡是真正的閘門，這裡只是把同一個判斷先顯示出來，
   // 讓選委在按下去之前就看得到「已過去」，不必等伺服器回錯誤訊息才知道。
   const votingWindowElapsed = !!election.votingEndsAt && new Date() >= election.votingEndsAt;
-  // D2-4／D12-2：排程「跨度」≥48 小時只在建立時驗過一次，選委晚按的話按下這一刻到截止
-  // 可能已經不足 48 小時——同一條規則在 advanceStatus 裡是真正的閘門，這裡只是先顯示。
+  // D2-4／D12-2：排程「跨度」≥48 小時只在建立時驗過一次，沒驗「公開投票實際能用的時間還剩
+  // 多少」。選民能投票要 status=voting 且落在 [votingStartsAt, votingEndsAt] 之間，所以真正
+  // 的起點是 max(按下的這一刻, votingStartsAt)——提早按，起點仍是排定的 votingStartsAt，
+  // 跨度＝已驗過的排程跨度，一定 ≥48 小時；晚按，起點才是按下的當下，跨度才會縮水。同一條
+  // 公式在 actions.ts 的 advanceStatus 裡是真正的閘門，這裡只是先顯示。
   const votingRemainingMs = election.votingEndsAt
-    ? election.votingEndsAt.getTime() - new Date().getTime()
+    ? election.votingEndsAt.getTime() -
+      Math.max(new Date().getTime(), election.votingStartsAt?.getTime() ?? -Infinity)
     : null;
   const votingRemainingOk =
     votingRemainingMs === null || votingRemainingMs >= MIN_VOTING_HOURS * 3_600_000;
@@ -194,6 +199,10 @@ export function ElectionWorkbench({
     {
       label: "投票開始時間已到",
       ok: votingStartReached,
+      // 純提醒、不擋按鈕：見上方 votingStartReached 的註解。剛好卡在 48 小時法定下限的
+      // 場次，提早按是唯一按得下去的路——若這項也擋按鈕，會跟下面「距截止仍有 48 小時」
+      // 互斥到按鈕永遠是灰的（提早按被這項擋、晚按被下面那項擋，兩者交集是空集合）。
+      blocking: false,
       detail: votingStartReached
         ? undefined
         : `${formatDateTime(election.votingStartsAt)}（${describeRemaining(election.votingStartsAt, new Date())}）`,
@@ -212,7 +221,8 @@ export function ElectionWorkbench({
           : `剩 ${Math.max(Math.round((votingRemainingMs / 3_600_000) * 10) / 10, 0)} 小時`,
     },
   ];
-  const votingBlocked = next === "voting" && votingPrecheck.some((c) => !c.ok);
+  const votingBlocked =
+    next === "voting" && votingPrecheck.some((c) => !c.ok && c.blocking !== false);
   // D2-3／D12-1 的逃生門：只有超級管理員、只有截止時間還沒到時才看得到——一般管理員按
   // 「推進到已截止」一樣會被伺服器擋下，錯誤訊息跟這裡不能用的原因一致。
   const canForceClose = isSuperAdmin && next === "closed" && !!election.votingEndsAt && new Date() < election.votingEndsAt;
