@@ -171,6 +171,21 @@ const disclosureSchema = z.array(
   }),
 );
 
+// disclosuresJson 是 Prisma Json（Postgres jsonb）。jsonb 落地時會把物件的鍵按照
+// 「長度優先、同長再逐位元組」重新排序（不是陣列，只有物件鍵會被動）；approval 明細
+// 的 approvals 鍵序來自投票人瀏覽器的點擊順序，跟這個正規序無關。若存檔前不先排好，
+// 這裡對「記憶體形」算出的 disclosuresSha256、跟事後對「DB 讀回來的形」重算的雜湊
+// 永遠對不上——稽核者拿公開明細核對雜湊會被誤判成「被竄改」，isResubmit 的
+// previousDisclosuresSha256 也永遠接不上前一筆的 disclosuresSha256。
+// approvals 的鍵全是候選人 id（Prisma cuid()，定長 25 碼），定長時「長度優先」這條
+// 規則等於沒作用，正規序退化成純字典序——落地前用字典序排好鍵，記憶體形狀就跟 DB
+// 正規化後的形狀天生一致。
+function normalizeApprovals(approvals: Record<string, boolean>): Record<string, boolean> {
+  const sorted: Record<string, boolean> = {};
+  for (const key of Object.keys(approvals).sort()) sorted[key] = approvals[key];
+  return sorted;
+}
+
 export async function submitResults(
   electionId: string,
   results: unknown,
@@ -188,7 +203,10 @@ export async function submitResults(
   // 就會是「與 sealedBox 同索引」的側通道，讓持彌封前 EncryptedBallot 快照者事後
   // 逐人還原誰投給誰（見 disclosure.ts 開頭說明）。存檔前一律改成依 code 排序，
   // 跟 buildDisclosures 產出公告明細用同一個比較函式；不排序不拒收，只是不採信。
-  const sortedDisclosures = [...parsedDisclosures.data].sort(compareByCode);
+  // approvals 鍵序另外正規化（見 normalizeApprovals），避免上面說的雜湊鏈斷裂。
+  const sortedDisclosures = [...parsedDisclosures.data]
+    .sort(compareByCode)
+    .map((d) => (d.approvals ? { ...d, approvals: normalizeApprovals(d.approvals) } : d));
 
   const election = await prisma.election.findUnique({
     where: { id: electionId },
