@@ -775,3 +775,124 @@ describe("C-4：公告唯一性與 cloneElection slug 的併發防線", () => {
     }
   }, 90_000);
 });
+
+// V2-2（第二輪 D7-1／D7-2）：publishAnnouncement 交易外讀 resultsJson、交易內只用
+// updateMany 保護狀態，落地 Office 卻用那份可能已過期的快照；且鎖序與 submitResults
+// 相反（先 Announcement 再 Election vs. 先 Election 再 Announcement），併發時可能
+// 40P01 死結。
+describe("V2-2 publishAnnouncement：交易內持鎖重讀結果，鎖序與 submitResults 一致", () => {
+  const SLUG = "v2-2-publish";
+  let electionId: string;
+  let candAId: string;
+  let candBId: string;
+  let firstResults: unknown;
+  let firstDisclosures: unknown;
+  let draftId: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    const created = await makeElection({ slug: SLUG });
+    electionId = created.electionId!;
+    const { publicKeyJwk, keyFiles } = await generateKeys(electionId, SLUG);
+    await importVoters(electionId, [VOTER_A, VOTER_B, CAND_A, CAND_B]);
+    await advanceTo(electionId, "registration");
+    await registerAs(SLUG, electionId, CAND_A);
+    await registerAs(SLUG, electionId, CAND_B);
+    const approved = await approveAll(electionId);
+    candAId = approved[0].id;
+    candBId = approved[1].id;
+    await advanceTo(electionId, "voting");
+    await voteAs(SLUG, electionId, VOTER_A, publicKeyJwk, {
+      type: "choose",
+      candidateIds: [candAId],
+    });
+    await voteAs(SLUG, electionId, VOTER_B, publicKeyJwk, {
+      type: "choose",
+      candidateIds: [candAId],
+    });
+    await advanceTo(electionId, "closed");
+    await seal(electionId);
+    const t = await tallyAndSubmit(electionId, SLUG, keyFiles);
+    expect(t.submitted.ok, "首次提交結果應成功").toBe(true);
+    firstResults = t.results;
+    firstDisclosures = t.disclosures;
+
+    const draft = await prisma.announcement.findFirstOrThrow({
+      where: { electionId, legalTag: "result" },
+    });
+    draftId = draft.id;
+  }, 120_000);
+
+  it("鎖窗內 resultsJson 被換成第二份結果，publishAnnouncement 落地的 Office 必須是第二份的當選人", async () => {
+    const before = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    const draft = await prisma.announcement.findUniqueOrThrow({ where: { id: draftId } });
+
+    // 第二份結果：把當選旗標從甲換成乙（形狀照舊，直接改 DB 快照，模擬另一位選委的
+    // submitResults 在鎖窗內插隊 commit 了新結果）。
+    const second = JSON.parse(JSON.stringify(before.resultsJson)) as {
+      candidates: { candidateId: string; elected: boolean }[];
+    };
+    for (const c of second.candidates) c.elected = c.candidateId === candBId;
+
+    const lock = await holdElectionLock(electionId, "no key update");
+    try {
+      // publishAnnouncement 卡在交易內第一步的 SELECT ... FOR NO KEY UPDATE 上。
+      const publishing = as(ADMIN, () =>
+        publishAnnouncement(electionId, draft.id, "result", draft.title, draft.body),
+      );
+      await settle();
+
+      // 鎖窗內用同一條連線把 resultsJson 換成第二份結果並 commit（release）。
+      await lock.client.query(
+        `UPDATE "Election" SET "resultsJson" = $1::jsonb WHERE id = $2`,
+        [JSON.stringify(second), electionId],
+      );
+      await lock.release();
+
+      const pub = await publishing;
+      expect(pub.ok, pub.ok ? "" : pub.error).toBe(true);
+
+      const after = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+      expect(after.status, "公告成功應把狀態推到 published").toBe("published");
+
+      const office = await prisma.office.findFirstOrThrow({
+        where: { sourceElectionId: electionId },
+      });
+      const winner = await prisma.candidate.findUniqueOrThrow({ where: { id: candBId } });
+      expect(
+        office.currentMembers,
+        "Office 落地的當選人是交易外那份過期快照（甲），不是鎖定後重讀到的第二份結果（乙）",
+      ).toEqual(winner.members);
+    } catch (e) {
+      await lock.abort();
+      throw e;
+    }
+  }, 90_000);
+
+  it("submitResults 與 publishAnnouncement 同時操作同一則 result 公告：鎖序一致，兩邊都回物件不 throw", async () => {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      // 每輪重演「首次提交後、尚未公告」的窗口：submitResults 的 resubmit 分支與
+      // publishAnnouncement 都會去動同一則 draft 公告 + 同一列 Election。
+      await prisma.election.update({ where: { id: electionId }, data: { status: "sealed" } });
+      await prisma.announcement.update({ where: { id: draftId }, data: { publishedAt: null } });
+
+      const draft = await prisma.announcement.findUniqueOrThrow({ where: { id: draftId } });
+      const results = await Promise.allSettled([
+        as(ADMIN, () =>
+          publishAnnouncement(electionId, draft.id, "result", draft.title, draft.body),
+        ),
+        as(MODERATOR, () => submitResults(electionId, firstResults, firstDisclosures)),
+      ]);
+
+      for (const r of results) {
+        expect(
+          r.status,
+          `第 ${attempt} 次同時操作以未處理例外收場（鎖序不一致造成的 40P01／P2034 沒接住）`,
+        ).toBe("fulfilled");
+        if (r.status === "fulfilled") {
+          expect(r.value, "應回傳可讀的 ok 物件，不是丟例外").toHaveProperty("ok");
+        }
+      }
+    }
+  }, 120_000);
+});

@@ -102,10 +102,7 @@ export async function publishAnnouncement(
   const t = title.trim();
   if (t === "") return { ok: false, error: "請輸入標題" };
 
-  const election = await prisma.election.findUnique({
-    where: { id: electionId },
-    include: { candidates: { where: { status: "approved" } } },
-  });
+  const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) return { ok: false, error: "找不到選舉" };
   if (election.hiddenAt) return { ok: false, error: "這場選舉已作廢／隱藏，不能再操作" };
 
@@ -114,6 +111,8 @@ export async function publishAnnouncement(
 
   const isFirstPublish = !target.existing?.publishedAt;
 
+  // 快速失敗：交易外先擋一次，訊息具體、也省一次交易——但這只是 UX 提示，
+  // 不是最終防線。真正說了算的是下面交易內鎖到 Election 之後重讀的那份。
   if (legalTag === "result" && isFirstPublish) {
     if (!election.resultsJson) return { ok: false, error: "尚未在開票頁提交計票結果，無法發布結果公告" };
     if (election.status !== "sealed") {
@@ -124,6 +123,17 @@ export async function publishAnnouncement(
   let savedId: string;
   try {
     savedId = await prisma.$transaction(async (tx) => {
+      // 與 submitResults 同一把鎖、同一順序：先鎖 Election 再動 Announcement——兩邊
+      // 順序一致才不會在高併發時互等對方持有的鎖造成死結（40P01）。resultsJson／
+      // status／hiddenAt 在這裡鎖定後一次讀齊；鎖沒放手之前這一列不會再變，所以
+      // 底下所有判斷與 upsertOfficesForElection 一律用這份 locked，不用交易外
+      // 那份可能已經過期的快照（submitResults 若在窗口內插隊 commit 新結果，
+      // 舊快照落地的就會是舊的當選人）。
+      const [locked] = await tx.$queryRaw<
+        { status: string; hiddenAt: Date | null; resultsJson: unknown }[]
+      >`SELECT status, "hiddenAt", "resultsJson" FROM "Election" WHERE id = ${electionId} FOR NO KEY UPDATE`;
+      if (!locked) throw new Error("CONFLICT");
+
       const saved = target.existing
         ? await tx.announcement.update({
             where: { id: target.existing!.id },
@@ -135,30 +145,35 @@ export async function publishAnnouncement(
 
       // sealed→published 觸發方式維持現況不動：發布 legalTag='result' 的公告時翻 published。
       if (legalTag === "result" && isFirstPublish) {
+        // hiddenAt／status／resultsJson 都用鎖定後讀到的 locked，不用交易外那份：
+        // 擋掉「交易外檢查完、hideElection 或 submitResults 才插隊 commit」的窗口。
+        if (locked.hiddenAt || locked.status !== "sealed" || !locked.resultsJson) {
+          throw new Error("CONFLICT");
+        }
+
         const bumped = await tx.election.updateMany({
-          // hiddenAt 一併重讀：擋掉「交易外檢查完、hideElection/redoElection 才插隊
-          // 把場次隱藏」這個窗口，不讓已作廢的場次把當選人寫進 Office。
           where: { id: electionId, status: "sealed", hiddenAt: null },
           data: { status: "published" },
         });
         if (bumped.count === 0) throw new Error("CONFLICT");
 
         // 公告生效＝就職時刻：把當選人落地到職務登記表（genesis 建、連任/補選更新；
-        // 罷免案通過則目標職務轉從缺）。resultsJson 前面已檢查存在。
-        if (election.resultsJson) {
-          await upsertOfficesForElection(
-            tx,
-            {
-              id: election.id,
-              kind: election.kind,
-              title: election.title,
-              officeId: election.officeId,
-              recallTargetOfficeId: election.recallTargetOfficeId,
-            },
-            election.resultsJson as unknown as TallyResult,
-            election.candidates,
-          );
-        }
+        // 罷免案通過則目標職務轉從缺）。candidates 也在交易內查，同一份鎖之下讀。
+        const candidates = await tx.candidate.findMany({
+          where: { electionId, status: "approved" },
+        });
+        await upsertOfficesForElection(
+          tx,
+          {
+            id: election.id,
+            kind: election.kind,
+            title: election.title,
+            officeId: election.officeId,
+            recallTargetOfficeId: election.recallTargetOfficeId,
+          },
+          locked.resultsJson as unknown as TallyResult,
+          candidates,
+        );
       }
 
       await tx.electionAuditLog.create({
@@ -181,6 +196,9 @@ export async function publishAnnouncement(
       return { ok: false, error: "選舉狀態已被其他選委變更，請重新整理頁面" };
     }
     if (isResultTagConflict(e)) return { ok: false, error: RESULT_TAG_CONFLICT_ERROR };
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2034") {
+      return { ok: false, error: "有人同時在操作這場選舉，請重新整理後再試" };
+    }
     throw e;
   }
 
