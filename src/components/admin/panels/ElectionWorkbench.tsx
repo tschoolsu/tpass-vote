@@ -38,7 +38,11 @@ import {
   type ElectionStatus,
   type UiStage,
 } from "@/components/admin/status";
-import { ELECTION_KIND_LABEL, type ElectionKind } from "@/app/admin/elections/election-schema";
+import {
+  ELECTION_KIND_LABEL,
+  MIN_VOTING_HOURS,
+  type ElectionKind,
+} from "@/app/admin/elections/election-schema";
 import { formatDateTime, describeRemaining } from "@/components/public/shared";
 import { advanceStatus, restoreElection } from "@/app/admin/elections/[id]/actions";
 import { sealElection } from "@/app/admin/elections/[id]/tally/actions";
@@ -170,6 +174,13 @@ export function ElectionWorkbench({
   // actions.ts 的 advanceStatus 裡是真正的閘門，這裡只是把同一個判斷先顯示出來，
   // 讓選委在按下去之前就看得到「已過去」，不必等伺服器回錯誤訊息才知道。
   const votingWindowElapsed = !!election.votingEndsAt && new Date() >= election.votingEndsAt;
+  // D2-4／D12-2：排程「跨度」≥48 小時只在建立時驗過一次，選委晚按的話按下這一刻到截止
+  // 可能已經不足 48 小時——同一條規則在 advanceStatus 裡是真正的閘門，這裡只是先顯示。
+  const votingRemainingMs = election.votingEndsAt
+    ? election.votingEndsAt.getTime() - new Date().getTime()
+    : null;
+  const votingRemainingOk =
+    votingRemainingMs === null || votingRemainingMs >= MIN_VOTING_HOURS * 3_600_000;
   const votingPrecheck = [
     { label: "已產生開票金鑰", ok: hasKey },
     isRecall
@@ -191,6 +202,14 @@ export function ElectionWorkbench({
       label: "整段投票期間尚未過去",
       ok: !votingWindowElapsed,
       detail: votingWindowElapsed ? `已於 ${formatDateTime(election.votingEndsAt)} 結束` : undefined,
+    },
+    {
+      label: `距截止仍有 ${MIN_VOTING_HOURS} 小時`,
+      ok: votingRemainingOk,
+      detail:
+        votingRemainingOk || votingRemainingMs === null
+          ? undefined
+          : `剩 ${Math.max(Math.round((votingRemainingMs / 3_600_000) * 10) / 10, 0)} 小時`,
     },
   ];
   const votingBlocked = next === "voting" && votingPrecheck.some((c) => !c.ok);

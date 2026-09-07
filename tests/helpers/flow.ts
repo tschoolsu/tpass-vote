@@ -31,7 +31,12 @@ export interface ElectionSpec {
   kind?: "leader" | "grade_rep" | "other";
   seats?: number;
   maxChoices?: number;
-  /** 投票期間長度（小時）。預設 48，剛好踩在 §26-1 Ⅱ 的下限。 */
+  /**
+   * 投票期間長度（小時）。預設 50——預設 votingStartsAt 是「現在」往回推 1 小時（讓流程
+   * 測試不必等投票開始時間到），D2-4／D12-2 的新閘門要求「按下開放投票這一刻」距截止仍有
+   * 48 小時，48 整踩在 §26-1 Ⅱ 下限、扣掉那 1 小時就會不足，所以預設要留出這 1 小時緩衝；
+   * 真正測「剛好 48 小時」邊界的案例（legal.test.ts）會自己明確傳 votingHours。
+   */
   votingHours?: number;
   votingStartsAt?: Date;
 }
@@ -39,7 +44,7 @@ export interface ElectionSpec {
 /** 用 createElection action 建一場選舉（會走完整的表單驗證）。 */
 export async function makeElection(spec: ElectionSpec, actor: TestIdentity = ADMIN) {
   const start = spec.votingStartsAt ?? new Date(Date.now() - HOUR);
-  const end = new Date(start.getTime() + (spec.votingHours ?? 48) * HOUR);
+  const end = new Date(start.getTime() + (spec.votingHours ?? 50) * HOUR);
 
   const form = new FormData();
   form.set("title", spec.title ?? `測試選舉 ${spec.slug}`);

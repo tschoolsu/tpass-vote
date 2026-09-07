@@ -110,8 +110,9 @@ export async function savePublicKey(
   return { ok: true };
 }
 
-// reason：僅 voting→closed 提前關票（截止時間未到）時才有意義，且只有超級管理員能靠它
-// 強制通過——一般管理員帶 reason 一樣被擋，見下方 D2-3／D12-1 的檢查。
+// reason：voting→closed 提前關票（截止時間未到）與 campaigning/established→voting 距截止
+// 不足 48 小時這兩種情境才有意義，且只有超級管理員能靠它強制通過——一般管理員帶 reason
+// 一樣被擋，見下方 D2-3／D12-1（關票）與 D2-4／D12-2（開放投票）的檢查。
 export async function advanceStatus(electionId: string, reason?: string): Promise<ActionResult> {
   const admin = await requireAdmin(`/admin/elections/${electionId}`);
 
@@ -138,6 +139,10 @@ export async function advanceStatus(electionId: string, reason?: string): Promis
   // 罷免案的選區名冊在 established→voting 才複製（§35 罷免投票限原選區；petition/連署階段開放全校，
   // 不需名冊）。來源＝罷免對象職務的原選舉。null 表非此情境。
   let copyRosterFromElectionId: string | null = null;
+  // D2-4／D12-2：距截止不足 48 小時仍被超管強制開放時，把理由與當下實際剩餘時數
+  // 一起記進 audit log；一般情況下兩者都維持 undefined，不進 diff。
+  let votingForceReason: string | undefined;
+  let votingForceRemainingHours: number | undefined;
   if (next === "voting") {
     // §26-1 Ⅱ：投票期間不得少於 48 小時。表單只擋「填了但太短」，這裡才是真正的閘門——
     // 兩個時間都必須設定，否則等於沒有投票期間可言。一般鏈與罷免鏈都會經過這裡。
@@ -158,6 +163,24 @@ export async function advanceStatus(electionId: string, reason?: string): Promis
         ok: false,
         error: `投票期間已於 ${formatDateTime(votingEndsAt)} 結束，整段投票期間已過去，無法開放投票`,
       };
+    }
+    // D2-4／D12-2：上面只驗過排程「跨度」≥48 小時，沒驗「按下這一刻到截止還剩多久」——
+    // 選委晚按的話，排程沒問題但實際能投票的時間已經被吃掉。voting 之後 LOCKED_STATUSES
+    // 擋住 updateElection，沒攔住這一步就無法延長截止時間，只能整場重辦。閘門與 D2-3
+    // 提前關票同一套：一般管理員一律擋下，超級管理員可附理由強制開放，理由與當下實際
+    // 剩餘時數一起記進 audit log。
+    const remainingMs = votingEndsAt.getTime() - Date.now();
+    if (remainingMs < MIN_VOTING_HOURS * 3_600_000) {
+      const trimmedReason = reason?.trim();
+      if (!isSuperAdmin(admin) || !trimmedReason) {
+        const remainingHours = Math.round((Math.max(remainingMs, 0) / 3_600_000) * 10) / 10;
+        return {
+          ok: false,
+          error: `距投票截止只剩 ${remainingHours} 小時，法定投票期間為 ${MIN_VOTING_HOURS} 小時；請先延長截止時間`,
+        };
+      }
+      votingForceReason = trimmedReason.slice(0, 200);
+      votingForceRemainingHours = Math.round((remainingMs / 3_600_000) * 10) / 10;
     }
     if (!election.tallyPublicKeyJwk) return { ok: false, error: "尚未產生開票金鑰，無法開放投票" };
     if (election.kind === "recall") {
@@ -228,12 +251,17 @@ export async function advanceStatus(electionId: string, reason?: string): Promis
           action: "advance_status",
           summary: closeReason
             ? `狀態推進：${current} → ${next}（截止前強制關票，理由：${closeReason}）`
-            : `狀態推進：${current} → ${next}`,
+            : votingForceReason
+              ? `狀態推進：${current} → ${next}（距截止不足 48 小時強制開放投票，剩餘 ${votingForceRemainingHours} 小時，理由：${votingForceReason}）`
+              : `狀態推進：${current} → ${next}`,
           diff: {
             from: current,
             to: next,
             ...(ballotMode ? { ballotMode } : {}),
             ...(closeReason ? { reason: closeReason } : {}),
+            ...(votingForceReason
+              ? { reason: votingForceReason, remainingHours: votingForceRemainingHours }
+              : {}),
           } as Prisma.InputJsonValue,
         },
       });

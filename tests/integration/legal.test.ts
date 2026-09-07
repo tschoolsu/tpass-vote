@@ -106,6 +106,89 @@ describe("§26-1 Ⅱ 投票期間不得少於 48 小時", () => {
   });
 });
 
+describe("D2-4／D12-2 開放投票時距截止不足 48 小時（選委晚按不能吃掉法定投票期間）", () => {
+  async function setupAtCampaigning(slug: string) {
+    const created = await makeElection({ slug });
+    const electionId = created.electionId!;
+    await generateKeys(electionId, slug);
+    await importVoters(electionId, [VOTER_A]);
+    await advanceTo(electionId, "registration");
+    await registerAs(slug, electionId, CAND);
+    await approveAll(electionId);
+    await advanceTo(electionId, "campaigning");
+    return electionId;
+  }
+
+  it("排程跨度仍有 48 小時，但選委晚按導致距截止只剩 1 小時，一般管理員不能開放投票", async () => {
+    const electionId = await setupAtCampaigning("voting-force-mod");
+    await prisma.election.update({
+      where: { id: electionId },
+      data: {
+        votingStartsAt: new Date(Date.now() - 47 * HOUR),
+        votingEndsAt: new Date(Date.now() + HOUR),
+      },
+    });
+
+    const r = await as(MODERATOR, () => advanceStatus(electionId));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toContain("距投票截止只剩");
+      expect(r.error).toContain("48");
+    }
+  });
+
+  it("同樣只剩 1 小時，超級管理員附理由可以強制開放，audit log 記下理由", async () => {
+    const electionId = await setupAtCampaigning("voting-force-super");
+    await prisma.election.update({
+      where: { id: electionId },
+      data: {
+        votingStartsAt: new Date(Date.now() - 47 * HOUR),
+        votingEndsAt: new Date(Date.now() + HOUR),
+      },
+    });
+
+    const r = await as(ADMIN, () => advanceStatus(electionId, "選委晚按，選情緊急先行開放"));
+    expect(r.ok, r.ok ? "" : r.error).toBe(true);
+
+    const election = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(election.status).toBe("voting");
+    const log = await prisma.electionAuditLog.findFirst({
+      where: { electionId, action: "advance_status" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(JSON.stringify(log?.diff)).toContain("選委晚按");
+  });
+
+  it("超級管理員不附理由一樣被擋", async () => {
+    const electionId = await setupAtCampaigning("voting-force-super-no-reason");
+    await prisma.election.update({
+      where: { id: electionId },
+      data: {
+        votingStartsAt: new Date(Date.now() - 47 * HOUR),
+        votingEndsAt: new Date(Date.now() + HOUR),
+      },
+    });
+
+    const r = await as(ADMIN, () => advanceStatus(electionId));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("距投票截止只剩");
+  });
+
+  it("距截止還有 49 小時，一般管理員可以正常開放投票", async () => {
+    const electionId = await setupAtCampaigning("voting-force-ok");
+    await prisma.election.update({
+      where: { id: electionId },
+      data: {
+        votingStartsAt: new Date(),
+        votingEndsAt: new Date(Date.now() + 49 * HOUR),
+      },
+    });
+
+    const r = await as(MODERATOR, () => advanceStatus(electionId));
+    expect(r.ok, r.ok ? "" : r.error).toBe(true);
+  });
+});
+
 describe("D2-3／D12-1 投票截止前不能關票", () => {
   async function setupAtVoting(slug: string) {
     const created = await makeElection({ slug });
