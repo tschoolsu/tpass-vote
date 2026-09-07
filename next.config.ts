@@ -16,6 +16,14 @@ const nextConfig: NextConfig = {
   reactCompiler: true,
   // 不對外宣告用什麼框架跑：省不了多少事，但也沒有理由主動送給掃描器。
   poweredByHeader: false,
+  // Next 預設把 server action 的 request body 上限鎖在 1MB。approval 模式大場次
+  // （3000 票 × 9 候選人 ≈ 1.1MB）的 submitResults 送出的結果＋明細會超過這個上限，
+  // 在進 action 前就被 413 擋掉。放寬到 8mb，留夠票數再往上長的餘裕。
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "8mb",
+    },
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

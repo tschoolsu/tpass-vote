@@ -180,6 +180,58 @@ describe("結果提交完整性：elected／tied／hasTie／rosterCount／turnou
 
     await resetSubmission(f.electionId);
   });
+
+  // D11-3（第 2 輪）：稽核 diff 過去只記總量（totalBallots／validCount／…／electedCount／
+  // hasTie），把 A 的票搬給 B、對調當選人後重新提交，前後兩筆 audit log 的 diff 逐字相同——
+  // 事後無法舉證結果被改過。diff 要記到逐候選人（含 elected/tied），並帶明細雜湊。
+  it("重新提交時把 A 的票搬給 B 並對調當選人：兩筆 audit log 的 diff 不逐字相同，新 diff 的 candidates 反映第二次提交", async () => {
+    const first = await as(ADMIN, () => submitResults(f.electionId, f.results, f.disclosures));
+    expect(first.ok).toBe(true);
+
+    // 候選人 0 原本 3 票當選；把這 3 票全部改記在候選人 1 名下（候選人 1 原本 1 票），
+    // 對調當選人：候選人 1 變 4 票當選，候選人 0 變 0 票落選。
+    const c0Id = f.candidateIds[0];
+    const c1Id = f.candidateIds[1];
+    const r2 = clone(f.results);
+    r2.candidates.find((c) => c.candidateId === c0Id)!.votes = 0;
+    r2.candidates.find((c) => c.candidateId === c1Id)!.votes = 4;
+    const d2 = f.disclosures.map((d) =>
+      d.kind === "choose" && d.candidateIds?.includes(c0Id) ? { ...d, candidateIds: [c1Id] } : d,
+    );
+
+    const second = await as(ADMIN, () => submitResults(f.electionId, r2, d2));
+    expect(second.ok).toBe(true);
+
+    const logs = await prisma.electionAuditLog.findMany({
+      where: { electionId: f.electionId, action: "submit_results" },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(logs).toHaveLength(2);
+    expect(logs[0].diff).not.toEqual(logs[1].diff);
+
+    const diff2 = logs[1].diff as Record<string, unknown>;
+    const candidatesDiff = diff2.candidates as Array<{
+      candidateId: string;
+      votes: number;
+      elected: boolean;
+      tied: boolean;
+    }>;
+    const savedC0 = candidatesDiff.find((c) => c.candidateId === c0Id)!;
+    const savedC1 = candidatesDiff.find((c) => c.candidateId === c1Id)!;
+    expect(savedC0.votes).toBe(0);
+    expect(savedC0.elected).toBe(false);
+    expect(savedC1.votes).toBe(4);
+    expect(savedC1.elected).toBe(true);
+
+    expect(typeof diff2.disclosuresSha256).toBe("string");
+    expect(diff2.previousDisclosuresSha256).toBeDefined();
+    expect(diff2.previousDisclosuresSha256).not.toBe(diff2.disclosuresSha256);
+
+    const diff1 = logs[0].diff as Record<string, unknown>;
+    expect(diff1.previousDisclosuresSha256).toBeUndefined();
+
+    await resetSubmission(f.electionId);
+  });
 });
 
 // D12-3：可回溯代碼由投票人瀏覽器產生、封在密文內部，伺服器收票時看不到，

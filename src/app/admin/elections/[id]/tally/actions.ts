@@ -196,6 +196,12 @@ export async function submitResults(
       candidates: { where: { status: "approved" }, select: { id: true, number: true, members: true } },
     },
   });
+  // 重新提交（isResubmit）時，覆寫前的明細雜湊要記進這次的 audit diff——沒有它，
+  // 「這次結果是接在哪一份明細之後改的」事後就無從對證。
+  const previousDisclosuresSha256 =
+    election && Array.isArray(election.disclosuresJson)
+      ? createHash("sha256").update(JSON.stringify(election.disclosuresJson)).digest("hex")
+      : undefined;
   if (!election) return { ok: false, error: "找不到選舉" };
   if (election.hiddenAt) return { ok: false, error: "這場選舉已作廢／隱藏，不能再操作" };
   if (election.status !== "sealed") return { ok: false, error: "選舉尚未彌封，不能提交結果" };
@@ -315,6 +321,11 @@ export async function submitResults(
         },
       });
 
+      // 過去只記總量（totalBallots／…／electedCount／hasTie）：把 A 的票搬給 B、對調
+      // 當選人重新提交，前後兩筆總量可以逐字相同，事後無法舉證結果被改過。這裡補記
+      // 逐候選人的票數與當選／同票狀態，以及存進 DB 的明細雜湊，讓每次提交都有可以
+      // 逐字比對出差異的紀錄；isResubmit 時再帶上被覆寫前的明細雜湊。
+      const disclosuresSha256 = createHash("sha256").update(JSON.stringify(sortedDisclosures)).digest("hex");
       await tx.electionAuditLog.create({
         data: {
           electionId,
@@ -330,6 +341,15 @@ export async function submitResults(
             electedCount: finalResults.candidates.filter((c) => c.elected).length,
             hasTie: finalResults.hasTie,
             clientMismatch,
+            candidates: finalResults.candidates.map((c) => ({
+              candidateId: c.candidateId,
+              votes: c.votes,
+              disagree: c.disagree,
+              elected: c.elected,
+              tied: c.tied,
+            })),
+            disclosuresSha256,
+            ...(isResubmit ? { previousDisclosuresSha256 } : {}),
           } as Prisma.InputJsonValue,
         },
       });

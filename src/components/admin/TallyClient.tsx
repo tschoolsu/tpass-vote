@@ -127,14 +127,21 @@ export function TallyClient({
     if (!result || !disclosures) return;
     setSubmitMsg(null);
     startTransition(async () => {
-      const r = await submitResults(electionId, result, disclosures);
-      if (!r.ok) {
-        setSubmitMsg(`提交失敗：${r.error}`);
-        return;
+      try {
+        const r = await submitResults(electionId, result, disclosures);
+        if (!r.ok) {
+          setSubmitMsg(`提交失敗：${r.error}`);
+          return;
+        }
+        setSubmitMsg("計票結果已提交，請到「公告」頁面發布結果公告。");
+        setStage("submitted");
+        router.refresh();
+      } catch (e) {
+        // approval 模式大場次的結果＋明細可能逼近 body 上限，或連線中斷——這裡是
+        // action 呼叫本身失敗（不是伺服器回傳 { ok: false }），沒有 try/catch 會讓例外
+        // 冒到最近的 error boundary，選委看到的是整頁錯誤而不是這張卡片裡的提示。
+        setSubmitMsg(`提交失敗：${e instanceof Error ? e.message : "網路或伺服器錯誤，請重試"}`);
       }
-      setSubmitMsg("計票結果已提交，請到「公告」頁面發布結果公告。");
-      setStage("submitted");
-      router.refresh();
     });
   }
 
