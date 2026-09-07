@@ -175,14 +175,10 @@ export function ElectionWorkbench({
   // actions.ts 的 advanceStatus 裡是真正的閘門，這裡只是把同一個判斷先顯示出來，
   // 讓選委在按下去之前就看得到「已過去」，不必等伺服器回錯誤訊息才知道。
   const votingWindowElapsed = !!election.votingEndsAt && new Date() >= election.votingEndsAt;
-  // D2-4／D12-2：排程「跨度」≥48 小時只在建立時驗過一次，沒驗「公開投票實際能用的時間還剩
-  // 多少」。選民能投票要 status=voting 且落在 [votingStartsAt, votingEndsAt] 之間，所以真正
-  // 的起點是 max(按下的這一刻, votingStartsAt)——提早按，起點仍是排定的 votingStartsAt，
-  // 跨度＝已驗過的排程跨度，一定 ≥48 小時；晚按，起點才是按下的當下，跨度才會縮水。同一條
-  // 公式在 actions.ts 的 advanceStatus 裡是真正的閘門，這裡只是先顯示。
+  // D2-4／D12-2：排程「跨度」≥48 小時只在建立時驗過一次，選委晚按的話按下這一刻到截止
+  // 可能已經不足 48 小時——同一條規則在 advanceStatus 裡是真正的閘門，這裡只是先顯示。
   const votingRemainingMs = election.votingEndsAt
-    ? election.votingEndsAt.getTime() -
-      Math.max(new Date().getTime(), election.votingStartsAt?.getTime() ?? -Infinity)
+    ? election.votingEndsAt.getTime() - new Date().getTime()
     : null;
   const votingRemainingOk =
     votingRemainingMs === null || votingRemainingMs >= MIN_VOTING_HOURS * 3_600_000;
@@ -215,10 +211,12 @@ export function ElectionWorkbench({
     {
       label: `距截止仍有 ${MIN_VOTING_HOURS} 小時`,
       ok: votingRemainingOk,
+      // 無條件捨去而非四捨五入：這裡一定是「不足 48 小時」分支，捨去才保證顯示的數字
+      // 也小於 48，不會出現「剩 48 小時」卻仍被判定不足的矛盾（見 actions.ts 同一處註解）。
       detail:
         votingRemainingOk || votingRemainingMs === null
           ? undefined
-          : `剩 ${Math.max(Math.round((votingRemainingMs / 3_600_000) * 10) / 10, 0)} 小時`,
+          : `剩 ${Math.floor((Math.max(votingRemainingMs, 0) / 3_600_000) * 10) / 10} 小時`,
     },
   ];
   const votingBlocked =

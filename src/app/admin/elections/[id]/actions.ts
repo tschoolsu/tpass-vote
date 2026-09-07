@@ -164,27 +164,26 @@ export async function advanceStatus(electionId: string, reason?: string): Promis
         error: `投票期間已於 ${formatDateTime(votingEndsAt)} 結束，整段投票期間已過去，無法開放投票`,
       };
     }
-    // D2-4／D12-2：上面只驗過排程「跨度」≥48 小時，沒驗「公開投票實際能用的時間還剩多少」。
-    // 選民能投票的條件是 status=voting 且 now 落在 [votingStartsAt, votingEndsAt]（見
-    // vote-policy.ts castDecision）——真正的起點是 max(按下這一刻, votingStartsAt)：選委
-    // 提早按，起點仍是排定的 votingStartsAt，跨度＝上面已驗過的排程跨度，一定 ≥48 小時；
-    // 選委晚按，起點才是按下的當下，跨度才會被吃掉。voting 之後 LOCKED_STATUSES 擋住
-    // updateElection，沒攔住這一步就無法延長截止時間，只能整場重辦。閘門與 D2-3 提前關票
-    // 同一套：一般管理員一律擋下，超級管理員可附理由強制開放，理由與當下實際剩餘時數一起
-    // 記進 audit log。
-    const effectiveVotingStart = Math.max(Date.now(), votingStartsAt.getTime());
-    const remainingMs = votingEndsAt.getTime() - effectiveVotingStart;
-    const remainingHoursOf = (ms: number) => Math.round((Math.max(ms, 0) / 3_600_000) * 10) / 10;
+    // D2-4／D12-2：上面只驗過排程「跨度」≥48 小時，沒驗「按下這一刻到截止還剩多少」——
+    // 選委晚按的話，排程沒問題但實際能投票的時間已經被吃掉。voting 之後 LOCKED_STATUSES
+    // 擋住 updateElection，沒攔住這一步就無法延長截止時間，只能整場重辦。閘門與 D2-3
+    // 提前關票同一套：一般管理員一律擋下，超級管理員可附理由強制開放，理由與當下實際
+    // 剩餘時數一起記進 audit log。
+    // 顯示用的剩餘時數無條件捨去（不用 Math.round）：這裡一定是「不足 48 小時」分支，
+    // 47.98 捨去成 47.9 才會讓訊息裡的數字也小於 48——四捨五入會把它印成 48.0，跟後面
+    // 「法定投票期間為 48 小時」擺在一起變成自相矛盾、選委看不出到底哪裡不足。
+    const remainingMs = votingEndsAt.getTime() - Date.now();
     if (remainingMs < MIN_VOTING_HOURS * 3_600_000) {
       const trimmedReason = reason?.trim();
+      const remainingHours = Math.floor((Math.max(remainingMs, 0) / 3_600_000) * 10) / 10;
       if (!isSuperAdmin(admin) || !trimmedReason) {
         return {
           ok: false,
-          error: `距投票截止只剩 ${remainingHoursOf(remainingMs)} 小時，法定投票期間為 ${MIN_VOTING_HOURS} 小時；請先延長截止時間`,
+          error: `距投票截止只剩 ${remainingHours} 小時，法定投票期間為 ${MIN_VOTING_HOURS} 小時；請先延長截止時間`,
         };
       }
       votingForceReason = trimmedReason.slice(0, 200);
-      votingForceRemainingHours = remainingHoursOf(remainingMs);
+      votingForceRemainingHours = remainingHours;
     }
     if (!election.tallyPublicKeyJwk) return { ok: false, error: "尚未產生開票金鑰，無法開放投票" };
     if (election.kind === "recall") {

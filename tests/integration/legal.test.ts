@@ -214,6 +214,47 @@ describe("D2-4／D12-2 開放投票時距截止不足 48 小時（選委晚按�
     }
   });
 
+  it("一般管理員即使帶 reason，距截止不足 48 小時一樣被擋（reason 只有超管用得到）", async () => {
+    const electionId = await setupAtCampaigning("voting-force-mod-with-reason");
+    await prisma.election.update({
+      where: { id: electionId },
+      data: {
+        votingStartsAt: new Date(Date.now() - 47 * HOUR),
+        votingEndsAt: new Date(Date.now() + HOUR),
+      },
+    });
+
+    const r = await as(MODERATOR, () => advanceStatus(electionId, "我也想附理由強制開放"));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      const hours = remainingHoursIn(r.error);
+      expect(hours).toBeGreaterThan(0);
+      expect(hours).toBeLessThan(1.5);
+    }
+    const election = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    expect(election.status).toBe("campaigning");
+  });
+
+  it("反例：剩餘小時數的顯示不四捨五入進位——快到 48 小時但仍不足時，訊息裡的數字要小於 48，不能印出跟法定下限一樣的「48」造成自相矛盾", async () => {
+    // 47 小時 59 分：故意選在 Math.round 到小數點下一位會進位成 48.0 的區間，
+    // 用來抓「距投票截止只剩 48 小時，法定投票期間為 48 小時」這種讓人看不懂為什麼被擋的訊息。
+    const electionId = await setupAtCampaigning("voting-force-rounding-edge");
+    await prisma.election.update({
+      where: { id: electionId },
+      data: {
+        votingStartsAt: new Date(Date.now() - 49 * HOUR),
+        votingEndsAt: new Date(Date.now() + 47 * HOUR + 59 * 60_000),
+      },
+    });
+
+    const r = await as(MODERATOR, () => advanceStatus(electionId));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      const hours = remainingHoursIn(r.error);
+      expect(hours).toBeLessThan(48);
+    }
+  });
+
   it("距截止還有 49 小時，一般管理員可以正常開放投票", async () => {
     const electionId = await setupAtCampaigning("voting-force-ok");
     await prisma.election.update({
