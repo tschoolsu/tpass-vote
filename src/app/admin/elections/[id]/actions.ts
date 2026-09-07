@@ -395,8 +395,10 @@ export async function redoElection(electionId: string, reason?: string): Promise
     });
     await tx.election.update({ where: { id: source.id }, data: { hiddenAt: new Date() } });
     // §26-1 Ⅳ：作廢＝這場不再存在，voterId↔ciphertext 的暫存不能繼續留著。
-    // sealed／published 場次本來就沒有 EncryptedBallot（sealElection 已清空），這裡是 no-op。
-    const voided = await tx.encryptedBallot.deleteMany({ where: { electionId: source.id } });
+    // sealed／published 場次本來就沒有 EncryptedBallot（sealElection 已清空），這裡是 no-op——
+    // 所以下面 deleteMany 的刪除筆數對 sealed 場次恆為 0，不能拿它記進 audit diff；真正
+    // 「這場作廢了幾張票」要用上面已經算好的 ballotCount（countCastBallots）。
+    await tx.encryptedBallot.deleteMany({ where: { electionId: source.id } });
     await tx.electionAuditLog.create({
       data: {
         electionId: source.id,
@@ -405,7 +407,7 @@ export async function redoElection(electionId: string, reason?: string): Promise
         summary: `金鑰遺失重辦，原場次隱藏，新場次 id＝${created.id}`,
         diff: {
           newElectionId: created.id,
-          voidedBallotCount: voided.count,
+          voidedBallotCount: ballotCount,
           ...(trimmedReason ? { reason: trimmedReason } : {}),
         } as Prisma.InputJsonValue,
       },
@@ -418,14 +420,30 @@ export async function redoElection(electionId: string, reason?: string): Promise
   return { ok: true, electionId: redone.id };
 }
 
-// 軟刪除：只設 hiddenAt 旗標，資料（候選人／名冊／選票／公告）完全保留，不做 prisma.delete。
-// 隱藏後從所有公開端與管理端預設列表消失，但可隨時還原。
-export async function hideElection(electionId: string): Promise<ActionResult> {
+// 軟刪除：設 hiddenAt 旗標，候選人／名冊／公告完全保留，不做 prisma.delete，隱藏後從所有
+// 公開端與管理端預設列表消失，可隨時還原（restoreElection）。但 EncryptedBallot
+// （voterId↔密文暫存）一旦刪除就回不來——§26-1 Ⅳ：作廢＝這場不再存在，暫存不能繼續留著；
+// 還原只能讓場次重新出現，投過的票不會跟著回來。voting／closed／sealed 這三個已經可能
+// 有票的狀態，沿用與 redoElection 相同的超級管理員＋理由閘門（REDO_REQUIRES_SUPERADMIN_REASON）。
+export async function hideElection(electionId: string, reason?: string): Promise<ActionResult> {
   const admin = await requireAdmin(`/admin/elections/${electionId}`);
 
   const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) return { ok: false, error: "找不到選舉" };
   if (election.hiddenAt) return { ok: false, error: "此選舉已經是隱藏狀態" };
+
+  let trimmedReason: string | undefined;
+  let ballotCount = 0;
+  if (REDO_REQUIRES_SUPERADMIN_REASON.has(election.status)) {
+    ballotCount = await countCastBallots(election);
+    trimmedReason = reason?.trim();
+    if (!isSuperAdmin(admin) || !trimmedReason) {
+      return {
+        ok: false,
+        error: `已有 ${ballotCount} 張票，刪除會作廢且無法還原，需超級管理員附理由`,
+      };
+    }
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.election.update({
@@ -433,15 +451,19 @@ export async function hideElection(electionId: string): Promise<ActionResult> {
       data: { hiddenAt: new Date() },
     });
     // §26-1 Ⅳ：隱藏＝作廢，voterId↔ciphertext 的暫存不能繼續留著。已彌封／已公告的
-    // 場次本來就沒有 EncryptedBallot（sealElection 已清空），這裡是 no-op。
-    const voided = await tx.encryptedBallot.deleteMany({ where: { electionId } });
+    // 場次本來就沒有 EncryptedBallot（sealElection 已清空），這裡是 no-op——刪除筆數
+    // 對 sealed 場次恆為 0，audit diff 一律記上面已經算好的 ballotCount。
+    await tx.encryptedBallot.deleteMany({ where: { electionId } });
     await tx.electionAuditLog.create({
       data: {
         electionId,
         actorEmail: admin.email,
         action: "hide_election",
         summary: "隱藏（軟刪除）此選舉",
-        diff: { voidedBallotCount: voided.count } as Prisma.InputJsonValue,
+        diff: {
+          voidedBallotCount: ballotCount,
+          ...(trimmedReason ? { reason: trimmedReason } : {}),
+        } as Prisma.InputJsonValue,
       },
     });
   });

@@ -17,13 +17,13 @@ import {
   Megaphone as MegaphoneIcon,
   Lock,
   KeyRound,
-  Trash2,
   FileSignature,
   Gavel,
   History,
 } from "lucide-react";
 import { Badge, Button, Textarea } from "tpass-ui";
 import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
+import { HideElectionButton } from "@/components/admin/HideElectionButton";
 import {
   STATUS_META,
   LOCKED_STATUSES,
@@ -40,7 +40,7 @@ import {
 } from "@/components/admin/status";
 import { ELECTION_KIND_LABEL, type ElectionKind } from "@/app/admin/elections/election-schema";
 import { formatDateTime, describeRemaining } from "@/components/public/shared";
-import { advanceStatus, hideElection, restoreElection } from "@/app/admin/elections/[id]/actions";
+import { advanceStatus, restoreElection } from "@/app/admin/elections/[id]/actions";
 import { sealElection } from "@/app/admin/elections/[id]/tally/actions";
 import { StageProgress } from "@/components/admin/panels/StageProgress";
 import { CurrentStageCard } from "@/components/admin/panels/CurrentStageCard";
@@ -451,18 +451,12 @@ export function ElectionWorkbench({
               confirmMessage={`確定要還原「${election.title}」嗎？還原後會重新出現在所有列表中。`}
             />
           ) : (
-            <ConfirmActionButton
-              action={hideElection.bind(null, election.id)}
-              label={
-                <>
-                  <Trash2 className="h-3.5 w-3.5" /> 刪除此投票
-                </>
-              }
-              // 軟刪除、可還原，不需要跟「現在該做什麼」搶視覺權重——降級為 ghost，
-              // 破壞性語氣留給 ConfirmDialog 的確認文案去講。
-              variant="ghost"
-              size="sm"
-              confirmMessage={`確定要刪除「${election.title}」嗎？\n\n這是軟刪除：資料完全保留、隨時可還原，但會從首頁與所有列表消失。`}
+            <HideElectionButton
+              electionId={election.id}
+              title={election.title}
+              status={status}
+              ballotCount={votedCount}
+              isSuperAdmin={isSuperAdmin}
             />
           )}
         </div>
