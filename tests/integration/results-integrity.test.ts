@@ -1,7 +1,7 @@
 // D4-1／D11-1／D11-2／D4-4／D4-5：submitResults 收下 client 算出的 TallyResult 後，
 // 六道檢查沒有一道重算 elected／tied／hasTie／rosterCount／turnoutPct，候選人也能在
 // 陣列裡重複出現。這裡驗證伺服器自己重算，不再照抄 client 送來的旗標。
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { prisma, resetDb } from "../helpers/db";
 import { ADMIN, as } from "../helpers/session";
 import {
@@ -234,6 +234,10 @@ async function encryptWithChosenCode(
 }
 
 describe("重複代碼（D12-3）：串通投票人送出同代碼，開票端把那幾張標為無效票，不再整場開不了票", () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
   const DUP_SLUG = "results-integrity-dup-code";
   const DV = (n: number) => ({ email: `dc-v${n}@test.local`, name: `投票人${n}` });
   const DC = (n: number) => ({ email: `dc-c${n}@test.local`, name: `候選人${n}` });
@@ -315,9 +319,12 @@ describe("重複代碼（D12-3）：串通投票人送出同代碼，開票端�
     // reason 要能撐過 submitResults 的 disclosureSchema、存進 disclosuresJson，
     // 再由 /disclosures 端點的收據查詢原樣講出來。
     await publishResult(electionId);
-    const receipt = await fetch(
-      `${APP_URL}/api/elections/${DUP_SLUG}/disclosures?code=${COLLUDING_CODE}`,
-    );
+    // C-2 之後單筆查詢走 POST body（GET 是整份 CSV 下載）。
+    const receipt = await fetch(`${APP_URL}/api/elections/${DUP_SLUG}/disclosures`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: COLLUDING_CODE }),
+    });
     expect(receipt.status).toBe(200);
     const receiptBody = (await receipt.json()) as { found: boolean; summary: string };
     expect(receiptBody.summary).toBe("代碼重複，無效");
