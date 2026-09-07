@@ -872,6 +872,31 @@ describe("V2-2 publishAnnouncement：交易內持鎖重讀結果，鎖序與 sub
     }
   }, 90_000);
 
+  it("鎖窗卡超過 30 秒的 DB statement_timeout（不是 Prisma 交易的 10 秒逾時）時要回可讀錯誤，不能讓例外往外丟", async () => {
+    // Prisma 交易本身的 10 秒逾時（P2028）不會打斷「已送出、卡在鎖上」的那句 SQL——
+    // 真正在 30 秒後把它砍掉的是 src/lib/db.ts 的 statement_timeout=30000，鎖等待
+    // 也算在這個逾時裡。拋出的錯誤是 P2010（Raw query failed，底層 57014 canceling
+    // statement due to statement timeout），不是 P2028，所以要卡超過 30 秒才驗得到。
+    const draft = await prisma.announcement.findUniqueOrThrow({ where: { id: draftId } });
+
+    const lock = await holdElectionLock(electionId, "no key update");
+    try {
+      const publishing = as(ADMIN, () =>
+        publishAnnouncement(electionId, draft.id, "result", draft.title, draft.body),
+      );
+      await new Promise((r) => setTimeout(r, 31_000));
+      await lock.release();
+
+      const pub = await publishing;
+      expect(pub.ok, "statement_timeout 逾時應回可讀的 ok:false，不能讓例外往外丟變 500").toBe(
+        false,
+      );
+    } catch (e) {
+      await lock.abort();
+      throw e;
+    }
+  }, 45_000);
+
   it("submitResults 與 publishAnnouncement 同時操作同一則 result 公告：鎖序一致，兩邊都回物件不 throw", async () => {
     for (let attempt = 0; attempt < 12; attempt++) {
       // 每輪重演「首次提交後、尚未公告」的窗口：submitResults 的 resubmit 分支與
