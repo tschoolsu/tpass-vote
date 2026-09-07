@@ -66,7 +66,7 @@ export async function savePublicKey(
   publicKeyJwk: unknown,
   shares: number,
 ): Promise<ActionResult> {
-  const admin = await requireAdmin();
+  const admin = await requireAdmin(`/admin/elections/${electionId}`);
 
   if (shares !== 1 && shares !== 2) return { ok: false, error: "分持份數只能是 1 或 2" };
   if (!isPublicOnlyRsaJwk(publicKeyJwk)) {
@@ -113,7 +113,7 @@ export async function savePublicKey(
 // reason：僅 voting→closed 提前關票（截止時間未到）時才有意義，且只有超級管理員能靠它
 // 強制通過——一般管理員帶 reason 一樣被擋，見下方 D2-3／D12-1 的檢查。
 export async function advanceStatus(electionId: string, reason?: string): Promise<ActionResult> {
-  const admin = await requireAdmin();
+  const admin = await requireAdmin(`/admin/elections/${electionId}`);
 
   const election = await prisma.election.findUnique({
     where: { id: electionId },
@@ -260,7 +260,7 @@ export async function createRunoff(
   electionId: string,
   tiedCandidateIds: string[],
 ): Promise<RunoffResult> {
-  await requireAdmin();
+  await requireAdmin(`/admin/elections/${electionId}`);
 
   const election = await prisma.election.findUnique({
     where: { id: electionId },
@@ -308,7 +308,7 @@ export async function createRunoff(
 
 // 補選：以出缺職位的原選舉為本，只複製名冊，候選人從零登記（走完整登記/審核流程）。
 export async function createByElection(sourceId: string): Promise<ElectionCloneResult> {
-  await requireAdmin();
+  await requireAdmin(`/admin/elections/${sourceId}`);
 
   const source = await prisma.election.findUnique({ where: { id: sourceId } });
   if (!source) return { ok: false, error: "找不到原選舉" };
@@ -344,7 +344,7 @@ async function countCastBallots(source: { id: string }): Promise<number> {
 
 // 金鑰遺失重辦：複製名冊與已核准候選人，原場同一交易內作廢（軟刪除），新場從頭走金鑰產生。
 export async function redoElection(electionId: string, reason?: string): Promise<ElectionCloneResult> {
-  const admin = await requireAdmin();
+  const admin = await requireAdmin(`/admin/elections/${electionId}`);
 
   const source = await prisma.election.findUnique({ where: { id: electionId } });
   if (!source) return { ok: false, error: "找不到選舉" };

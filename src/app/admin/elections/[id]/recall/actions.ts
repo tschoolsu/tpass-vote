@@ -17,7 +17,7 @@ import { recallThreshold } from "@/lib/recall";
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
 export async function establishRecall(id: string): Promise<ActionResult> {
-  await requireAdmin();
+  await requireAdmin(`/admin/elections/${id}`);
 
   const election = await prisma.election.findUnique({ where: { id } });
   if (!election) return { ok: false, error: "找不到罷免案" };
@@ -54,7 +54,7 @@ export async function establishRecall(id: string): Promise<ActionResult> {
 // petition 期間駁回：軟刪除（hiddenAt），資料完全保留。reason 目前僅供呼叫端顯示/記錄用途，
 // schema 尚無專屬留痕欄位，不寫入 DB（若未來要稽核追蹤，需另加欄位，不在本階段範圍）。
 export async function rejectRecall(id: string, reason?: string): Promise<ActionResult> {
-  await requireAdmin();
+  await requireAdmin(`/admin/elections/${id}`);
   void reason;
 
   const election = await prisma.election.findUnique({ where: { id } });
@@ -70,7 +70,7 @@ export async function rejectRecall(id: string, reason?: string): Promise<ActionR
 }
 
 export async function saveRecallDefense(id: string, text: string): Promise<ActionResult> {
-  await requireAdmin();
+  await requireAdmin(`/admin/elections/${id}`);
 
   const election = await prisma.election.findUnique({ where: { id } });
   if (!election) return { ok: false, error: "找不到罷免案" };

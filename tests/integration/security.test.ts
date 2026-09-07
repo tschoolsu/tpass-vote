@@ -25,6 +25,7 @@ import { approveCandidate } from "@/app/admin/elections/[id]/candidates/actions"
 import { registerCandidate } from "@/app/e/[slug]/register/actions";
 import { castBallot } from "@/app/e/[slug]/vote/actions";
 import { sealElection } from "@/app/admin/elections/[id]/tally/actions";
+import { signRecall } from "@/app/e/[slug]/recall/actions";
 import { encryptBallot, generateTallyKeyPair, decryptBallot } from "@/lib/ballot-crypto";
 
 const CAND = { email: "seccand@test.local", name: "候選人" };
@@ -539,5 +540,25 @@ describe("名冊比對的 email 正規化", () => {
     });
     expect(r.ok, r.ok ? "" : r.error).toBe(true);
     expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(1);
+  });
+});
+
+// F-9：token 過期／未登入時 requireSession(returnPath) 導去登入頁，登入完成後
+// auth 用 `next` 參數把人送回這裡——如果 returnPath 不是該動作實際所在的頁，
+// 使用者登入完會被丟到 404（連署面板不在 /e/[slug]/recall）或後台首頁（不是
+// 開票中那一場，見規格 A2-1／A2-3）。
+describe("重登回跳路徑", () => {
+  function nextParamOf(url: string): string {
+    return new URL(url).searchParams.get("next") ?? "";
+  }
+
+  it("signRecall 過期重登應回到罷免連署面板，不是不存在的 /recall 路由", async () => {
+    const url = await captureRedirect(() => as(null, () => signRecall("some-recall-slug")));
+    expect(nextParamOf(url)).toBe("/e/some-recall-slug");
+  });
+
+  it("sealElection 過期重登應回到該場選舉的開票頁，不是後台首頁", async () => {
+    const url = await captureRedirect(() => as(null, () => sealElection("some-election-id")));
+    expect(nextParamOf(url)).toBe("/admin/elections/some-election-id/tally");
   });
 });

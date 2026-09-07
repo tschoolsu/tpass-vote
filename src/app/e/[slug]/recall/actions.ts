@@ -26,7 +26,7 @@ async function loadRecallThreshold(recallTargetOfficeId: string | null): Promise
 }
 
 export async function signRecall(slug: string): Promise<SignResult> {
-  const session = await requireSession(`/e/${slug}/recall`);
+  const session = await requireSession(`/e/${slug}`);
 
   const election = await prisma.election.findFirst({ where: { slug, hiddenAt: null } });
   if (!election) return { ok: false, error: "找不到這場罷免案" };
@@ -50,7 +50,7 @@ export async function signRecall(slug: string): Promise<SignResult> {
 }
 
 export async function withdrawSignature(slug: string): Promise<SignResult> {
-  const session = await requireSession(`/e/${slug}/recall`);
+  const session = await requireSession(`/e/${slug}`);
 
   const election = await prisma.election.findFirst({ where: { slug, hiddenAt: null } });
   if (!election) return { ok: false, error: "找不到這場罷免案" };

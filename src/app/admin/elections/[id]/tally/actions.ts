@@ -55,7 +55,7 @@ export async function sealElection(
   electionId: string,
   confirmSmallBox = false,
 ): Promise<SealResult> {
-  const admin = await requireAdmin();
+  const admin = await requireAdmin(`/admin/elections/${electionId}/tally`);
 
   const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) return { ok: false, error: "找不到選舉" };
@@ -165,7 +165,7 @@ export async function submitResults(
   results: unknown,
   disclosures: unknown,
 ): Promise<ActionResult> {
-  const admin = await requireAdmin();
+  const admin = await requireAdmin(`/admin/elections/${electionId}/tally`);
 
   const parsed = tallyResultSchema.safeParse(results);
   if (!parsed.success) return { ok: false, error: "計票結果格式不正確" };
