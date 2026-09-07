@@ -374,6 +374,7 @@ export function ElectionWorkbench({
               electionId={election.id}
               slug={election.slug}
               hasKey={hasKey}
+              keyShares={election.keyShares}
               locked={registrationLocked}
               initial={{
                 title: election.title,

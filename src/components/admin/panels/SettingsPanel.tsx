@@ -28,6 +28,7 @@ export function SettingsPanel({
   electionId,
   slug,
   hasKey,
+  keyShares,
   locked,
   initial,
   offices,
@@ -38,6 +39,7 @@ export function SettingsPanel({
   electionId: string;
   slug: string;
   hasKey: boolean;
+  keyShares: number;
   locked: boolean;
   initial: ElectionFormInitial;
   offices: { id: string; title: string }[];
@@ -92,6 +94,7 @@ export function SettingsPanel({
           <p className="flex items-center gap-2 font-bold">
             <Badge className="bg-card">開票金鑰</Badge> 已產生開票公鑰，私鑰只在選委手上的金鑰檔中。
           </p>
+          <p className="text-xs font-bold">開票金鑰分持：{keyShares} 份</p>
           <div className="flex items-center gap-2 border-t-2 border-dashed border-tone-green-text/30 pt-2">
             <p className="text-xs font-medium">金鑰檔打不開或確定遺失，這場永遠無法開票時：</p>
             <RedoElectionButton

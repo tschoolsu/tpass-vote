@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { KeyRound, Download, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { generateTallyKeyPair, makeKeyFiles, type TallyKeyFile } from "@/lib/ballot-crypto";
+import { DEFAULT_KEY_SHARES, canConfirmShare, canSubmitKeys, type ShareGateState } from "@/lib/keygen-gate";
 import { Button } from "tpass-ui";
 import { savePublicKey } from "@/app/admin/elections/[id]/actions";
 
@@ -34,11 +35,12 @@ export function KeyGenPanel({
 }) {
   const router = useRouter();
   const [step, setStep] = useState<Step>("choose");
-  const [shares, setShares] = useState<1 | 2>(1);
+  const [shares, setShares] = useState<1 | 2>(DEFAULT_KEY_SHARES);
   const [generating, setGenerating] = useState(false);
   const [keyFiles, setKeyFiles] = useState<TallyKeyFile[] | null>(null);
   const [publicKeyJwk, setPublicKeyJwk] = useState<JsonWebKey | null>(null);
-  const [confirmed, setConfirmed] = useState(false);
+  // 每一份金鑰檔各自的下載/確認狀態，key 是 share 編號（1-based）。
+  const [gate, setGate] = useState<Record<number, ShareGateState>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,9 +52,8 @@ export function KeyGenPanel({
       const files = makeKeyFiles(privateKeyJwk, slug, shares);
       setPublicKeyJwk(pub);
       setKeyFiles(files);
+      setGate(Object.fromEntries(files.map((f) => [f.share, { downloaded: false, confirmed: false }])));
       setStep("generated");
-      // 產生完立刻各下載一次，減少「忘記按下載」的情境；下方仍保留重新下載按鈕。
-      for (const f of files) downloadKeyFile(f);
     } catch {
       setError("金鑰產生失敗，請重新整理頁面再試一次");
     } finally {
@@ -60,8 +61,17 @@ export function KeyGenPanel({
     }
   }
 
+  function handleDownload(file: TallyKeyFile) {
+    downloadKeyFile(file);
+    setGate((g) => ({ ...g, [file.share]: { ...g[file.share], downloaded: true } }));
+  }
+
+  function handleConfirm(share: number, value: boolean) {
+    setGate((g) => ({ ...g, [share]: { ...g[share], confirmed: value } }));
+  }
+
   async function handleSave() {
-    if (!publicKeyJwk || !confirmed) return;
+    if (!publicKeyJwk || !keyFiles || !canSubmitKeys(Object.values(gate))) return;
     setSaving(true);
     setError(null);
     const result = await savePublicKey(electionId, publicKeyJwk, shares);
@@ -114,9 +124,9 @@ export function KeyGenPanel({
                 onChange={() => setShares(1)}
               />
               <span>
-                <span className="block font-bold text-sm">1 份（單一保管）</span>
+                <span className="block font-bold text-sm">1 份（單人保管）</span>
                 <span className="block text-xs text-muted-foreground">
-                  一份金鑰檔即可開票，適合單一選委保管，但該選委離職/遺失檔案即無法開票。
+                  一份金鑰檔即可開票，等於放棄 SOP 要求的雙人獨立開票比對；該選委離職/遺失檔案即無法開票。
                 </span>
               </span>
             </label>
@@ -146,37 +156,47 @@ export function KeyGenPanel({
       {step === "generated" && keyFiles && (
         <>
           <p className="font-bold text-sm mb-2">
-            已產生 {keyFiles.length} 份金鑰檔並自動下載，請確認每份都已妥善保管（例如分別交給不同選委、存到不同裝置）：
+            已產生 {keyFiles.length} 份金鑰檔，請逐份點擊下載並分別交給不同選委保管（例如存到不同裝置）：
           </p>
           <ul className="flex flex-col gap-2 mb-4">
-            {keyFiles.map((f) => (
-              <li
-                key={f.share}
-                className="flex items-center justify-between gap-2 rounded-xl border-2 border-foreground bg-secondary px-3 py-2"
-              >
-                <span className="font-mono text-xs font-bold">
-                  tvote-key-{f.election}-share{f.share}.json
-                </span>
-                <Button type="button" size="sm" onClick={() => downloadKeyFile(f)}>
-                  <Download className="h-3.5 w-3.5" /> 重新下載
-                </Button>
-              </li>
-            ))}
+            {keyFiles.map((f) => {
+              const state = gate[f.share] ?? { downloaded: false, confirmed: false };
+              return (
+                <li
+                  key={f.share}
+                  className="flex flex-col gap-2 rounded-xl border-2 border-foreground bg-secondary px-3 py-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs font-bold">
+                      tvote-key-{f.election}-share{f.share}.json
+                    </span>
+                    <Button type="button" size="sm" onClick={() => handleDownload(f)}>
+                      <Download className="h-3.5 w-3.5" /> 下載第 {f.share} 份
+                    </Button>
+                  </div>
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      disabled={!canConfirmShare(state)}
+                      checked={state.confirmed}
+                      onChange={(e) => handleConfirm(f.share, e.target.checked)}
+                    />
+                    <span className="font-bold text-sm">
+                      我已下載並妥善保管第 {f.share} 份，了解遺失即無法開票。
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
           </ul>
 
-          <label className="flex items-start gap-2 mb-4 cursor-pointer">
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={confirmed}
-              onChange={(e) => setConfirmed(e.target.checked)}
-            />
-            <span className="font-bold text-sm">
-              我已下載並妥善保管全部 {keyFiles.length} 份金鑰檔，了解遺失即無法開票。
-            </span>
-          </label>
-
-          <Button type="button" variant="primary" disabled={!confirmed || saving} onClick={handleSave}>
+          <Button
+            type="button"
+            variant="primary"
+            disabled={!canSubmitKeys(Object.values(gate)) || saving}
+            onClick={handleSave}
+          >
             {saving ? "儲存中…" : "確認並儲存公鑰"}
           </Button>
         </>
