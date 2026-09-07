@@ -107,6 +107,7 @@ export async function publishAnnouncement(
     include: { candidates: { where: { status: "approved" } } },
   });
   if (!election) return { ok: false, error: "找不到選舉" };
+  if (election.hiddenAt) return { ok: false, error: "這場選舉已作廢／隱藏，不能再操作" };
 
   const target = await resolveTarget(electionId, id, legalTag);
   if (!target.ok) return target;
@@ -135,7 +136,9 @@ export async function publishAnnouncement(
       // sealed→published 觸發方式維持現況不動：發布 legalTag='result' 的公告時翻 published。
       if (legalTag === "result" && isFirstPublish) {
         const bumped = await tx.election.updateMany({
-          where: { id: electionId, status: "sealed" },
+          // hiddenAt 一併重讀：擋掉「交易外檢查完、hideElection/redoElection 才插隊
+          // 把場次隱藏」這個窗口，不讓已作廢的場次把當選人寫進 Office。
+          where: { id: electionId, status: "sealed", hiddenAt: null },
           data: { status: "published" },
         });
         if (bumped.count === 0) throw new Error("CONFLICT");

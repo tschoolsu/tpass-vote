@@ -59,6 +59,7 @@ export async function sealElection(
 
   const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) return { ok: false, error: "找不到選舉" };
+  if (election.hiddenAt) return { ok: false, error: "這場選舉已作廢／隱藏，不能再操作" };
   if (election.status !== "closed") {
     return { ok: false, error: "只有已截止（closed）的選舉才能彌封" };
   }
@@ -78,10 +79,10 @@ export async function sealElection(
       // 票匭快照「必須」在鎖之後才讀：讀在交易外的話，一張正在落地的票會落在
       // 快照與 deleteMany 之間——被刪掉、卻不在快照裡。投票人收到 ok，票卻永久
       // 消失，不計票也查不出來。這是彌封路徑上最不可偵測的一種失敗。
-      const [locked] = await tx.$queryRaw<{ status: string }[]>`
-        SELECT status FROM "Election" WHERE id = ${electionId} FOR UPDATE
+      const [locked] = await tx.$queryRaw<{ status: string; hiddenAt: Date | null }[]>`
+        SELECT status, "hiddenAt" FROM "Election" WHERE id = ${electionId} FOR UPDATE
       `;
-      if (!locked || locked.status !== "closed") throw new Error("CONFLICT");
+      if (!locked || locked.status !== "closed" || locked.hiddenAt) throw new Error("CONFLICT");
 
       const ballots = await tx.encryptedBallot.findMany({
         where: { electionId },
@@ -196,6 +197,7 @@ export async function submitResults(
     },
   });
   if (!election) return { ok: false, error: "找不到選舉" };
+  if (election.hiddenAt) return { ok: false, error: "這場選舉已作廢／隱藏，不能再操作" };
   if (election.status !== "sealed") return { ok: false, error: "選舉尚未彌封，不能提交結果" };
   const isResubmit = election.resultsJson != null;
 
@@ -300,10 +302,10 @@ export async function submitResults(
       // 再各自嘗試 UPDATE 同一列會互相等待造成死結。也不用 FOR UPDATE：importRoster
       // 的 Voter upsert 對這一列持 FOR KEY SHARE（外鍵檢查）可達 30 秒，FOR UPDATE 會被
       // 它卡到交易逾時，FOR NO KEY UPDATE 與它相容（與 candidates／edit 同一結論）。
-      const [locked] = await tx.$queryRaw<{ status: string }[]>`
-        SELECT status FROM "Election" WHERE id = ${electionId} FOR NO KEY UPDATE
+      const [locked] = await tx.$queryRaw<{ status: string; hiddenAt: Date | null }[]>`
+        SELECT status, "hiddenAt" FROM "Election" WHERE id = ${electionId} FOR NO KEY UPDATE
       `;
-      if (!locked || locked.status !== "sealed") throw new Error("CONFLICT");
+      if (!locked || locked.status !== "sealed" || locked.hiddenAt) throw new Error("CONFLICT");
 
       await tx.election.update({
         where: { id: electionId },

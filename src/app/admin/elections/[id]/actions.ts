@@ -123,6 +123,7 @@ export async function advanceStatus(electionId: string, reason?: string): Promis
     },
   });
   if (!election) return { ok: false, error: "找不到選舉" };
+  if (election.hiddenAt) return { ok: false, error: "這場選舉已作廢／隱藏，不能再操作" };
 
   const current = election.status as ElectionStatus;
   const next = nextStatus(current, election.kind);
@@ -214,7 +215,9 @@ export async function advanceStatus(electionId: string, reason?: string): Promis
       if (count === 0) return { empty: true as const };
     }
     const updated = await tx.election.updateMany({
-      where: { id: electionId, status: current }, // 樂觀鎖：防兩個選委同時推進
+      // 樂觀鎖：防兩個選委同時推進；hiddenAt 一併重讀，擋掉「交易外檢查完、
+      // hideElection/redoElection 才插隊把場次隱藏」這個窗口。
+      where: { id: electionId, status: current, hiddenAt: null },
       data: { status: next, ...(ballotMode ? { ballotMode } : {}) },
     });
     if (updated.count > 0) {
@@ -391,6 +394,9 @@ export async function redoElection(electionId: string, reason?: string): Promise
       copyRoster: true,
     });
     await tx.election.update({ where: { id: source.id }, data: { hiddenAt: new Date() } });
+    // §26-1 Ⅳ：作廢＝這場不再存在，voterId↔ciphertext 的暫存不能繼續留著。
+    // sealed／published 場次本來就沒有 EncryptedBallot（sealElection 已清空），這裡是 no-op。
+    const voided = await tx.encryptedBallot.deleteMany({ where: { electionId: source.id } });
     await tx.electionAuditLog.create({
       data: {
         electionId: source.id,
@@ -399,7 +405,8 @@ export async function redoElection(electionId: string, reason?: string): Promise
         summary: `金鑰遺失重辦，原場次隱藏，新場次 id＝${created.id}`,
         diff: {
           newElectionId: created.id,
-          ...(trimmedReason ? { reason: trimmedReason, voidedBallotCount: ballotCount } : {}),
+          voidedBallotCount: voided.count,
+          ...(trimmedReason ? { reason: trimmedReason } : {}),
         } as Prisma.InputJsonValue,
       },
     });
@@ -420,21 +427,24 @@ export async function hideElection(electionId: string): Promise<ActionResult> {
   if (!election) return { ok: false, error: "找不到選舉" };
   if (election.hiddenAt) return { ok: false, error: "此選舉已經是隱藏狀態" };
 
-  await prisma.$transaction([
-    prisma.election.update({
+  await prisma.$transaction(async (tx) => {
+    await tx.election.update({
       where: { id: electionId },
       data: { hiddenAt: new Date() },
-    }),
-    prisma.electionAuditLog.create({
+    });
+    // §26-1 Ⅳ：隱藏＝作廢，voterId↔ciphertext 的暫存不能繼續留著。已彌封／已公告的
+    // 場次本來就沒有 EncryptedBallot（sealElection 已清空），這裡是 no-op。
+    const voided = await tx.encryptedBallot.deleteMany({ where: { electionId } });
+    await tx.electionAuditLog.create({
       data: {
         electionId,
         actorEmail: admin.email,
         action: "hide_election",
         summary: "隱藏（軟刪除）此選舉",
-        diff: {} as Prisma.InputJsonValue,
+        diff: { voidedBallotCount: voided.count } as Prisma.InputJsonValue,
       },
-    }),
-  ]);
+    });
+  });
 
   revalidatePath(`/admin/elections/${electionId}`);
   revalidatePath("/admin");
