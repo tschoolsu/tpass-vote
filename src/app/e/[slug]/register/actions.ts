@@ -88,44 +88,56 @@ export async function registerCandidate(
     return { ok: false, error: "大頭照無效或不屬於你，請重新上傳" };
   }
 
-  // electionId+createdBy 有 DB 唯一索引（一人一場一筆），下面用 upsert 原子性地新增/覆寫，
-  // 不再靠「先查後寫」判斷——避免同一人雙擊送出時 race 出兩筆重複登記。
+  // electionId+createdBy 有 DB 唯一索引（一人一場一筆）；這裡只用它查有沒有既有登記、
+  // 拿 id 定位要不要走覆寫路徑，不再拿查到的 status 在 JS 判斷可否重送——那個「先查狀態、
+  // 再無條件 upsert」的兩步窗口，選委剛好把這筆核准 commit 成 approved 時，upsert 仍會用
+  // 查到的舊狀態（needs_fix）覆寫回 pending，把核准結果吃掉（D7-5 第 2 輪）。
+  // 只有 needs_fix（編輯重送）與 rejected/withdrawn（重新登記）允許覆寫；其餘狀態
+  // （pending/approved）視為「已經登記過」擋掉——這條件現在放進 updateMany 的 WHERE，
+  // 在真正寫入那一刻對 DB 現值求值，不會再有先查後寫的窗口。
   const existing = await prisma.candidate.findUnique({
     where: { electionId_createdBy: { electionId: election.id, createdBy: session.email } },
+    select: { id: true },
   });
 
   const membersJson = data.members as unknown as Prisma.InputJsonValue;
   const attachmentsJson = data.attachmentIds as unknown as Prisma.InputJsonValue;
 
-  // 只有 needs_fix（編輯重送）與 rejected/withdrawn（重新登記，覆寫舊紀錄）允許寫入；
-  // 其餘狀態（pending/approved）視為「已經登記過」擋掉。
-  if (
-    existing &&
-    existing.status !== "needs_fix" &&
-    existing.status !== "rejected" &&
-    existing.status !== "withdrawn"
-  ) {
-    return { ok: false, error: "你已經登記過這場選舉了" };
+  if (existing) {
+    const rewrite = await prisma.candidate.updateMany({
+      where: { id: existing.id, status: { in: ["needs_fix", "rejected", "withdrawn"] } },
+      data: {
+        members: membersJson,
+        platform: data.platform,
+        attachments: attachmentsJson,
+        status: "pending",
+        reviewNote: null,
+      },
+    });
+    if (rewrite.count === 0) {
+      return { ok: false, error: "你已經登記過這場選舉了" };
+    }
+    return { ok: true, status: "pending" };
   }
 
-  await prisma.candidate.upsert({
-    where: { electionId_createdBy: { electionId: election.id, createdBy: session.email } },
-    create: {
-      electionId: election.id,
-      members: membersJson,
-      platform: data.platform,
-      attachments: attachmentsJson,
-      status: "pending",
-      createdBy: session.email,
-    },
-    update: {
-      members: membersJson,
-      platform: data.platform,
-      attachments: attachmentsJson,
-      status: "pending",
-      reviewNote: null,
-    },
-  });
-
-  return { ok: true, status: "pending" };
+  // 還沒登記過：直接 create。撞 electionId+createdBy 的唯一索引（雙擊送出時 race 出
+  // 兩筆重複登記）就回同一句「已經登記過」，不讓裸露的 Prisma 例外洩出去。
+  try {
+    await prisma.candidate.create({
+      data: {
+        electionId: election.id,
+        members: membersJson,
+        platform: data.platform,
+        attachments: attachmentsJson,
+        status: "pending",
+        createdBy: session.email,
+      },
+    });
+    return { ok: true, status: "pending" };
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      return { ok: false, error: "你已經登記過這場選舉了" };
+    }
+    throw e;
+  }
 }

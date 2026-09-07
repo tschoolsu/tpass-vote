@@ -18,6 +18,7 @@ import {
   generateKeys,
   importVoters,
   makeElection,
+  makeUploads,
   registerAs,
   seal,
   tallyAndSubmit,
@@ -28,7 +29,12 @@ import {
 import { encryptBallot, generateTallyKeyPair } from "@/lib/ballot-crypto";
 import { castBallot } from "@/app/e/[slug]/vote/actions";
 import { sealElection, submitResults } from "@/app/admin/elections/[id]/tally/actions";
-import { approveCandidate, rejectCandidate } from "@/app/admin/elections/[id]/candidates/actions";
+import {
+  approveCandidate,
+  rejectCandidate,
+  sendBackForFix,
+} from "@/app/admin/elections/[id]/candidates/actions";
+import { registerCandidate } from "@/app/e/[slug]/register/actions";
 import { updateElection } from "@/app/admin/elections/[id]/edit/actions";
 import { importRoster, removeVoter } from "@/app/admin/elections/[id]/roster/actions";
 import { savePublicKey, redoElection } from "@/app/admin/elections/[id]/actions";
@@ -1017,4 +1023,93 @@ describe("V2-2 迴歸：一般公告不該被 Election 列鎖卡住", () => {
       await lock.release();
     }
   }, 15_000);
+});
+
+// D7-5（第 2 輪）：registerCandidate 先 findUnique 讀既有登記、JS 判斷 status 才准重送，
+// 再 upsert 寫成 pending——兩步之間無交易無鎖。approveCandidate 在窗口內把狀態 commit 成
+// approved 之後，upsert 仍會用登記人重送當下讀到的舊狀態（needs_fix）覆寫回 pending，
+// 選委看到核准成功、候選人卻回到待審，開放投票時只數 approved 就不會出現在票上。
+//
+// 用一條獨立連線直接鎖住 Candidate 那一列（FOR UPDATE）製造確定性窗口：
+// approveCandidate 的 tx.candidate.update 與 registerCandidate 的 upsert 都需要這一列
+// 的鎖才能寫入，讓 approveCandidate 先排隊（先呼叫），registerCandidate 的 findUnique
+// 不受列鎖影響照樣讀到 needs_fix、通過檢查後排在 upsert 那一步等鎖；放鎖後 approveCandidate
+// 先拿到鎖、完成整個核准交易（含 renumberApproved）並 commit，registerCandidate 的 upsert
+// 才接著執行——修法前這裡會用舊狀態的判斷結果覆寫剛核准的候選人。
+describe("D7-5（第 2 輪）registerCandidate：重送不再覆寫剛核准的審核結果", () => {
+  const SLUG = "d7-5-register-race";
+  let electionId: string;
+  let candidateId: string;
+  let photoId: string;
+  let attachmentId: string;
+
+  beforeEach(async () => {
+    await resetDb();
+    const created = await makeElection({ slug: SLUG });
+    electionId = created.electionId!;
+    await generateKeys(electionId, SLUG);
+    await importVoters(electionId, [CAND]);
+    await advanceTo(electionId, "registration");
+
+    const registered = await registerAs(SLUG, electionId, CAND);
+    expect(registered.ok, registered.ok ? "" : registered.error).toBe(true);
+    const candidate = await prisma.candidate.findFirstOrThrow({ where: { electionId } });
+    candidateId = candidate.id;
+
+    const uploads = await makeUploads(electionId, CAND);
+    photoId = uploads.photoId;
+    attachmentId = uploads.attachmentId;
+
+    const sentBack = await as(ADMIN, () => sendBackForFix(electionId, candidateId, "缺附件"));
+    expect(sentBack.ok, sentBack.ok ? "" : sentBack.error).toBe(true);
+  }, 60_000);
+
+  it("候選人在核准 commit 的同一窗口重送，最終仍是 approved 且號次不被抹掉（20 輪）", async () => {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await prisma.candidate.update({
+        where: { id: candidateId },
+        data: { status: "needs_fix", number: null, reviewNote: "缺附件" },
+      });
+
+      const lock = new Client({ connectionString: TEST_DATABASE_URL });
+      await lock.connect();
+      await lock.query("BEGIN");
+      await lock.query(`SELECT id FROM "Candidate" WHERE id = $1 FOR UPDATE`, [candidateId]);
+      try {
+        // 先讓 approveCandidate 的 UPDATE 排進鎖佇列，settle 之後才讓 registerCandidate
+        // 的 upsert 跟著排隊，確保放鎖時 approveCandidate 先拿到鎖、整筆核准交易先落地。
+        const approving = as(ADMIN, () => approveCandidate(electionId, candidateId));
+        await settle();
+        const registering = as(CAND, () =>
+          registerCandidate(SLUG, {
+            members: [
+              { name: CAND.name ?? CAND.email, email: CAND.email, grade: "二年級", photo: photoId },
+            ],
+            platform: `第 ${attempt} 輪重送`,
+            attachmentIds: [attachmentId],
+          }),
+        );
+        await settle();
+        await lock.query("COMMIT");
+        await lock.end();
+
+        const [approved] = await Promise.all([approving, registering]);
+        expect(
+          approved.ok,
+          `第 ${attempt} 輪：核准本身不該失敗：${approved.ok ? "" : approved.error}`,
+        ).toBe(true);
+
+        const final = await prisma.candidate.findUniqueOrThrow({ where: { id: candidateId } });
+        expect(
+          final.status,
+          `第 ${attempt} 輪：剛核准的候選人被重送覆寫回「${final.status}」`,
+        ).toBe("approved");
+        expect(final.number, `第 ${attempt} 輪：核准後的號次被重送抹掉`).not.toBeNull();
+      } catch (e) {
+        await lock.query("ROLLBACK").catch(() => {});
+        await lock.end().catch(() => {});
+        throw e;
+      }
+    }
+  }, 120_000);
 });
