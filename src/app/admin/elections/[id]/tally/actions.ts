@@ -214,16 +214,12 @@ export async function submitResults(
       candidates: { where: { status: "approved" }, select: { id: true, number: true, members: true } },
     },
   });
-  // 重新提交（isResubmit）時，覆寫前的明細雜湊要記進這次的 audit diff——沒有它，
-  // 「這次結果是接在哪一份明細之後改的」事後就無從對證。
-  const previousDisclosuresSha256 =
-    election && Array.isArray(election.disclosuresJson)
-      ? createHash("sha256").update(JSON.stringify(election.disclosuresJson)).digest("hex")
-      : undefined;
   if (!election) return { ok: false, error: "找不到選舉" };
   if (election.hiddenAt) return { ok: false, error: "這場選舉已作廢／隱藏，不能再操作" };
   if (election.status !== "sealed") return { ok: false, error: "選舉尚未彌封，不能提交結果" };
-  const isResubmit = election.resultsJson != null;
+  // isResubmit／previousDisclosuresSha256 不能在這裡（交易外）算：兩位選委同時
+  // 重新提交時，兩邊的交易外讀取都不受列鎖阻擋，會同時讀到同一份舊明細，稽核鏈就會
+  // 記錯「接在哪一份之後」（見下面交易內取鎖之後的重算，V2-5 第 3 輪）。
 
   // ballotMode 是本場選舉的真相（advanceStatus 推進到 voting 時定案，狀態機單向前進到
   // sealed 必定已設定），不能信任提交者填的 r.mode——r.mode 只做過 enum 格式檢查，
@@ -326,10 +322,23 @@ export async function submitResults(
       // 再各自嘗試 UPDATE 同一列會互相等待造成死結。也不用 FOR UPDATE：importRoster
       // 的 Voter upsert 對這一列持 FOR KEY SHARE（外鍵檢查）可達 30 秒，FOR UPDATE 會被
       // 它卡到交易逾時，FOR NO KEY UPDATE 與它相容（與 candidates／edit 同一結論）。
-      const [locked] = await tx.$queryRaw<{ status: string; hiddenAt: Date | null }[]>`
-        SELECT status, "hiddenAt" FROM "Election" WHERE id = ${electionId} FOR NO KEY UPDATE
+      //
+      // isResubmit／previousDisclosuresSha256 也要從這次鎖定後讀到的列算，不能沿用
+      // 交易外那次 findUnique：兩位選委同時重新提交時，兩邊的交易外讀取都不受列鎖
+      // 阻擋，會同時讀到同一份舊明細，事後兩筆稽核紀錄都會宣稱自己接在同一份之後，
+      // 真正被覆寫的那份反而沒有任何後繼紀錄（V2-5 第 3 輪）。
+      const [locked] = await tx.$queryRaw<
+        { status: string; hiddenAt: Date | null; resultsJson: unknown; disclosuresJson: unknown }[]
+      >`
+        SELECT status, "hiddenAt", "resultsJson", "disclosuresJson" FROM "Election"
+        WHERE id = ${electionId} FOR NO KEY UPDATE
       `;
       if (!locked || locked.status !== "sealed" || locked.hiddenAt) throw new Error("CONFLICT");
+
+      const isResubmit = locked.resultsJson != null;
+      const previousDisclosuresSha256 = Array.isArray(locked.disclosuresJson)
+        ? createHash("sha256").update(JSON.stringify(locked.disclosuresJson)).digest("hex")
+        : undefined;
 
       await tx.election.update({
         where: { id: electionId },

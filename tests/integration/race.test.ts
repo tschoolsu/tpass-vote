@@ -8,6 +8,7 @@
 //   彌封那個案例會直接死結。
 // - FOR NO KEY UPDATE 擋得住 Election 的 UPDATE，卻放行子表 INSERT——正是我們要的窗口。
 import { describe, it, expect, beforeEach } from "vitest";
+import { createHash } from "node:crypto";
 import { Client } from "pg";
 import { prisma, resetDb, TEST_DATABASE_URL } from "../helpers/db";
 import { ADMIN, MODERATOR, VOTER_A, VOTER_B, as } from "../helpers/session";
@@ -597,6 +598,58 @@ describe("D7-5 submitResults：狀態檢查與寫入不再跨交易", () => {
         before.resultsJson as unknown as { candidates: { elected: boolean }[] }
       ).candidates.map((c) => c.elected);
       expect(flipped, "公告之後結果不該被改寫").toEqual(original);
+    } catch (e) {
+      await lock.abort();
+      throw e;
+    }
+  }, 60_000);
+
+  // V2-5（第 3 輪，D11-3 追蹤）：previousDisclosuresSha256／isResubmit 是在交易外的
+  // 一般 SELECT 上算的，真正的覆寫卻發生在交易內取得 FOR NO KEY UPDATE 之後。兩位
+  // 選委同時重新提交時，兩邊的交易外讀取都不受列鎖阻擋，會同時讀到同一份舊明細——
+  // 這裡用鎖窗模擬「B 的重新提交已經在窗口內 commit，C 的交易外讀取卻還停在更早
+  // 的版本」，重現稽核鏈記錯上一棒的問題。
+  it("重新提交卡在鎖上、鎖放行前另一次提交已覆寫明細：previousDisclosuresSha256 要指向真正被覆寫的那份，不是交易外讀到的舊版", async () => {
+    const before = await prisma.election.findUniqueOrThrow({ where: { id: electionId } });
+    const disclosuresA = JSON.parse(JSON.stringify(before.disclosuresJson)) as Array<
+      Record<string, unknown>
+    >;
+    const resultsA = JSON.parse(JSON.stringify(before.resultsJson));
+    const shaA = createHash("sha256").update(JSON.stringify(disclosuresA)).digest("hex");
+
+    // 明細 B：形狀不變，只換第一筆的代碼——verifyDisclosures 不會被用到（這裡直接繞過
+    // submitResults 模擬「B 的交易已經 commit」，不必真的再走一次驗證）。
+    const disclosuresB = disclosuresA.map((d, i) =>
+      i === 0 ? { ...d, code: "aaaaaaaaaaaa" } : d,
+    );
+    const shaB = createHash("sha256").update(JSON.stringify(disclosuresB)).digest("hex");
+
+    const lock = await holdElectionLock(electionId, "no key update");
+    try {
+      // 鎖窗內用同一條連線（已持有列鎖，不會自己卡自己）把 disclosuresJson 改成 B，
+      // 模擬「另一次重新提交」的交易已經走到 UPDATE、只差 COMMIT。
+      await lock.client.query(`UPDATE "Election" SET "disclosuresJson" = $1::jsonb WHERE id = $2`, [
+        JSON.stringify(disclosuresB),
+        electionId,
+      ]);
+
+      // C 的重新提交：交易外的 SELECT 在 B commit 之前執行，看到的是舊版 A；
+      // 接著卡在 FOR NO KEY UPDATE，直到 B 的鎖窗放行。
+      const submittingC = as(MODERATOR, () => submitResults(electionId, resultsA, disclosuresA));
+      await settle();
+      await lock.release();
+      const subC = await submittingC;
+      expect(subC.ok, "C 的重新提交本身應該成功").toBe(true);
+
+      const logC = await prisma.electionAuditLog.findFirst({
+        where: { electionId, action: "submit_results" },
+        orderBy: { createdAt: "desc" },
+      });
+      const diffC = logC!.diff as Record<string, unknown>;
+      expect(diffC.previousDisclosuresSha256, "應指向鎖窗內真正被覆寫的 B，不是交易外讀到的 A").toBe(
+        shaB,
+      );
+      expect(diffC.previousDisclosuresSha256).not.toBe(shaA);
     } catch (e) {
       await lock.abort();
       throw e;

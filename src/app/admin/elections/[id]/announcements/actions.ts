@@ -210,10 +210,12 @@ export async function publishAnnouncement(
     // statement_timeout=30000——Prisma 的 10 秒交易逾時無法打斷「已送出、卡在鎖上」
     // 的那句 SQL，30 秒後 Postgres 自己砍掉查詢，Prisma 把它包成 P2010（raw query
     // 失敗，底層 57014 canceling statement due to statement timeout），不是 P2028。
-    // 三個都是同一類「撞到別人也在動這場選舉」，一律回可讀錯誤，不讓例外往外丟成 500。
+    // Prisma 7 的錯誤碼是「raw vs model 查詢」二分：同一個 57014／40P01 在 raw 查詢
+    // 包成 P2010，在 model 查詢（例如 tx.announcement.update）包成 P2039／P2034。
+    // 四個都是同一類「撞到別人也在動這場選舉」，一律回可讀錯誤，不讓例外往外丟成 500。
     if (
       e instanceof Prisma.PrismaClientKnownRequestError &&
-      (e.code === "P2034" || e.code === "P2028" || e.code === "P2010")
+      (e.code === "P2034" || e.code === "P2028" || e.code === "P2010" || e.code === "P2039")
     ) {
       return { ok: false, error: "有人同時在操作這場選舉，請重新整理後再試" };
     }
