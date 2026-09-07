@@ -5,6 +5,10 @@ import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/guard";
 import { prisma } from "@/lib/db";
 import { LOCKED_STATUSES } from "@/lib/election-status";
+
+// 名冊凍結點：關票起（closed／sealed／published）。investigating／voting 之間只擋刪除
+// （LOCKED_STATUSES，見 removeVoter），不擋新增。
+const ROSTER_FROZEN_STATUSES: Set<string> = new Set(["closed", "sealed", "published"]);
 import type { Prisma } from "@/generated/prisma/client";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -46,16 +50,17 @@ export async function importRoster(electionId: string, raw: string): Promise<Ros
   // 分批之間仍共用同一個 tx，30 秒 statement_timeout 內足夠。
   const BATCH_SIZE = 500;
   const result = await prisma.$transaction(async (tx) => {
-    // 跟 removeVoter 同一個模式：交易外的一般 SELECT 讀到「未鎖定」後，advanceStatus
-    // 能在檢查完、還沒寫之間插隊把投票開放，讓匯入把 rosterCount／投票率改掉。
+    // 跟 removeVoter 同一個模式：交易外的一般 SELECT 讀到「未凍結」後，advanceStatus
+    // 能在檢查完、還沒寫之間插隊把投票關掉，讓匯入把 rosterCount／投票率改掉。
+    // 投票期間仍准新增（漏掉的合格選舉人要補得進去才投得了票），關票後才凍結。
     // 用 FOR SHARE 重讀最新 status——多個 importRoster/removeVoter 互不阻塞，只跟
     // 會改變 Election 狀態的那個 UPDATE（advanceStatus 隱含的 FOR NO KEY UPDATE）互斥。
     const [locked] = await tx.$queryRaw<{ status: string }[]>`
       SELECT status FROM "Election" WHERE id = ${electionId} FOR SHARE
     `;
     if (!locked) return { ok: false as const, error: "找不到選舉" };
-    if (LOCKED_STATUSES.has(locked.status)) {
-      return { ok: false as const, error: "投票開放後不能再匯入名冊" };
+    if (ROSTER_FROZEN_STATUSES.has(locked.status)) {
+      return { ok: false as const, error: "投票結束後不能再匯入名冊" };
     }
 
     for (let i = 0; i < rows.length; i += BATCH_SIZE) {

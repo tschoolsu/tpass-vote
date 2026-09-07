@@ -13,6 +13,17 @@ const ACTION_LABEL: Record<string, string> = {
   save_public_key: "設定開票金鑰",
   publish_announcement: "發布公告",
   redo_election: "重辦選舉",
+  approve_candidate: "核准候選人",
+  reject_candidate: "退回候選人",
+  send_back_candidate: "退回補件",
+  update_election: "修改選舉設定",
+  seal_election: "彌封",
+  create_runoff: "建立決選",
+  create_by_election: "建立補選",
+  establish_recall: "罷免案成立",
+  reject_recall: "罷免案不成立",
+  save_recall_defense: "存答辯書",
+  initiate_recall: "提起罷免",
 };
 
 export interface ElectionAuditLogRow {

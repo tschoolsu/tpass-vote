@@ -462,7 +462,7 @@ describe("D7-4 removeVoter：狀態檢查與寫入不再跨交易", () => {
   }, 60_000);
 });
 
-describe("D7-11 importRoster：投票開放後不能再匯入名冊", () => {
+describe("D7-11 importRoster：投票結束後不能再匯入名冊（投票中仍可補人）", () => {
   const SLUG = "d7-roster-import";
   let electionId: string;
 
@@ -478,29 +478,38 @@ describe("D7-11 importRoster：投票開放後不能再匯入名冊", () => {
     await advanceTo(electionId, "voting");
   }, 90_000);
 
-  it("投票已開放時直接呼叫 importRoster，整筆被擋下、Voter 數不變", async () => {
+  it("投票中仍可補匯入漏掉的選舉人", async () => {
+    const before = await prisma.voter.count({ where: { electionId } });
+    const imported = await as(ADMIN, () =>
+      importRoster(electionId, "late-but-ok@test.local,投票中補人"),
+    );
+    expect(imported.ok, imported.ok ? "" : imported.error).toBe(true);
+    expect(await prisma.voter.count({ where: { electionId } })).toBe(before + 1);
+  }, 30_000);
+
+  it("關票後直接呼叫 importRoster，整筆被擋下、Voter 數不變", async () => {
+    await advanceTo(electionId, "closed");
     const before = await prisma.voter.count({ where: { electionId } });
 
     const imported = await as(ADMIN, () =>
       importRoster(electionId, "late-import@test.local,遲到報名"),
     );
 
-    expect(imported.ok, "投票已開放，名冊匯入本應被擋下").toBe(false);
+    expect(imported.ok, "投票已結束，名冊匯入本應被擋下").toBe(false);
     expect(
       await prisma.voter.count({ where: { electionId } }),
       "Voter 數不該因為被擋下的匯入而改變",
     ).toBe(before);
   }, 30_000);
 
-  it("投票開放一旦 commit，卡在鎖上的 importRoster 必須讀到新狀態並被擋下，名冊不被插隊寫入", async () => {
+  it("關票一旦 commit，卡在鎖上的 importRoster 必須讀到新狀態並被擋下，名冊不被插隊寫入", async () => {
     const before = await prisma.voter.count({ where: { electionId } });
 
-    // 回到 campaigning，讓下面的鎖窗模擬「檢查時還沒開放、commit 後才開放」的插隊競態。
-    await prisma.election.update({ where: { id: electionId }, data: { status: "campaigning" } });
+    // 狀態仍是 voting：鎖窗模擬「檢查時還沒關票、commit 後才關票」的插隊競態。
 
     const lock = await holdElectionLock(electionId, "no key update");
     try {
-      await lock.client.query(`UPDATE "Election" SET status = 'voting' WHERE id = $1`, [
+      await lock.client.query(`UPDATE "Election" SET status = 'closed' WHERE id = $1`, [
         electionId,
       ]);
 
@@ -511,7 +520,7 @@ describe("D7-11 importRoster：投票開放後不能再匯入名冊", () => {
       await lock.release();
       const imported = await importing;
 
-      expect(imported.ok, "投票開放後才 commit，這筆匯入本應被擋下").toBe(false);
+      expect(imported.ok, "關票後才 commit，這筆匯入本應被擋下").toBe(false);
       expect(
         await prisma.voter.count({ where: { electionId } }),
         "名冊不該被插隊匯入的資料改變",
