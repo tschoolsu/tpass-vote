@@ -154,8 +154,15 @@ T-Vote 註冊表仍是 `deployed:false`，主機的 nginx server block 大概率
 `client_max_body_size`（預設 1M）。壓縮後的大頭照多半碰不到，但學生證的 `skip` 路徑
 （9MB 原檔直上）在沒設好的主機上會 413。
 
-**上線前需要有 root 的人在主機上執行**（agent 拿不到 root）：在 443 的 server block 加
+**上線前需要有 root 的人在主機上執行**（agent 拿不到 root）：在
+`/etc/nginx/sites-enabled/vote.tschoolsu.org` 的 server block 加
 `client_max_body_size 21M;`，然後 `nginx -t && systemctl reload nginx`。
+
+⚠️ 位置是 **`listen 80` 那個 block**，不是 443——這台主機的 TLS 由 Cloudflare 終結，
+nginx 只聽 80。`docs/ONBOARDING.md:321` 寫的「443 的 server block」對這台不適用。
+照 `form.tschoolsu.org` 的擺法：放在 `server_name` 下面、log 設定之前。
+
+2026-09-08 實查：全主機只有 `form.tschoolsu.org` 有這行，`vote.tschoolsu.org` **沒有**。
 
 驗證（不需登入）：
 
