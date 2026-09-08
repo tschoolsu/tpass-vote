@@ -106,26 +106,26 @@ model Voter {
   election   Election  @relation(fields: [electionId], references: [id], onDelete: Cascade)
   email      String
   name       String?
-  // 最後一次投票時間；截止前可重投覆寫。彌封後保留——§26-1 Ⅴ 的「投票暨未投票選舉人名冊」靠它產生。
-  votedAt    DateTime?
-
-  ballot EncryptedBallot?
+  // 只記「投過沒」，不記何時投的。精確時間戳可以跟票匭的實體列順序 rank-join，
+  // 把匿名票匭一張一張對回人——那等於把剛拿掉的 voterId 用另一種形式寫回去。
+  // 彌封後保留——§26-1 Ⅴ 的「投票暨未投票選舉人名冊」靠它產生，而那份名冊本來就只列有無。
+  hasVoted   Boolean   @default(false)
 
   @@unique([electionId, email])
 }
 
-// 內信封：無開票私鑰不可解。voterId 唯一＝一人一格，重投＝upsert 覆寫。
+// 內信封：無開票私鑰不可解。**這張表任何時候都不得有指向 Voter 的欄位或 relation**，
+// 投票期間也不行——一人一票改由 Voter.hasVoted 的鎖內判定達成（見 e/[slug]/vote/actions.ts）。
 // 這張表只是「投票期間的暫存格」：彌封時整場刪除（見 admin/elections/[id]/tally/actions.ts），
 // 密文改由 Election.sealedBox（已洗牌）保存。§26-1 Ⅳ 要求不得記錄代碼與個別選舉人之連結，
-// 任何讓這個連結在彌封後存活的改動都是違法，不是效能取捨。
+// 任何讓這個連結存活的改動都是違法，不是效能取捨。
 model EncryptedBallot {
-  id         String   @id @default(cuid())
+  // uuid(4) 而非 cuid()：cuid 前綴含時間、可排序，等於把投票順序寫進主鍵。
+  // 絕不可改成 uuid(7)——v7 前綴就是毫秒時間戳，等於把 updatedAt 用另一個名字加回來。
+  id         String   @id @default(uuid(4))
   electionId String
   election   Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
-  voterId    String   @unique
-  voter      Voter    @relation(fields: [voterId], references: [id], onDelete: Cascade)
   ciphertext String // base64(RSA-OAEP 包 AES 金鑰 + AES-GCM 密文)
-  updatedAt  DateTime @updatedAt
 
   @@index([electionId])
 }
