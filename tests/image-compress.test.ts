@@ -5,6 +5,7 @@ import {
   uploadErrorMessage,
   scaledSize,
   jpegName,
+  isServerAcceptedMime,
   MAX_UPLOAD_BYTES,
   PHOTO_MAX_EDGE,
   ATTACHMENT_MAX_EDGE,
@@ -209,5 +210,23 @@ describe("jpegName", () => {
 
   it("只換最後一段，檔名中的點不動", () => {
     expect(jpegName("2026.09.08 學生證.png")).toBe("2026.09.08 學生證.jpg");
+  });
+});
+
+describe("isServerAcceptedMime", () => {
+  it("JPEG 收", () => {
+    expect(isServerAcceptedMime("image/jpeg")).toBe(true);
+  });
+
+  it("PDF 收（學生證影本另收 PDF）", () => {
+    expect(isServerAcceptedMime("application/pdf")).toBe(true);
+  });
+
+  it("HEIC 不收：退回原檔這條路對它不成立", () => {
+    expect(isServerAcceptedMime("image/heic")).toBe(false);
+  });
+
+  it("空字串不收", () => {
+    expect(isServerAcceptedMime("")).toBe(false);
   });
 });

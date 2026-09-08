@@ -150,6 +150,25 @@ function toJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob | 
 }
 
 /**
+ * 伺服器 /api/upload 的 MIME 白名單（route.ts 的 ALLOWED_MIME 與 ALLOWED_PHOTO_MIME
+ * 的聯集：jpeg／png／webp／pdf）。
+ *
+ * 用途：判斷「退回原檔」這條路是不是真的走得通。退回原檔的前提是原檔本身會被伺服器
+ * 接受——如果原檔類型根本不在白名單裡（目前就是 HEIC／HEIF），退回原檔只是把
+ * 415 的鍋往後延，使用者看到的會是通用的「只接受 JPG／PNG／WebP」，而不是這個
+ * 檔案原本該有的專屬引導（例如 HEIC_MESSAGE）。這種情況下不能把它當成合法的
+ * fallback，一定要繼續往下嘗試壓縮。
+ */
+export function isServerAcceptedMime(mime: string): boolean {
+  return (
+    mime === "image/jpeg" ||
+    mime === "image/png" ||
+    mime === "image/webp" ||
+    mime === "application/pdf"
+  );
+}
+
+/**
  * 上傳前處理單一檔案。回傳的 file 直接丟進 FormData 送 /api/upload。
  *
  * 失敗一律回 { ok: false, message }，message 是可以直接顯示給使用者的中文。
@@ -190,7 +209,16 @@ export async function prepareUpload(file: File, kind: UploadKind): Promise<Prepa
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return { ok: true, file, compressed: false };
+    if (!ctx) {
+      // 拿不到 2d context 就沒辦法壓，只能退回原檔——但前提還是一樣：
+      // 原檔類型伺服器要收得下，不然只是把 415 往後拖延。
+      if (!isServerAcceptedMime(file.type)) {
+        return isHeic({ mime: file.type, filename: file.name })
+          ? { ok: false, message: HEIC_MESSAGE }
+          : { ok: false, message: STILL_TOO_LARGE_MESSAGE };
+      }
+      return { ok: true, file, compressed: false };
+    }
 
     // 透明 PNG 直接轉 JPEG 會變黑底，先鋪白再畫。
     // canvas 繪圖色，不是 CSS token 的適用範圍。
@@ -198,15 +226,35 @@ export async function prepareUpload(file: File, kind: UploadKind): Promise<Prepa
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(bitmap, 0, 0, width, height);
 
+    const acceptedMime = isServerAcceptedMime(file.type);
+    // 原檔類型伺服器不收（目前就是 HEIC／HEIF）時，「退回原檔」這條路不存在，
+    // 只能在整個品質階梯裡找出試過裡最小的那個合法 JPEG，不能中途就放棄回原檔。
+    let smallestBlob: Blob | null = null;
+
     for (const quality of QUALITY_LADDER) {
       const blob = await toJpegBlob(canvas, quality);
       if (!blob) break;
       if (blob.size > MAX_UPLOAD_BYTES) continue;
-      // 壓完反而變大（本來就很小、已優化過的圖會這樣）就用原檔，別越幫越忙。
-      if (blob.size >= file.size) return { ok: true, file, compressed: false };
+
+      if (acceptedMime) {
+        // 壓完反而變大（本來就很小、已優化過的圖會這樣）就用原檔，別越幫越忙。
+        // 這條捷徑只在原檔傳得上去時才成立。
+        if (blob.size >= file.size) return { ok: true, file, compressed: false };
+        return {
+          ok: true,
+          file: new File([blob], jpegName(file.name), { type: "image/jpeg" }),
+          compressed: true,
+        };
+      }
+
+      if (!smallestBlob || blob.size < smallestBlob.size) smallestBlob = blob;
+    }
+
+    if (smallestBlob) {
+      // 沒有原檔可退，但已經有壓在上限內的合法 JPEG——用它，比報錯有用。
       return {
         ok: true,
-        file: new File([blob], jpegName(file.name), { type: "image/jpeg" }),
+        file: new File([smallestBlob], jpegName(file.name), { type: "image/jpeg" }),
         compressed: true,
       };
     }
