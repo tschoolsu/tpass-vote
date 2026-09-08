@@ -89,6 +89,14 @@ export async function sealElection(
         select: { ciphertext: true },
       });
 
+      // 票匭沒有 voterId 之後，DB 層再也沒有東西保證「一人最多一張票」——那條
+      // unique index 是跟著 voterId 一起被拿掉的。castBallot 在同一交易裡設 hasVoted
+      // 並插入密文，所以彌封前這兩個數字必須相等；不相等就代表有路徑繞過了收票
+      // 那條唯一正確的寫法（或有票被獨立刪掉）。這時候不能彌封：彌封會把票匭刪掉、
+      // 只留下快照，事後誰都查不出張數是從哪裡歪掉的，而公告出去的投票率是錯的。
+      const voted = await tx.voter.count({ where: { electionId, hasVoted: true } });
+      if (ballots.length !== voted) throw new Error("BALLOT_COUNT_MISMATCH");
+
       // Fisher–Yates（node:crypto randomInt，非 Math.random）：
       // 快照順序必須與寫入順序無關，否則洗牌形同虛設。
       const box = ballots.map((b) => b.ciphertext);
@@ -113,7 +121,7 @@ export async function sealElection(
       if (sealed.count === 0) throw new Error("CONFLICT");
 
       // §26-1 Ⅳ：本會不得記錄可回溯代碼與個別選舉人之連結。密文已全數進入洗牌後的
-      // sealedBox，這裡把 voterId↔ciphertext 的對應永久刪掉；名冊（Voter.votedAt）保留。
+      // sealedBox，這裡把票匭整張刪掉；名冊（Voter.hasVoted）保留，§26-1 Ⅴ 的名冊靠它產生。
       await tx.encryptedBallot.deleteMany({ where: { electionId } });
 
       await tx.electionAuditLog.create({
@@ -129,6 +137,12 @@ export async function sealElection(
   } catch (e) {
     if (e instanceof Error && e.message === "CONFLICT") {
       return { ok: false, error: "選舉狀態已被其他選委變更，請重新整理頁面" };
+    }
+    if (e instanceof Error && e.message === "BALLOT_COUNT_MISMATCH") {
+      return {
+        ok: false,
+        error: "票匭張數與名冊上的已投票人數不一致，已中止彌封。這是資料異常，請聯絡系統維運人員檢查，不要重試。",
+      };
     }
     throw e;
   }

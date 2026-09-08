@@ -110,6 +110,10 @@ export async function removeVoter(electionId: string, voterId: string): Promise<
       SELECT status FROM "Election" WHERE id = ${electionId} FOR SHARE
     `;
     if (!locked) return { ok: false as const, error: "找不到選舉" };
+    // ⚠️ 這道閘門現在還兼著擋孤兒票，放寬它不只是政策問題。EncryptedBallot 拿掉 voterId
+    // 之後也一起失去了 onDelete: Cascade——投票期間刪掉一個已投票的人，他那張票會留在
+    // 票匭裡對不到任何人，`ballots == hasVoted 計數` 的不變量破掉，彌封會被防呆擋下
+    // （見 tally/actions.ts 的 BALLOT_COUNT_MISMATCH），整場開不了票。DB 攔不住這件事。
     if (LOCKED_STATUSES.has(locked.status)) {
       return { ok: false as const, error: "投票已開始，名冊只能新增，不能刪除" };
     }

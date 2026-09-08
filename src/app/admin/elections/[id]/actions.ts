@@ -247,6 +247,21 @@ export async function advanceStatus(electionId: string, reason?: string): Promis
       data: { status: next, ...(ballotMode ? { ballotMode } : {}) },
     });
     if (updated.count > 0) {
+      // 關票時把這場的 xmin 全部塌縮成「這一個交易」。
+      //
+      // 收票時每張票會擾動 K 列（見 vote-policy.ts 的 PERTURB_K），但那只是稀釋不是消滅：
+      // 後來的票會覆蓋前面留下的 xid，侵蝕到最後約 1.5% 的選舉人會剩下「這個 xid 只對到
+      // 你一個人、也只對到一張票」——那一票就被精確還原了，而且比例與名冊大小無關
+      //（3000 人的場次約 44 人）。這裡整場原值改寫一次，全部的列從此帶同一個 xid，
+      // join 出來是 N×N 的組合，資訊量歸零。
+      //
+      // 擺在關票而不是彌封：彌封會把票匭整個刪掉，那時候已經沒有東西可以 join 了；真正
+      // 沒防護的是「已關票、還沒彌封」這段窗口（SOP 要求關票後等 10 秒，實務上可能拖上
+      // 幾小時），以及那段期間拍的任何備份。擋不住的仍是投票當下就在即時監看的人。
+      if (next === "closed") {
+        await tx.$executeRaw`UPDATE "Voter" SET "hasVoted" = "hasVoted" WHERE "electionId" = ${electionId}`;
+        await tx.$executeRaw`UPDATE "EncryptedBallot" SET ciphertext = ciphertext WHERE "electionId" = ${electionId}`;
+      }
       await tx.electionAuditLog.create({
         data: {
           electionId,
@@ -385,13 +400,13 @@ export async function createByElection(sourceId: string): Promise<ElectionCloneR
 const REDO_REQUIRES_SUPERADMIN_REASON = new Set(["voting", "closed", "sealed"]);
 
 // 彌封（sealElection）會把 EncryptedBallot 清空、票搬進洗牌後的 sealedBox（§26-1 Ⅳ，
-// voterId↔ciphertext 不得存活），所以 sealed 狀態查 EncryptedBallot 恆為 0。castBallot
-// 是唯一會設 Voter.votedAt 的地方，且與 EncryptedBallot 在同一交易寫入、彌封也不清它
-// （見 sealElection 註解「名冊 Voter.votedAt 保留」），所以查 votedAt 才是 voting／
+// 票匭不得留下指得回人的東西），所以 sealed 狀態查 EncryptedBallot 恆為 0。castBallot
+// 是唯一會設 Voter.hasVoted 的地方，且與 EncryptedBallot 在同一交易寫入、彌封也不清它
+// （見 sealElection 註解「名冊 Voter.hasVoted 保留」），所以查 hasVoted 才是 voting／
 // closed／sealed 三態都準的「這場真的有幾張票」——也跟 SettingsPanel／ElectionWorkbench
 // 顯示給選委看的「已投票數」用同一個定義，UI 與稽核紀錄的數字不會兜不起來。
 async function countCastBallots(source: { id: string }): Promise<number> {
-  return prisma.voter.count({ where: { electionId: source.id, votedAt: { not: null } } });
+  return prisma.voter.count({ where: { electionId: source.id, hasVoted: true } });
 }
 
 // 金鑰遺失重辦：複製名冊與已核准候選人，原場同一交易內作廢（軟刪除），新場從頭走金鑰產生。
@@ -512,6 +527,18 @@ export async function restoreElection(electionId: string): Promise<ActionResult>
   const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) return { ok: false, error: "找不到選舉" };
   if (!election.hiddenAt) return { ok: false, error: "此選舉未處於隱藏狀態" };
+
+  // 隱藏會刪光票匭，但名冊上的 hasVoted 保留。一人一票、投過就不能再投，所以還原出來
+  // 會是「0 張票 + N 個永遠投不了票的人」——一場沒救的選舉，而且選委按下去之前
+  // 看不出任何異狀。舊版靠「截止前可重投」還能自我修復，拿掉重投之後這條退路沒了，
+  // 所以直接擋在這裡。要重新舉辦請走 redoElection（它會複製一份乾淨的名冊）。
+  const ballotCount = await countCastBallots(election);
+  if (ballotCount > 0) {
+    return {
+      ok: false,
+      error: `本場已有 ${ballotCount} 張票，隱藏等於作廢，無法還原（票已刪除，且這些人不能再投一次）。要重新舉辦請用「作廢並重辦」。`,
+    };
+  }
 
   await prisma.$transaction([
     prisma.election.update({
