@@ -91,6 +91,10 @@ export function RegisterForm({
       }
       const uploaded = (await res.json()) as { id: string };
       setMembers((prev) => prev.map((m, i) => (i === idx ? { ...m, photo: uploaded.id } : m)));
+      // 底部的 error 是送出前置條件沒過的結果（「請為每位候選人上傳大頭照」），條件真的
+      // 被滿足的這一刻才該清掉——不清會變成照片已經在畫面上、紅框卻還在罵人。放在函式
+      // 開頭清則太早：上傳失敗的人會連那句唯一說得出「還缺什麼」的話都被清走。
+      setError(null);
     } catch {
       // 網路層直接斷掉（含 nginx reset）走這裡，拿不到狀態碼。
       setPhotoErrors((prev) => ({ ...prev, [idx]: "大頭照上傳失敗，請檢查網路後再試一次。" }));
@@ -125,6 +129,8 @@ export function RegisterForm({
       }
       const uploaded = (await res.json()) as AttachmentFile;
       setAttachments((prev) => [...prev, uploaded]);
+      // 理由同 handleMemberPhoto：「請上傳至少一份學生證影本」到這一刻才真的失效。
+      setError(null);
       return null;
     } catch {
       // 網路層直接斷掉（含 nginx reset）走這裡，拿不到狀態碼。
@@ -436,9 +442,11 @@ export function RegisterForm({
         </p>
       )}
 
+      {/* 壓縮／上傳中也要說話：只是灰掉而文字不變，使用者看到的是「按鈕壞了」而不是
+          「等一下就好」，尤其手機壓縮要數秒。 */}
       <Button type="submit" variant="primary" disabled={busy}>
-        {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-        {submitting ? "送出中…" : "送出登記"}
+        {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+        {submitting ? "送出中…" : busy ? "檔案處理中，請稍候…" : "送出登記"}
       </Button>
     </form>
   );

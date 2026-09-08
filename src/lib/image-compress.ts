@@ -169,6 +169,24 @@ export function isServerAcceptedMime(mime: string): boolean {
 }
 
 /**
+ * 壓縮這條路走不通時（拿不到 2d context、canvas 編碼器吐不出 blob）該給什麼訊息。
+ *
+ * 回 null 表示「不用給訊息，退回原檔交給伺服器判」——前端猜錯把合法檔案擋掉，比讓
+ * 伺服器用它原本那套規則判還糟。回字串表示退回原檔這條路不存在（原檔類型伺服器不收，
+ * 目前就是 HEIC／HEIF），只是把 415 往後拖延，所以要當場給該檔案專屬的引導。
+ */
+export function compressFailureMessage({
+  mime,
+  filename,
+}: {
+  mime: string;
+  filename: string;
+}): string | null {
+  if (isServerAcceptedMime(mime)) return null;
+  return isHeic({ mime, filename }) ? HEIC_MESSAGE : STILL_TOO_LARGE_MESSAGE;
+}
+
+/**
  * 上傳前處理單一檔案。回傳的 file 直接丟進 FormData 送 /api/upload。
  *
  * 失敗一律回 { ok: false, message }，message 是可以直接顯示給使用者的中文。
@@ -189,6 +207,11 @@ export async function prepareUpload(file: File, kind: UploadKind): Promise<Prepa
   if (plan.action === "skip") return { ok: true, file, compressed: false };
 
   const maxEdge = plan.maxEdge ?? PHOTO_MAX_EDGE;
+  /** 壓不動時的統一退路：退得回原檔就退，退不回去才擋，且擋的理由要是真正的理由。 */
+  const fallback = (): PrepareResult => {
+    const message = compressFailureMessage({ mime: file.type, filename: file.name });
+    return message ? { ok: false, message } : { ok: true, file, compressed: false };
+  };
 
   let bitmap: ImageBitmap;
   try {
@@ -209,16 +232,8 @@ export async function prepareUpload(file: File, kind: UploadKind): Promise<Prepa
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      // 拿不到 2d context 就沒辦法壓，只能退回原檔——但前提還是一樣：
-      // 原檔類型伺服器要收得下，不然只是把 415 往後拖延。
-      if (!isServerAcceptedMime(file.type)) {
-        return isHeic({ mime: file.type, filename: file.name })
-          ? { ok: false, message: HEIC_MESSAGE }
-          : { ok: false, message: STILL_TOO_LARGE_MESSAGE };
-      }
-      return { ok: true, file, compressed: false };
-    }
+    // 拿不到 2d context 就沒辦法壓，走退路。
+    if (!ctx) return fallback();
 
     // 透明 PNG 直接轉 JPEG 會變黑底，先鋪白再畫。
     // canvas 繪圖色，不是 CSS token 的適用範圍。
@@ -227,38 +242,25 @@ export async function prepareUpload(file: File, kind: UploadKind): Promise<Prepa
     ctx.drawImage(bitmap, 0, 0, width, height);
 
     const acceptedMime = isServerAcceptedMime(file.type);
-    // 原檔類型伺服器不收（目前就是 HEIC／HEIF）時，「退回原檔」這條路不存在，
-    // 只能在整個品質階梯裡找出試過裡最小的那個合法 JPEG，不能中途就放棄回原檔。
-    let smallestBlob: Blob | null = null;
 
     for (const quality of QUALITY_LADDER) {
       const blob = await toJpegBlob(canvas, quality);
-      if (!blob) break;
+      // 編碼器失敗／OOM 不是「檔案太大」，報成尺寸問題會把使用者引去做沒用的事。
+      if (!blob) return fallback();
       if (blob.size > MAX_UPLOAD_BYTES) continue;
-
-      if (acceptedMime) {
-        // 壓完反而變大（本來就很小、已優化過的圖會這樣）就用原檔，別越幫越忙。
-        // 這條捷徑只在原檔傳得上去時才成立。
-        if (blob.size >= file.size) return { ok: true, file, compressed: false };
-        return {
-          ok: true,
-          file: new File([blob], jpegName(file.name), { type: "image/jpeg" }),
-          compressed: true,
-        };
-      }
-
-      if (!smallestBlob || blob.size < smallestBlob.size) smallestBlob = blob;
-    }
-
-    if (smallestBlob) {
-      // 沒有原檔可退，但已經有壓在上限內的合法 JPEG——用它，比報錯有用。
+      // 階梯由高到低，第一個進上限的就是還給得起的最好品質，不再往下壓：學生證要
+      // 讓管理員看清學號，q0.85 起跳是刻意的。順帶少跑手機上昂貴的 canvas 編碼。
+      // 壓完反而變大（本來就很小、已優化過的圖會這樣）就用原檔，別越幫越忙——
+      // 這條捷徑只在原檔傳得上去時才成立。
+      if (acceptedMime && blob.size >= file.size) return { ok: true, file, compressed: false };
       return {
         ok: true,
-        file: new File([smallestBlob], jpegName(file.name), { type: "image/jpeg" }),
+        file: new File([blob], jpegName(file.name), { type: "image/jpeg" }),
         compressed: true,
       };
     }
 
+    // 整條階梯都壓不進上限，這時才真的是「太大」。
     return { ok: false, message: STILL_TOO_LARGE_MESSAGE };
   } finally {
     bitmap.close();

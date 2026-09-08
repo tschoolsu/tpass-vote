@@ -6,6 +6,9 @@ import {
   scaledSize,
   jpegName,
   isServerAcceptedMime,
+  compressFailureMessage,
+  HEIC_MESSAGE,
+  STILL_TOO_LARGE_MESSAGE,
   MAX_UPLOAD_BYTES,
   PHOTO_MAX_EDGE,
   ATTACHMENT_MAX_EDGE,
@@ -228,5 +231,31 @@ describe("isServerAcceptedMime", () => {
 
   it("空字串不收", () => {
     expect(isServerAcceptedMime("")).toBe(false);
+  });
+});
+
+describe("compressFailureMessage", () => {
+  it("原檔伺服器收得下就回 null：壓不動時退回原檔，別在前端把合法檔案判死", () => {
+    expect(compressFailureMessage({ mime: "image/jpeg", filename: "me.jpg" })).toBeNull();
+  });
+
+  it("PDF 也回 null", () => {
+    expect(compressFailureMessage({ mime: "application/pdf", filename: "card.pdf" })).toBeNull();
+  });
+
+  it("HEIC 沒有原檔可退，給的是專屬引導而不是通用的 415", () => {
+    expect(compressFailureMessage({ mime: "image/heic", filename: "IMG_0001.HEIC" })).toBe(
+      HEIC_MESSAGE,
+    );
+  });
+
+  it("MIME 空字串但副檔名是 .heic 一樣算 HEIC", () => {
+    expect(compressFailureMessage({ mime: "", filename: "IMG_0001.heic" })).toBe(HEIC_MESSAGE);
+  });
+
+  it("既不是白名單也不是 HEIC 的類型，退回原檔沒用，只能擋", () => {
+    expect(compressFailureMessage({ mime: "image/gif", filename: "x.gif" })).toBe(
+      STILL_TOO_LARGE_MESSAGE,
+    );
   });
 });
