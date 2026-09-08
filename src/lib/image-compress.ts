@@ -83,3 +83,33 @@ export function planCompression({
   // 認不得的類型不在前端判死，交給伺服器白名單，錯誤訊息由 uploadErrorMessage 翻譯。
   return { action: "skip" };
 }
+
+/**
+ * /api/upload 的錯誤 code 是英文字串（API 契約，tests/ 有斷言在對它們），
+ * 直接丟到畫面上等於沒說。這裡翻成使用者能照做的中文。
+ *
+ * ⚠️ 有些錯誤伺服器本來就回中文（例如階段不開放上傳），那種要原樣顯示——
+ * 用「含非 ASCII 就當作已經是給人看的訊息」來分辨，別讓通用訊息蓋掉它。
+ */
+export function uploadErrorMessage(status: number, code: string | null): string {
+  switch (code) {
+    case "file too large":
+      return STILL_TOO_LARGE_MESSAGE;
+    case "file type not allowed":
+      return "只接受 JPG／PNG／WebP（學生證影本另收 PDF）。";
+    case "upload quota exceeded":
+      return "這場選舉的上傳次數已達上限（20 個檔），請先移除不需要的附件。";
+  }
+
+  // nginx 在 Next 之前就 413 掉的情況：回的是 HTML，解不出 code。
+  if (status === 413) {
+    return "檔案過大，被伺服器擋下。這是主機設定問題，請聯絡選委會。";
+  }
+
+  // 用「含非 ASCII 字元」判斷這段是不是本來就寫給人看的中文。
+  // 不用 /[^\x00-\x7F]/ 這種寫法：正規式裡的控制字元會被 eslint 的
+  // no-control-regex 擋下來。
+  if (code && [...code].some((ch) => (ch.codePointAt(0) ?? 0) > 127)) return code;
+
+  return `上傳失敗（${status}）`;
+}

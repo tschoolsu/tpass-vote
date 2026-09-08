@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   planCompression,
   isHeic,
+  uploadErrorMessage,
   MAX_UPLOAD_BYTES,
   PHOTO_MAX_EDGE,
   ATTACHMENT_MAX_EDGE,
@@ -116,5 +117,41 @@ describe("isHeic", () => {
   });
   it("不因為檔名中間有 heic 字樣就誤判", () => {
     expect(isHeic({ mime: "image/jpeg", filename: "heic-note.jpg" })).toBe(false);
+  });
+});
+
+describe("uploadErrorMessage", () => {
+  it("翻譯 file too large 並給下一步", () => {
+    const msg = uploadErrorMessage(413, "file too large");
+    expect(msg).toContain("10MB");
+    expect(msg).not.toContain("file too large");
+  });
+
+  it("翻譯 file type not allowed", () => {
+    expect(uploadErrorMessage(415, "file type not allowed")).toContain("JPG");
+  });
+
+  it("翻譯 upload quota exceeded 並講清楚怎麼解", () => {
+    const msg = uploadErrorMessage(429, "upload quota exceeded");
+    expect(msg).toContain("上限");
+    expect(msg).toContain("移除");
+  });
+
+  it("413 但拿不到 JSON body（nginx 擋掉）要講是伺服器設定", () => {
+    const msg = uploadErrorMessage(413, null);
+    expect(msg).toContain("伺服器");
+  });
+
+  it("伺服器本來就回中文的錯誤要原樣顯示，不可被通用訊息蓋掉", () => {
+    const msg = uploadErrorMessage(403, "這場選舉目前的階段不開放上傳");
+    expect(msg).toBe("這場選舉目前的階段不開放上傳");
+  });
+
+  it("認不得的英文 code 退回帶狀態碼的通用訊息", () => {
+    expect(uploadErrorMessage(500, "boom")).toBe("上傳失敗（500）");
+  });
+
+  it("完全沒有 body 時也退回通用訊息", () => {
+    expect(uploadErrorMessage(502, null)).toBe("上傳失敗（502）");
   });
 });
