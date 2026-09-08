@@ -21,12 +21,24 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - **開票私鑰永不上傳伺服器。** `Election.tallyPublicKeyJwk` 只存公鑰；私鑰只在選委會端本地產生、
   本地保管、開票時本地解密。任何 route / server action 都不得接收、儲存或記錄私鑰內容——
   收到看起來像私鑰的欄位要直接拒絕，不要「先存起來以後再說」。
-- **選票密文表（`EncryptedBallot`）只是投票期間的暫存格，彌封時必須整場刪除。**
+- **選票密文表（`EncryptedBallot`）任何時候都不得有指得回選舉人的欄位，投票期間也不行。**
   選罷法 §26-1 Ⅳ 明文「本會不得記錄可回溯代碼與個別選舉人之連結」，而結果頁會公開
-  代碼↔選票內容，連結一旦留存就等於公開誰投給誰——**任何讓 `voterId`↔`ciphertext`
-  在彌封後存活的改動都是違法，不是效能取捨**。這張表也不得新增 `email`、`name`、`ip`、
-  `userAgent` 等欄位。`sealedBox`（`Election.sealedBox`）同理——彌封後必須去識別、
-  已洗牌，不得殘留可追溯投票人的順序或索引。
+  代碼↔選票內容，連結一旦留存就等於公開誰投給誰。這張表只有 `id`／`electionId`／
+  `ciphertext` 三個欄位，**加回 `voterId`、`email`、`name`、`ip`、`userAgent` 都是違法，
+  不是效能取捨**；也不得加任何時間欄位（`createdAt`／`updatedAt`）或可排序的 id
+  （`cuid()`、`uuid(7)`），那些等於用另一種形式把投票順序寫回去。一人一票改由
+  `Voter.hasVoted` 的鎖內判定達成（`e/[slug]/vote/actions.ts`），同理 `Voter` 也只記
+  有無、不記時間。這張表仍然是投票期間的暫存格，彌封時整場刪除；`sealedBox`
+  （`Election.sealedBox`）同理——必須去識別、已洗牌，不得殘留可追溯投票人的順序或索引。
+- **MVCC 邊界要誠實。** 上面那些只擋得住「查得到欄位的人」。Postgres 每列都有隱藏的
+  `xmin`（寫入該列的交易 id），旗標與票是同一個交易寫的，所以拿 `xmin` 對 join 仍然
+  對得起來。兩道對策：收票時擾動 K 列不相干的資料稀釋它（見 `PERTURB_K` 的註解），
+  以及**關票時把整場的 `Voter` 與 `EncryptedBallot` 各原值改寫一次**，讓全部的列塌縮
+  成同一個 xid（見 `advanceStatus` 裡 `next === "closed"` 那段）。**這兩段都不能拿掉，
+  也不能因為「值沒變、看起來是廢話」就順手優化掉**——它們寫的是 xmin，不是欄位值。
+  擾動只是稀釋（約 1.5% 的人仍會被侵蝕成唯一解），塌縮才是歸零，所以危險窗口是
+  「投票進行中」，那段只能靠存取控制。**不要在文件或 UI 裡宣稱「資料庫裡不存在這個
+  連結」**——正確的說法是「不存在於任何可查詢的欄位，關票後連 MVCC 線索也一併清掉」。
 - **mutation 一律 server action，且函式內部重新呼叫對應的 `require*` guard**——不能假設呼叫方
   已經在別處驗證過身分/權限，尤其是候選人審核、名冊上傳、彌封、開票這幾個高風險動作。
 - 公告／政見的 Markdown 一律走 `src/components/public/Markdown.tsx`（切字串組 React element，天生免疫 XSS）——
