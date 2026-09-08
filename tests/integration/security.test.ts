@@ -264,45 +264,48 @@ describe("選票完整性", () => {
       electionId,
       choice: { type: "choose", candidateIds: [candidateId] },
     });
-    const env = JSON.parse(ciphertext) as {
-      v: 2;
-      alg: string;
-      ek: string;
-      iv: string;
-      ct: string;
-    };
-    const voterB = await prisma.voter.findUniqueOrThrow({
-      where: { electionId_email: { electionId, email: VOTER_B.email } },
-    });
+    // 兩個花招得用兩個不同的人：一人一票，同一個人送第二次會被 already-voted 擋掉，
+    // 就測不到儲存邊界了（VOTER_A 在上一個 case 已經投掉了，這裡用 VOTER_B 與 CAND）。
+    // 也不能再用 voterId 去撈「這個人的票」——票匭沒有那個欄位了，改用前後差集。
+    const ciphertextsNow = async () =>
+      (await prisma.encryptedBallot.findMany({ where: { electionId }, select: { ciphertext: true } }))
+        .map((b) => b.ciphertext);
 
     // 花招 A：物件開頭塞 13000 個空白——JSON 語法合法，形狀檢查全部通過，
     // 但存進 DB 的位元組長度完全被投票端控制。
+    const beforePadded = await ciphertextsNow();
     const padded = "{" + " ".repeat(13000) + ciphertext.slice(1);
     const rPadded = await as(VOTER_B, () => castBallot(slug, padded));
     expect(rPadded.ok, "花招 A 的信封被拒收，測不到儲存邊界").toBe(true);
-    const storedPadded = await prisma.encryptedBallot.findUniqueOrThrow({
-      where: { voterId: voterB.id },
-    });
+    const addedPadded = (await ciphertextsNow()).filter((c) => !beforePadded.includes(c));
+    expect(addedPadded).toHaveLength(1);
     expect(
-      storedPadded.ciphertext,
+      addedPadded[0],
       "DB 裡存的是投票端塞的原始位元組（含 13000 個空白），不是正規化後的信封",
     ).toBe(ciphertext);
 
     // 花招 B：重複的 ct 欄位，前面塞一段可辨識字串——JSON.parse 對重複 key 取
     // 最後一個，語意上等於沒有這段字串，但如果伺服器存的是「投票端送來的原始
     // 字串」而不是「重新序列化過的正規字串」，這段字串就會原封不動流進 DB。
+    // 花招 B 用「另一次加密」的信封，不要沿用花招 A 那一份：兩者正規化後會是同一串，
+    // 而票匭現在允許兩列有相同密文（沒有 voterId 可以分辨），前後差集就看不到新增。
+    const { ciphertext: ciphertext2 } = await encryptBallot(publicKeyJwk, {
+      electionId,
+      choice: { type: "choose", candidateIds: [candidateId] },
+    });
+    const env2 = JSON.parse(ciphertext2) as { alg: string; ek: string; iv: string; ct: string };
     const marker = "MARKER-" + "Z".repeat(2000);
     const withDup =
-      `{"v":2,"ct":"${marker}","alg":${JSON.stringify(env.alg)},` +
-      `"ek":${JSON.stringify(env.ek)},"iv":${JSON.stringify(env.iv)},` +
-      `"ct":${JSON.stringify(env.ct)}}`;
-    const rDup = await as(VOTER_B, () => castBallot(slug, withDup));
+      `{"v":2,"ct":"${marker}","alg":${JSON.stringify(env2.alg)},` +
+      `"ek":${JSON.stringify(env2.ek)},"iv":${JSON.stringify(env2.iv)},` +
+      `"ct":${JSON.stringify(env2.ct)}}`;
+    const beforeDup = await ciphertextsNow();
+    const rDup = await as(CAND, () => castBallot(slug, withDup));
     expect(rDup.ok, "花招 B 的信封被拒收，測不到儲存邊界").toBe(true);
-    const storedDup = await prisma.encryptedBallot.findUniqueOrThrow({
-      where: { voterId: voterB.id },
-    });
+    const addedDup = (await ciphertextsNow()).filter((c) => !beforeDup.includes(c));
+    expect(addedDup).toHaveLength(1);
     expect(
-      storedDup.ciphertext.includes(marker),
+      addedDup[0].includes(marker),
       "DB 裡不該留著重複 key 被蓋掉的那段字串",
     ).toBe(false);
   });

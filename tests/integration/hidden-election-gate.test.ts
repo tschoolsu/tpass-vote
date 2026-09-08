@@ -185,7 +185,7 @@ describe("作廢時一併刪除票匭暫存", () => {
   }, 60_000);
 
   // 反例 3：redoElection 的 audit diff.voidedBallotCount 必須是「這場真的有幾張票」
-  // （countCastBallots，即 Voter.votedAt 計數），不能用 EncryptedBallot deleteMany 的
+  // （countCastBallots，即 Voter.hasVoted 計數），不能用 EncryptedBallot deleteMany 的
   // 刪除筆數——sealed 場次彌封時 EncryptedBallot 早就被清空，deleteMany 恆為 0，
   // 稽核紀錄不能把「作廢 3 張票」寫成 0。
   it("redoElection 的稽核紀錄 voidedBallotCount 要用已投票數，不是 EncryptedBallot 刪除筆數", async () => {

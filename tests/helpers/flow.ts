@@ -176,8 +176,10 @@ export async function voteAs(
   const { ciphertext, code } = await encryptBallot(publicKeyJwk, { electionId, choice });
   const result = await as(identity, () => castBallot(slug, ciphertext));
   // 代碼由瀏覽器產生、伺服器看不到，所以要在這一層交還給測試——
-  // 就像真實流程裡投票人只有在送出那一刻能看到它。
-  return { ...result, code };
+  // 就像真實流程裡投票人只有在確認頁看得到它。
+  // ciphertext 也一併回傳：票匭沒有 voterId 之後，測試想知道「這個人送出的是哪一串」
+  // 只剩這個辦法（DB 那邊查不到），D3-1 的洗牌驗證就靠它建插入順序。
+  return { ...result, code, ciphertext };
 }
 
 /** 壓測只在乎密文；代碼是投票人自己保管的東西，那邊用不到。 */

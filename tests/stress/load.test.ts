@@ -119,21 +119,35 @@ describe(`壓力測試（${VOTERS} 位選舉人、併發 ${CONCURRENCY}）`, () 
     expect(stats.p95Ms, "收一張票的 p95 超過 1 秒，投票尖峰會排隊").toBeLessThan(1000);
   });
 
-  it("重投覆寫不會讓票匭長大", async () => {
-    const revoters = voters.slice(0, Math.min(50, VOTERS));
+  it("重複送出全部被拒，票匭不會長大也不會被覆寫", async () => {
+    const retriers = voters.slice(0, Math.min(50, VOTERS));
     const jobs = await Promise.all(
-      revoters.map(async (v) => ({
+      retriers.map(async (v) => ({
         voter: v,
         ciphertext: await ciphertextFor(publicKeyJwk, electionId, { type: "blank" }),
       })),
     );
+    const before = (
+      await prisma.encryptedBallot.findMany({ where: { electionId }, select: { ciphertext: true } })
+    ).map((b) => b.ciphertext);
+
+    // 這裡不能像以前那樣「r.ok 為 false 就 throw」——現在全部被拒才是正確行為。
+    // 收集拒絕理由來斷言，順便量被拒路徑的延遲（那也是尖峰時真的會走的路徑）。
+    const rejections: string[] = [];
     const { samplesMs, errors } = await runPool(jobs, CONCURRENCY, async (job) => {
       const r = await as(job.voter, () => castBallot(SLUG, job.ciphertext));
-      if (!r.ok) throw new Error(r.error);
+      if (!r.ok) rejections.push(r.error);
     });
-    expect(errors).toHaveLength(0);
-    report("重投覆寫", summarize(samplesMs));
-    expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(VOTERS);
+    expect(errors, "重複送出應該是乾淨的業務層拒絕，不該拋例外").toHaveLength(0);
+    expect(rejections.length, "已經投過票的人再送一次，居然有人被收下了").toBe(jobs.length);
+    for (const msg of rejections) expect(msg).toMatch(/只能投一次/);
+
+    report("重複送出（全部被拒）", summarize(samplesMs));
+    const after = (
+      await prisma.encryptedBallot.findMany({ where: { electionId }, select: { ciphertext: true } })
+    ).map((b) => b.ciphertext);
+    expect(after.length).toBe(VOTERS);
+    expect(after.sort(), "被拒的送出偷偷改了票匭內容").toEqual(before.sort());
   });
 
   it("彌封（洗牌 + 大 JSON 寫入 + 銷毀連結）", async () => {

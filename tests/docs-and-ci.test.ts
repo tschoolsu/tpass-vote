@@ -35,14 +35,18 @@ describe("C-5：CI 補查核 + 文件與文案修正", () => {
     expect(site).not.toContain("github.com/YC815");
   });
 
-  it("ReceiptLookup 的查無此收據文案提醒使用者重投後舊代碼已失效", () => {
+  // 一人一票之後，「查無此收據」最常見的原因不再是重投，而是「在確認頁看過代碼但沒按送出」——
+  // 代碼是進確認頁時就產生並顯示的，沒送出的那組不會生效。文案要講到這件事，不然使用者
+  // 只會以為自己抄錯，然後發現自己也不能再投一次。
+  it("ReceiptLookup 的查無此收據文案要解釋「沒送出的代碼不生效」", () => {
     const component = readFileSync(
       path.join(repoRoot, "src/components/public/ReceiptLookup.tsx"),
       "utf8",
     );
     const missingBlock = component.slice(component.indexOf('"missing"'));
-    expect(missingBlock).toMatch(/重投/);
-    expect(missingBlock).toMatch(/最後一次/);
+    expect(missingBlock).toMatch(/抄錯|輸入錯/);
+    expect(missingBlock).toMatch(/沒有按下送出|沒有送出|不會生效/);
+    expect(missingBlock).not.toMatch(/重投/);
   });
 });
 

@@ -142,9 +142,12 @@ describe("收票與關票／彌封的競態", () => {
 
       // 一個停滯的收票交易此刻才落地。走 raw create 是刻意的：這裡測的是彌封自己
       // 有沒有把「讀票匭」放進同一個交易，與 castBallot 有沒有取鎖是兩件獨立的事。
-      await prisma.encryptedBallot.create({
-        data: { electionId, voterId: voterB.id, ciphertext: late },
-      });
+      // 兩個寫入都要做：castBallot 是在同一交易裡設 hasVoted 並插票，只插票會讓
+      // 「張數 == 已投票人數」的不變量破掉，彌封防呆（BALLOT_COUNT_MISMATCH）會擋下來。
+      await prisma.$transaction([
+        prisma.voter.update({ where: { id: voterB.id }, data: { hasVoted: true } }),
+        prisma.encryptedBallot.create({ data: { electionId, ciphertext: late } }),
+      ]);
 
       await lock.release();
       const sealed = await sealing;

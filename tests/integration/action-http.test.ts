@@ -52,9 +52,14 @@ describe("callAction：HTTP 層真的能打到 server action", () => {
     const voter = await prisma.voter.findUniqueOrThrow({
       where: { electionId_email: { electionId, email: VOTER.email } },
     });
-    expect(voter.votedAt).not.toBeNull();
-    const ballot = await prisma.encryptedBallot.findUnique({ where: { voterId: voter.id } });
-    expect(ballot?.ciphertext).toBe(ciphertext);
+    expect(voter.hasVoted).toBe(true);
+    // 票匭沒有 voterId，查不到「這個人的票」——只能驗「這張密文進了這場的票匭」。
+    // 這正是本系統要的性質，不是測試寫得不夠精確。
+    const ballots = await prisma.encryptedBallot.findMany({
+      where: { electionId },
+      select: { ciphertext: true },
+    });
+    expect(ballots.map((b) => b.ciphertext)).toContain(ciphertext);
   });
 
   it("(b) 同樣請求但 Origin 是別的網域：Next 內建 CSRF 擋下，DB 不動", async () => {
@@ -73,7 +78,7 @@ describe("callAction：HTTP 層真的能打到 server action", () => {
     const voter = await prisma.voter.findUniqueOrThrow({
       where: { electionId_email: { electionId, email: SECOND_VOTER.email } },
     });
-    expect(voter.votedAt, "CSRF 被擋下，votedAt 不該被設").toBeNull();
+    expect(voter.hasVoted, "CSRF 被擋下，hasVoted 不該被設").toBe(false);
   });
 
   it("(c) 沒有 Cookie：requireSession 導向登入，DB 不動", async () => {
@@ -92,6 +97,6 @@ describe("callAction：HTTP 層真的能打到 server action", () => {
     const voter = await prisma.voter.findUniqueOrThrow({
       where: { electionId_email: { electionId, email: THIRD_VOTER.email } },
     });
-    expect(voter.votedAt).toBeNull();
+    expect(voter.hasVoted).toBe(false);
   });
 });

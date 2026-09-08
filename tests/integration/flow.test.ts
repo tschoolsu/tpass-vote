@@ -91,22 +91,30 @@ describe("完整選舉流程（超額競選 → 相對多數）", () => {
     expect(new Set(Object.values(receipts)).size).toBe(4);
   });
 
-  it("重投是覆寫：票匭張數不增加，votedAt 更新", async () => {
+  it("一人一票：第二次送出被拒，票匭張數與內容都不變", async () => {
     const cands = await prisma.candidate.findMany({
       where: { electionId, status: "approved" },
       orderBy: { number: "asc" },
     });
-    const before = await prisma.encryptedBallot.count({ where: { electionId } });
+    const before = await prisma.encryptedBallot.findMany({
+      where: { electionId },
+      select: { ciphertext: true },
+    });
+
     const r = await voteAs(slug, electionId, VOTER_B, publicKeyJwk, {
       type: "choose",
       candidateIds: [cands[1].id],
     });
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.revote).toBe(true);
-      receipts[VOTER_B.email] = r.code;
-    }
-    expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(before);
+    expect(r.ok, "已經投過票的人不該還能再投一次").toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/只能投一次/);
+
+    const after = await prisma.encryptedBallot.findMany({
+      where: { electionId },
+      select: { ciphertext: true },
+    });
+    expect(after.length, "被拒的送出不該讓票匭長大").toBe(before.length);
+    // 內容也要一模一樣：被拒的那張不該偷偷蓋掉舊的（舊版的 upsert 就是這樣覆寫的）。
+    expect(after.map((b) => b.ciphertext).sort()).toEqual(before.map((b) => b.ciphertext).sort());
   });
 
   it("彌封後票匭快照留著，但選票↔選舉人的連結被銷毀（§26-1 Ⅳ）", async () => {
@@ -123,7 +131,7 @@ describe("完整選舉流程（超額競選 → 相對多數）", () => {
       "彌封後仍留著 EncryptedBallot＝代碼與選舉人的連結還在，違反 §26-1 Ⅳ",
     ).toBe(0);
     // 名冊仍在（§26-1 Ⅴ 要附刊投票暨未投票名冊）
-    expect(await prisma.voter.count({ where: { electionId, votedAt: { not: null } } })).toBe(4);
+    expect(await prisma.voter.count({ where: { electionId, hasVoted: true } })).toBe(4);
   });
 
   it("開票結果與去識別化明細一致，且明細通過伺服器端驗證", async () => {
@@ -147,7 +155,7 @@ describe("完整選舉流程（超額競選 → 相對多數）", () => {
     const entries = e.disclosuresJson as unknown as DisclosureEntry[];
     const byCode = new Map(entries.map((x) => [x.code, x]));
 
-    // 覆寫後舊收據應該查不到（舊票已不存在），新收據查得到。
+    // 一人一票，每個人手上就是那唯一一組代碼，全部都要查得到。
     for (const [email, code] of Object.entries(receipts)) {
       expect(byCode.has(code), `${email} 的收據查不到`).toBe(true);
     }

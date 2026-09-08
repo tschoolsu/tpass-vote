@@ -58,6 +58,19 @@ const voters: TestIdentity[] = Array.from({ length: VOTERS }, (_, i) => ({
   name: `選舉人${i}`,
 }));
 
+// 一人一票之後，每個 case 都得用自己專屬的一批人。以前可以讓同一批人一路重投下去，
+// 現在第二次送出只會拿到 already-voted——測到的是拒絕路徑，不是原本想測的東西，
+// 而且斷言會安靜地變成恆真（vacuous pass），比直接紅還糟。所以名冊在這裡就切乾淨。
+const LATECOMERS_N = Math.min(120, Math.max(1, VOTERS - 4));
+const MAIN_N = VOTERS - LATECOMERS_N - 3;
+if (MAIN_N < 1) throw new Error(`BURST_VOTERS 太小（${VOTERS}），切不出互不重疊的批次`);
+
+const mainVoters = voters.slice(0, MAIN_N);
+const samePersonVoter = voters[MAIN_N];
+const pgKillVoter = voters[MAIN_N + 1];
+const afterCloseVoter = voters[MAIN_N + 2];
+const latecomers = voters.slice(MAIN_N + 3);
+
 let electionId: string;
 let publicKeyJwk: JsonWebKey;
 let keyFiles: Awaited<ReturnType<typeof generateKeys>>["keyFiles"];
@@ -94,7 +107,7 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
 
   it("投票開放瞬間：全部人同時送票，一張都不能掉", async () => {
     const jobs = await Promise.all(
-      voters.map(async (v, i) => ({
+      mainVoters.map(async (v, i) => ({
         voter: v,
         ciphertext: await ciphertextFor(publicKeyJwk, electionId, { type: "choose", candidateIds: [candidateIds[i % candidateIds.length]] }),
       })),
@@ -126,41 +139,38 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
 
     expect(rejected, "有票在連線池排隊時直接爆掉——投票尖峰會掉票").toHaveLength(0);
     expect(httpFailed, "有票被伺服器用非 200 拒絕，但這些人都在名冊內").toHaveLength(0);
-    // 請求真的打到伺服器的證據：DB 票數剛好等於名冊人數。settled.length 恆等於
+    // 請求真的打到伺服器的證據：DB 票數剛好等於這批人的人數。settled.length 恆等於
     // jobs.length（Promise.allSettled 的定義），拿它斷言證明不了任何事，這裡不寫。
-    expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(VOTERS);
+    expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(MAIN_N);
 
-    // 光看總數等於 VOTERS 抓不到「伺服器回 ok，交易卻沒真的 commit」——逐一核對每個人：
-    // 回 ok 就該在票匭裡看到這次送出的密文，沒回 ok 就不該有票。
-    const ballotRows = await prisma.encryptedBallot.findMany({
-      where: { electionId },
-      select: { voterId: true, ciphertext: true },
-    });
-    const voterRows = await prisma.voter.findMany({
-      where: { electionId, email: { in: voters.map((v) => v.email) } },
-      select: { id: true, email: true },
-    });
-    const voterIdByEmail = new Map(voterRows.map((v) => [v.email, v.id]));
-    const ciphertextByVoterId = new Map(ballotRows.map((b) => [b.voterId, b.ciphertext]));
-    jobs.forEach((job, i) => {
-      const res = settled[i];
-      if (res.status !== "fulfilled") return; // 例外已經在上面 rejected 斷言裡處理
-      const voterId = voterIdByEmail.get(job.voter.email)!;
-      const stored = ciphertextByVoterId.get(voterId) ?? null;
-      if (res.value.ok) {
-        expect(stored, `${job.voter.email} 的請求回 ok，票匭裡卻沒有這張票`).toBe(job.ciphertext);
-      } else {
-        expect(stored, `${job.voter.email} 的請求沒回 ok，票匭裡卻多了一張票`).toBeNull();
-      }
-    });
+    // 光看總數抓不到「伺服器回 ok，交易卻沒真的 commit」。票匭沒有 voterId 之後不能再
+    // 逐人核對，改成核對「集合」：每張密文都是唯一的，所以「票匭內容」與「回 ok 的那些
+    // 請求送出的密文」必須完全相等。這同時抓得到三種壞法——回 ok 卻沒寫進去、沒回 ok
+    // 卻寫進去了、以及票匭裡冒出誰都沒送過的密文。強度不輸原本的逐人核對。
+    const okCiphertexts = jobs
+      .filter((_, i) => {
+        const r = settled[i];
+        return r.status === "fulfilled" && r.value.ok;
+      })
+      .map((job) => job.ciphertext);
+    const storedCiphertexts = (
+      await prisma.encryptedBallot.findMany({ where: { electionId }, select: { ciphertext: true } })
+    ).map((b) => b.ciphertext);
+    expect(
+      storedCiphertexts.slice().sort(),
+      "票匭內容與「回 ok 的請求」對不起來——有票被吞掉、或有票憑空出現",
+    ).toEqual(okCiphertexts.slice().sort());
+    // 名冊那側也要跟著對上：hasVoted 人數 == 票匭張數，這是彌封防呆會擋的不變量。
+    expect(await prisma.voter.count({ where: { electionId, hasVoted: true } })).toBe(MAIN_N);
 
     console.log(`  ▸ RSS 灌爆前後：${rssBefore ?? "?"}MB → ${appRssMb() ?? "?"}MB`);
     trackRss("投票灌爆");
   });
 
-  it("同一個人同時送 200 張票，票匭只會留下一張", async () => {
+  it("同一個人同時送 200 張票，恰好一張被收下、其餘乾淨拒絕", async () => {
     const SAME_PERSON_BURST = 200;
-    const victim = voters[0];
+    const victim = samePersonVoter;
+    const boxBefore = await prisma.encryptedBallot.count({ where: { electionId } });
     const jobs = await Promise.all(
       Array.from({ length: SAME_PERSON_BURST }, (_, i) =>
         ciphertextFor(publicKeyJwk, electionId, { type: "choose", candidateIds: [candidateIds[i % candidateIds.length]] }),
@@ -186,40 +196,37 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
       console.log(`  ▸ 例外樣本：${(rejected[0] as PromiseRejectedResult).reason}`);
     }
 
-    const voter = await prisma.voter.findUniqueOrThrow({
-      where: { electionId_email: { electionId, email: victim.email } },
-    });
-    // voterId 在 schema 是 @unique，一人多票在 DB 層就不可能發生；一次查詢兼查「有沒有
-    // 票」與「密文是什麼」即可，不必再另外 count 同一列確認「不超過一張」。
-    const ballot = await prisma.encryptedBallot.findUnique({ where: { voterId: voter.id } });
-    expect(ballot, "同一人重投 200 次，票匭裡卻連一張都沒有").not.toBeNull();
-    expect(await prisma.encryptedBallot.count({ where: { electionId } })).toBe(VOTERS);
     expect(rejected, "有請求連 HTTP 層都沒回應").toHaveLength(0);
-    expect(httpFailed, "castBallot 的 $transaction 在高併發同一人重投下出現 deadlock/serialization failure（伺服器回了非 200）").toHaveLength(0);
-
-    // 200 個並發請求全部合法（同一個已在名冊內的人、選舉狀態全程不變），業務層沒有理由
-    // 拒絕任何一個，所以 ok 的數量該剛好等於送出數——用確定性的 toBe 而不是
-    // toBeGreaterThan(0)，才擋得住「半數合法重投被錯誤拒絕」這類回歸（>0 對這種回歸無感）。
-    //
-    // 這條斷言辨識不出「伺服器回 ok、但那次寫入其實被悄悄丟棄」：last-write-wins 下，
-    // 只要曾經有任何一次 ok 的請求真的寫入過，票匭裡留下的密文就必然屬於某個 ok 請求，
-    // 這裡沒辦法逐一核對「每一個回 ok 的請求都真的寫進去了」，下面只驗證這個較弱的性質。
-    const okResults = settled.filter((r) => r.status === "fulfilled" && r.value.ok);
-    expect(okResults.length, "同一人重投的合法請求裡，有的被伺服器業務層錯誤拒絕").toBe(
-      SAME_PERSON_BURST,
-    );
-    const okCiphertexts = new Set(
-      jobs.filter((_, i) => {
-        const r = settled[i];
-        return r.status === "fulfilled" && r.value.ok;
-      }),
-    );
+    // 一人一票的判定是「Voter 那一列的鎖內認領」。200 個交易搶同一列會排隊，但排隊不是
+    // 死鎖——DB 層唯一的 unique 約束（voterId）已經沒了，所以這條特別重要：出現非 200
+    // 就代表 castBallot 的 $transaction 撞出 deadlock/serialization failure 裸奔成 500。
     expect(
-      ballot ? okCiphertexts.has(ballot.ciphertext) : false,
-      "票匭裡留下的密文不屬於任何一個回 ok 的請求——伺服器說贏的那次其實沒真的寫進去",
-    ).toBe(true);
+      httpFailed,
+      "castBallot 的 $transaction 在同一人高併發下出現 deadlock/serialization failure（伺服器回了非 200）",
+    ).toHaveLength(0);
+
+    // 恰好一個成功，其餘全部是業務層的乾淨拒絕（HTTP 200 + ok:false）。
+    // 用確定性的 toBe(1) 而不是 toBeLessThanOrEqual(1)：兩種壞法都要抓得到——
+    // 多於 1 是一人多票（法規紅線），少於 1 是把合法的第一張也擋掉了。
+    const okIdx = settled.flatMap((r, i) => (r.status === "fulfilled" && r.value.ok ? [i] : []));
+    expect(okIdx.length, "同一人 200 個並發請求裡，成功的次數不是恰好一次").toBe(1);
+
+    // 而且票匭裡真的多了那一張、而且就是那個回 ok 的請求送出的密文——
+    // 抓「伺服器說贏了，交易卻其實回滾」。
+    const stored = (
+      await prisma.encryptedBallot.findMany({ where: { electionId }, select: { ciphertext: true } })
+    ).map((b) => b.ciphertext);
+    expect(stored.length, "同一人並發之後票匭張數不是剛好多一張").toBe(boxBefore + 1);
+    expect(
+      stored,
+      "票匭裡新增的密文不是那個回 ok 的請求送的——伺服器說贏的那次其實沒寫進去",
+    ).toContain(jobs[okIdx[0]]);
+
+    console.log(
+      `  ▸ 同一人 ${SAME_PERSON_BURST} 張並發：成功 ${okIdx.length}・業務層拒絕 ${SAME_PERSON_BURST - okIdx.length}`,
+    );
     console.log(`  ▸ RSS 灌爆前後：${rssBefore ?? "?"}MB → ${appRssMb() ?? "?"}MB`);
-    trackRss("同一人重投灌爆");
+    trackRss("同一人並發灌爆");
   });
 
   it("PostgreSQL 連線被砍光（模擬 9/2 的 PG 重啟）之後仍能收票", async () => {
@@ -238,25 +245,21 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     // 服務不應該掛掉，只該重連。
     expect(appAlive(), "砍 DB 連線之後 server process 死了").toBe(true);
 
-    const survivor = voters[1];
+    // 這個人是專門留給這個 case 的，前面沒投過——不然重試迴圈第二圈就會拿到
+    // already-voted，判準會變成恆假。
+    const survivor = pgKillVoter;
     const ct = await ciphertextFor(publicKeyJwk, electionId, { type: "blank" });
 
     // 重連可能需要一兩次嘗試，但不該永久失敗。HTTP 200 只代表 action 正常返回、不代表票真的
-    // 進了 DB（castBallot 對業務拒絕也回 200），所以每次都直接查 DB 當作真正的判準。
-    //
-    // 判準不能用 votedAt：survivor 在第一個 case（全員投票）就已經投過票，votedAt 早非
-    // null，拿它當迴圈條件會讓迴圈直接跳過、一次 HTTP 都沒送出也能通過斷言。改成比對
-    // 「這次砍線後送出的這張新密文」有沒有真的覆寫進他的票位——這才是「砍線後還能收票」。
+    // 進了 DB（castBallot 對業務拒絕也回 200），所以每次都直接查 DB 當作真正的判準：
+    // 「這次砍線後送出的這張新密文」有沒有真的落進票匭。票匭沒有 voterId，只能這樣查，
+    // 而每張密文都是唯一的，這個判準一樣精確。
     let lastStatus = -1;
     let stored = false;
     for (let i = 0; i < 5 && !stored; i++) {
       const res = await castViaHttp(survivor, ct);
       lastStatus = res.status;
-      const voter = await prisma.voter.findUniqueOrThrow({
-        where: { electionId_email: { electionId, email: survivor.email } },
-      });
-      const ballot = await prisma.encryptedBallot.findUnique({ where: { voterId: voter.id } });
-      stored = ballot?.ciphertext === ct;
+      stored = (await prisma.encryptedBallot.count({ where: { electionId, ciphertext: ct } })) > 0;
     }
     expect(stored, `PG 連線被砍後再也收不到票（最後一次 HTTP ${lastStatus}）`).toBe(true);
 
@@ -274,7 +277,6 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
   });
 
   it("投票截止的那一瞬間：一邊關票、一邊還有人在送", async () => {
-    const latecomers = voters.slice(2, 2 + Math.min(120, VOTERS - 2));
     const jobs = await Promise.all(
       latecomers.map(async (v) => ({
         voter: v,
@@ -282,17 +284,9 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
       })),
     );
 
-    // 這批人在第一個 case（全員投票）就已經投過一次，票位不是空的——先記下競速前的舊密文，
-    // 之後才分得清「密文沒變＝被拒絕、維持舊票」（正常）跟「密文變成別的東西＝被寫壞」（不正常）。
-    const raceVoters = await prisma.voter.findMany({
-      where: { electionId, email: { in: latecomers.map((v) => v.email) } },
-      select: { id: true, email: true },
-    });
-    const beforeBallots = await prisma.encryptedBallot.findMany({
-      where: { voterId: { in: raceVoters.map((v) => v.id) } },
-      select: { voterId: true, ciphertext: true },
-    });
-    const beforeCtByVoterId = new Map(beforeBallots.map((b) => [b.voterId, b.ciphertext]));
+    // 這批人是專屬的，到這裡都還沒投過票——所以「有沒有這張密文」就等於「這次請求
+    // 有沒有被收下」，不必再像舊版那樣先拍一份舊密文快照來分辨覆寫與拒絕。
+    const boxBefore = await prisma.encryptedBallot.count({ where: { electionId } });
 
     // 同時發動：一半的票（HTTP，打真正的伺服器）、以及「推進到 closed」（選委在後台按的
     // in-process admin action——這不是投票尖峰的一部分，不必跟著改走 HTTP）。
@@ -316,48 +310,41 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     const total = await prisma.encryptedBallot.count({ where: { electionId } });
     expect(total, "票匭張數超過名冊人數＝有人投了不只一張").toBeLessThanOrEqual(VOTERS);
 
-    // callAction 現在會回傳 ok（有沒有真的判定成功），不必再靠「密文屬於兩個可能值之一」
-    // 這種弱斷言去猜誰贏了——直接核對「回 ok 的，密文就該是這次送出的值；沒回 ok 的，密文
-    // 就該原封不動」，抓得到「伺服器回 ok，但交易其實回滾／被關票競態插隊」這種情況。
-    const raceBallots = await prisma.encryptedBallot.findMany({
-      where: { voterId: { in: raceVoters.map((v) => v.id) } },
-      select: { voterId: true, ciphertext: true },
-    });
-    const ciphertextByVoterId = new Map(raceBallots.map((b) => [b.voterId, b.ciphertext]));
+    // callAction 會回傳 ok（有沒有真的判定成功），所以直接核對「回 ok 的密文在票匭裡、
+    // 沒回 ok 的不在」，抓得到「伺服器回 ok，但交易其實回滾／被關票競態插隊」這種情況。
+    const boxAfter = new Set(
+      (await prisma.encryptedBallot.findMany({ where: { electionId }, select: { ciphertext: true } }))
+        .map((b) => b.ciphertext),
+    );
     let accepted = 0;
     jobs.forEach((job, i) => {
       const res = responses[i];
-      const voterId = raceVoters.find((v) => v.email === job.voter.email)!.id;
-      const stored = ciphertextByVoterId.get(voterId) ?? null;
-      const beforeCt = beforeCtByVoterId.get(voterId) ?? null;
       if (res.ok) {
         accepted++;
-        expect(stored, `${job.voter.email} 的請求回 ok，票位密文卻不是這次送出的值`).toBe(
-          job.ciphertext,
-        );
+        expect(boxAfter.has(job.ciphertext), `${job.voter.email} 的請求回 ok，票匭裡卻沒有這張票`).toBe(true);
       } else {
-        expect(stored, `${job.voter.email} 的請求沒回 ok，票位密文卻被改成這次送出的值`).toBe(
-          beforeCt,
-        );
+        expect(boxAfter.has(job.ciphertext), `${job.voter.email} 的請求沒回 ok，票匭裡卻多了這張票`).toBe(false);
       }
     });
+    expect(total, "票匭張數與『回 ok 的請求數』對不起來").toBe(boxBefore + accepted);
     console.log(
-      `  ▸ ${latecomers.length} 位競速投票人裡，這次請求被接受覆寫 ${accepted} 張，其餘維持舊票或未投過`,
+      `  ▸ ${latecomers.length} 位競速投票人裡，趕在關票前入匭 ${accepted} 張，其餘被截止擋下`,
     );
 
-    // 截止之後補送一張：這個人不該再改得動票匭。這裡不能用「votedAt 是不是 null」判斷——
-    // voters[3] 也在前面「投票開放瞬間」那個 case 投過票了，votedAt 早就非 null；真正該守的
-    // 不變量是「送出後密文完全沒變」，不管截止前它有沒有投過。
-    const target = await prisma.voter.findUniqueOrThrow({
-      where: { electionId_email: { electionId, email: voters[3].email } },
-    });
-    const before = await prisma.encryptedBallot.findUnique({ where: { voterId: target.id } });
-    const lateRes = await castViaHttp(voters[3], jobs[0].ciphertext);
-    const after = await prisma.encryptedBallot.findUnique({ where: { voterId: target.id } });
+    // 截止之後補送一張：這個人是專屬的、到現在都還沒投過，所以「票匭沒有這張密文」
+    // 就是乾淨的判準，不必再管他截止前有沒有票。
+    const lateCiphertext = await ciphertextFor(publicKeyJwk, electionId, { type: "blank" });
+    const beforeLate = await prisma.encryptedBallot.count({ where: { electionId } });
+    const lateRes = await castViaHttp(afterCloseVoter, lateCiphertext);
     expect(lateRes.ok, "投票已截止，這張補送的票卻回 ok").toBe(false);
-    expect(after?.ciphertext ?? null, "投票已截止，票匭裡的密文卻被改寫了").toBe(
-      before?.ciphertext ?? null,
-    );
+    expect(
+      await prisma.encryptedBallot.count({ where: { electionId, ciphertext: lateCiphertext } }),
+      "投票已截止，這張票卻還是進了票匭",
+    ).toBe(0);
+    expect(
+      await prisma.encryptedBallot.count({ where: { electionId } }),
+      "投票已截止，票匭張數卻變了",
+    ).toBe(beforeLate);
     console.log(`  ▸ RSS 灌爆前後：${rssBefore ?? "?"}MB → ${appRssMb() ?? "?"}MB`);
     trackRss("截止瞬間");
   });
@@ -366,11 +353,14 @@ describe(`同時灌爆（${VOTERS} 人、瞬間併發 ${BURST}）`, () => {
     // seal()／tallyAndSubmit() 是 in-process 直接呼叫（見檔頭說明），不是經 HTTP 打伺服器，
     // 這裡量的是「伺服器」process 的 RSS，量到的其實是伺服器閒置時的數字，跟這兩個操作
     // 實際吃掉多少記憶體無關——不再假裝那是伺服器的用量，只留執行耗時。
+    // 張數不再等於 VOTERS：各 case 用的是互不重疊的批次，而且關票競態那批只有一部分
+    // 趕上。實際張數以票匭為準。
+    const boxSize = await prisma.encryptedBallot.count({ where: { electionId } });
     const sealed = await timed(() => seal(electionId));
     const tallied = await timed(() => tallyAndSubmit(electionId, SLUG, keyFiles));
     expect(tallied.value.submitted.ok).toBe(true);
     console.log(
-      `  ▸ 彌封 ${Math.round(sealed.ms)}ms・開票 ${Math.round(tallied.ms)}ms（${VOTERS} 張）`,
+      `  ▸ 彌封 ${Math.round(sealed.ms)}ms・開票 ${Math.round(tallied.ms)}ms（${boxSize} 張）`,
     );
   });
 
