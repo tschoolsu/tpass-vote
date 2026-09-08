@@ -118,3 +118,101 @@ export function uploadErrorMessage(status: number, code: string | null): string 
 
   return `上傳失敗（${status}）`;
 }
+
+// ── 執行層：以下開始碰 DOM，只在瀏覽器跑 ──────────────────────────────
+
+export type PrepareResult =
+  | { ok: true; file: File; compressed: boolean }
+  | { ok: false; message: string };
+
+/** 等比縮到長邊不超過 maxEdge。只縮不放；最短邊至少留 1px，避免產生 0 寬高的 canvas。 */
+export function scaledSize(
+  width: number,
+  height: number,
+  maxEdge: number,
+): { width: number; height: number } {
+  const longest = Math.max(width, height);
+  if (longest <= maxEdge) return { width, height };
+  const ratio = maxEdge / longest;
+  return {
+    width: Math.max(1, Math.round(width * ratio)),
+    height: Math.max(1, Math.round(height * ratio)),
+  };
+}
+
+/** 壓縮輸出一律是 JPEG，檔名副檔名要跟著換，不然清單上顯示 .heic 會誤導。 */
+export function jpegName(name: string): string {
+  return `${name.replace(/\.[^./\\]*$/, "")}.jpg`;
+}
+
+function toJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+}
+
+/**
+ * 上傳前處理單一檔案。回傳的 file 直接丟進 FormData 送 /api/upload。
+ *
+ * 失敗一律回 { ok: false, message }，message 是可以直接顯示給使用者的中文。
+ * 遇到解不動又不確定原因的情況，選擇退回原檔而不是報錯——讓伺服器用它原本
+ * 那套規則判，比前端猜錯把合法檔案擋掉好。
+ */
+export async function prepareUpload(file: File, kind: UploadKind): Promise<PrepareResult> {
+  const plan = planCompression({
+    kind,
+    mime: file.type,
+    size: file.size,
+    filename: file.name,
+  });
+
+  if (plan.action === "reject") {
+    return { ok: false, message: plan.reason ?? STILL_TOO_LARGE_MESSAGE };
+  }
+  if (plan.action === "skip") return { ok: true, file, compressed: false };
+
+  const maxEdge = plan.maxEdge ?? PHOTO_MAX_EDGE;
+
+  let bitmap: ImageBitmap;
+  try {
+    // imageOrientation 一定要帶 from-image，否則 iPhone 直拍的照片會轉 90 度。
+    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch {
+    // Chrome／Android 解不了 HEIC，這條要給專屬引導，不能讓它變成一句「上傳失敗」。
+    if (isHeic({ mime: file.type, filename: file.name })) {
+      return { ok: false, message: HEIC_MESSAGE };
+    }
+    // 其他解碼失敗（含瀏覽器根本沒有 createImageBitmap）退回原檔交給伺服器判。
+    return { ok: true, file, compressed: false };
+  }
+
+  try {
+    const { width, height } = scaledSize(bitmap.width, bitmap.height, maxEdge);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return { ok: true, file, compressed: false };
+
+    // 透明 PNG 直接轉 JPEG 會變黑底，先鋪白再畫。
+    // canvas 繪圖色，不是 CSS token 的適用範圍。
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(bitmap, 0, 0, width, height);
+
+    for (const quality of QUALITY_LADDER) {
+      const blob = await toJpegBlob(canvas, quality);
+      if (!blob) break;
+      if (blob.size > MAX_UPLOAD_BYTES) continue;
+      // 壓完反而變大（本來就很小、已優化過的圖會這樣）就用原檔，別越幫越忙。
+      if (blob.size >= file.size) return { ok: true, file, compressed: false };
+      return {
+        ok: true,
+        file: new File([blob], jpegName(file.name), { type: "image/jpeg" }),
+        compressed: true,
+      };
+    }
+
+    return { ok: false, message: STILL_TOO_LARGE_MESSAGE };
+  } finally {
+    bitmap.close();
+  }
+}

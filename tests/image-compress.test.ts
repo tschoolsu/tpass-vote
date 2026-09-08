@@ -3,6 +3,8 @@ import {
   planCompression,
   isHeic,
   uploadErrorMessage,
+  scaledSize,
+  jpegName,
   MAX_UPLOAD_BYTES,
   PHOTO_MAX_EDGE,
   ATTACHMENT_MAX_EDGE,
@@ -171,5 +173,41 @@ describe("uploadErrorMessage", () => {
 
   it("404 election not found 刻意不翻譯，走 fallback", () => {
     expect(uploadErrorMessage(404, "election not found")).toBe("上傳失敗（404）");
+  });
+});
+
+describe("scaledSize", () => {
+  it("長邊超過上限就等比縮", () => {
+    expect(scaledSize(4000, 3000, 1024)).toEqual({ width: 1024, height: 768 });
+  });
+
+  it("直式照片以高為長邊", () => {
+    expect(scaledSize(3000, 4000, 1024)).toEqual({ width: 768, height: 1024 });
+  });
+
+  it("只縮不放：比上限小的圖維持原尺寸", () => {
+    expect(scaledSize(600, 400, 1024)).toEqual({ width: 600, height: 400 });
+  });
+
+  it("剛好等於上限不動", () => {
+    expect(scaledSize(1024, 512, 1024)).toEqual({ width: 1024, height: 512 });
+  });
+
+  it("縮完不會出現 0：極端長條圖至少留 1px", () => {
+    expect(scaledSize(10000, 3, 1024).height).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("jpegName", () => {
+  it("換掉原副檔名", () => {
+    expect(jpegName("IMG_0001.HEIC")).toBe("IMG_0001.jpg");
+  });
+
+  it("沒有副檔名就直接接上", () => {
+    expect(jpegName("scan")).toBe("scan.jpg");
+  });
+
+  it("只換最後一段，檔名中的點不動", () => {
+    expect(jpegName("2026.09.08 學生證.png")).toBe("2026.09.08 學生證.jpg");
   });
 });
