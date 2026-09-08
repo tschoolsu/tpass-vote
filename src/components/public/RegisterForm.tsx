@@ -56,6 +56,11 @@ export function RegisterForm({
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const photoInputRefs = React.useRef<Record<number, HTMLInputElement | null>>({});
 
+  // 壓縮／上傳途中擋住送出：這時 photo 還是 null，按下去只會拿到「請上傳大頭照」的
+  // 冤枉訊息——人家正在上傳卻被說沒上傳，而且那個訊息在頁尾，離操作點幾百 px 遠。
+  const busy =
+    submitting || attachmentPhase != null || Object.values(photoPhase).some((p) => p != null);
+
   function updateMember(idx: number, field: keyof Omit<MemberField, "photo">, value: string) {
     setMembers((prev) => prev.map((m, i) => (i === idx ? { ...m, [field]: value } : m)));
   }
@@ -100,37 +105,50 @@ export function RegisterForm({
     setMembers((prev) => prev.map((m, i) => (i === idx ? { ...m, photo: null } : m)));
   }
 
+  /**
+   * 單檔上傳。成功回 null 並把結果 append 進 attachments，失敗回可直接顯示的中文原因。
+   * 拆出來是為了讓 handleFiles 的迴圈維持淺層，錯誤處理也不必在迴圈裡展開。
+   */
+  async function uploadAttachment(file: File): Promise<string | null> {
+    try {
+      setAttachmentPhase("compressing");
+      const prepared = await prepareUpload(file, "attachment");
+      if (!prepared.ok) return prepared.message;
+      setAttachmentPhase("uploading");
+      const form = new FormData();
+      form.set("file", prepared.file);
+      form.set("electionId", electionId);
+      const res = await fetch("/api/upload", { method: "POST", body: form });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        return uploadErrorMessage(res.status, body?.error ?? null);
+      }
+      const uploaded = (await res.json()) as AttachmentFile;
+      setAttachments((prev) => [...prev, uploaded]);
+      return null;
+    } catch {
+      // 網路層直接斷掉（含 nginx reset）走這裡，拿不到狀態碼。
+      return "上傳失敗，請檢查網路後再試一次。";
+    }
+  }
+
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     setAttachmentError(null);
+    // 一個檔案失敗不能中斷後面的：原本在失敗處 return，使用者一次選三個檔、第二個被
+    // 擋下來時，第三個從頭到尾沒被處理也沒有任何提示，眼裡就是「我明明選了卻不見了」。
+    // 改成全部跑完，最後把每個失敗檔的檔名與原因一次列完。
+    const failures: string[] = [];
     try {
       for (const file of Array.from(files)) {
-        setAttachmentPhase("compressing");
-        const prepared = await prepareUpload(file, "attachment");
-        if (!prepared.ok) {
-          // 多選時其中一個壞掉：講清楚是哪一個，前面已經上傳成功的保留。
-          setAttachmentError(`${file.name}：${prepared.message}`);
-          return;
-        }
-        setAttachmentPhase("uploading");
-        const form = new FormData();
-        form.set("file", prepared.file);
-        form.set("electionId", electionId);
-        const res = await fetch("/api/upload", { method: "POST", body: form });
-        if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as { error?: string } | null;
-          setAttachmentError(`${file.name}：${uploadErrorMessage(res.status, body?.error ?? null)}`);
-          return;
-        }
-        const uploaded = (await res.json()) as AttachmentFile;
-        setAttachments((prev) => [...prev, uploaded]);
+        const message = await uploadAttachment(file);
+        if (message) failures.push(`${file.name}：${message}`);
       }
-    } catch {
-      setAttachmentError("上傳失敗，請檢查網路後再試一次。");
     } finally {
       setAttachmentPhase(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
+    setAttachmentError(failures.length > 0 ? failures.join("\n") : null);
   }
 
   function removeAttachment(id: string) {
@@ -240,7 +258,8 @@ export function RegisterForm({
             <div>
               <Label>大頭照（選票需載明相片，必填）</Label>
               <p className="mt-0.5 text-xs font-medium text-muted-foreground">
-                將公開顯示於選票與候選卡。接受 jpg/png/webp/heic，過大會自動壓縮。
+                將公開顯示於選票與候選卡，上傳後一律縮成統一尺寸。接受 jpg/png/webp；iPhone 的
+                heic 只有 Safari 能直接處理，其他瀏覽器請先把「設定 → 相機 → 格式」改成「最相容」。
               </p>
               <input
                 ref={(el) => {
@@ -351,8 +370,9 @@ export function RegisterForm({
       <Card>
         <Label>學生證影本（可多張）</Label>
         <p className="mt-1 text-sm font-medium text-muted-foreground">
-          供選委會核對身分，僅開放管理員檢視。接受 jpg/png/webp/heic/pdf，單檔 10MB
-          以內；圖片過大會自動壓縮，PDF 不會。
+          供選委會核對身分，僅開放管理員檢視。接受 jpg/png/webp/pdf，單檔 10MB 以內；圖片過大
+          會自動壓縮，PDF 不會。iPhone 的 heic 只有 Safari 能直接處理，其他瀏覽器請先把「設定 →
+          相機 → 格式」改成「最相容」。
         </p>
 
         <div className="mt-3 flex flex-wrap gap-2">
@@ -403,7 +423,7 @@ export function RegisterForm({
                 : "選擇檔案上傳"}
           </Button>
           {attachmentError && (
-            <p role="alert" className="mt-2 text-sm font-bold text-destructive">
+            <p role="alert" className="mt-2 whitespace-pre-line text-sm font-bold text-destructive">
               {attachmentError}
             </p>
           )}
@@ -416,7 +436,7 @@ export function RegisterForm({
         </p>
       )}
 
-      <Button type="submit" variant="primary" disabled={submitting || attachmentPhase != null}>
+      <Button type="submit" variant="primary" disabled={busy}>
         {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
         {submitting ? "送出中…" : "送出登記"}
       </Button>
