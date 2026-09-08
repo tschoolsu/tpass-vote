@@ -97,6 +97,11 @@ export function uploadErrorMessage(status: number, code: string | null): string 
       return STILL_TOO_LARGE_MESSAGE;
     case "file type not allowed":
       return "只接受 JPG／PNG／WebP（學生證影本另收 PDF）。";
+    // 跟上面那條分開講：那條是「副檔名／MIME 宣告的類型」不在白名單裡，
+    // 這條是「檔案實際內容」跟宣告的類型對不上（例如把檔名改成 .jpg 但內容其實
+    // 不是圖片，或圖檔在傳輸過程中損毀）。原因不同，使用者能做的事也不同。
+    case "file content does not match declared type":
+      return "這個檔案的內容不是有效的圖片（可能檔案已損毀，或副檔名被改過）。請重新拍照，或另存成 JPG 格式後再上傳一次。";
     case "upload quota exceeded":
       return "這場選舉的上傳次數已達上限（20 個檔），請先移除不需要的附件。";
   }

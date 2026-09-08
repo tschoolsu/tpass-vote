@@ -154,4 +154,22 @@ describe("uploadErrorMessage", () => {
   it("完全沒有 body 時也退回通用訊息", () => {
     expect(uploadErrorMessage(502, null)).toBe("上傳失敗（502）");
   });
+
+  it("翻譯 file content does not match declared type：要說內容不是有效圖片，且不落進 fallback", () => {
+    const msg = uploadErrorMessage(415, "file content does not match declared type");
+    expect(msg).toContain("圖片");
+    expect(msg).not.toBe("上傳失敗（415）");
+  });
+
+  it("401 unauthenticated 刻意不翻譯，走 fallback", () => {
+    expect(uploadErrorMessage(401, "unauthenticated")).toBe("上傳失敗（401）");
+  });
+
+  it("400 bad request 刻意不翻譯，走 fallback", () => {
+    expect(uploadErrorMessage(400, "bad request")).toBe("上傳失敗（400）");
+  });
+
+  it("404 election not found 刻意不翻譯，走 fallback", () => {
+    expect(uploadErrorMessage(404, "election not found")).toBe("上傳失敗（404）");
+  });
 });
