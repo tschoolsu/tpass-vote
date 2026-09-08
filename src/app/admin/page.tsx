@@ -36,7 +36,7 @@ export default async function AdminHomePage() {
       seats: true,
       slug: true,
       hiddenAt: true,
-      voters: { select: { votedAt: true } },
+      voters: { select: { hasVoted: true } },
       _count: { select: { candidates: true } },
     },
   });
@@ -69,7 +69,7 @@ export default async function AdminHomePage() {
         <ul className="flex flex-col gap-3">
           {elections.map((e) => {
             const rosterCount = e.voters.length;
-            const votedCount = e.voters.filter((v) => v.votedAt !== null).length;
+            const votedCount = e.voters.filter((v) => v.hasVoted).length;
             const turnoutPct =
               rosterCount > 0 ? Math.round((votedCount / rosterCount) * 1000) / 10 : null;
             const status = e.status as ElectionStatus;

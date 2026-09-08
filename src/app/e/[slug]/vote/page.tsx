@@ -82,6 +82,32 @@ export default async function VotePage({
     );
   }
 
+  // 已經投過：擋在時程判斷之前。一人一票、送出後不能改，所以不管這場現在是投票中、
+  // 已截止還是已公告，對他來說唯一有意義的資訊都是「你投過了」，而不是「不在投票階段」。
+  // 這裡不再渲染 VoteForm——舊版是顯示橫幅但表單照常給，那是重投時代的行為。
+  if (voter.hasVoted) {
+    return (
+      <PublicShell isLoggedIn isAdmin={admin}>
+        <Link href={`/e/${slug}`} className="text-sm font-bold text-accent hover:underline">
+          ← {election.title}
+        </Link>
+        <h1 className="mt-3 font-extrabold text-2xl">投票</h1>
+        <div className="mt-3">
+          <StatusBadge status={election.status} />
+        </div>
+        <Card className="mt-6 text-center">
+          <p className="font-bold">你已完成投票</p>
+          <p className="mt-1 text-sm font-medium text-muted-foreground">
+            本場選舉每人只能投一次。你的選票已加密入匭，無法更改或撤回，選委會也無法代為重設。
+          </p>
+          <p className="mt-3 text-sm font-medium text-muted-foreground">
+            開票後可到結果頁用送出前抄下的可回溯代碼查詢你的票（選罷法 §26-1 Ⅳ）。
+          </p>
+        </Card>
+      </PublicShell>
+    );
+  }
+
   if (election.status !== "voting") {
     return (
       <PublicShell isLoggedIn isAdmin={admin}>
@@ -168,15 +194,13 @@ export default async function VotePage({
         投票截止：{formatDateTime(election.votingEndsAt)}
       </p>
 
-      {voter.votedAt && (
-        <div className="mt-3 rounded-xl border-2 border-foreground bg-tone-blue-bg px-4 py-3">
-          <p className="font-bold">你已於 {formatDateTime(voter.votedAt)} 投過票</p>
-          <p className="mt-1 text-sm font-medium">
-            截止前可在任何裝置重新投票，以最後一次為準——重投會直接覆蓋上一次的選擇，
-            不會重複計票，也不會留下你改過票的紀錄。
-          </p>
-        </div>
-      )}
+      <div className="mt-3 rounded-xl border-2 border-foreground bg-tone-blue-bg px-4 py-3">
+        <p className="font-bold">每人只能投一次，送出後無法更改</p>
+        <p className="mt-1 text-sm font-medium">
+          送出前會有一頁讓你確認選擇，你的可回溯代碼也會在那一頁顯示——請先抄下來再送出，
+          代碼是你之後查詢自己那票唯一的憑據。
+        </p>
+      </div>
 
       <div className="mt-6">
         <VoteForm

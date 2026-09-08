@@ -122,17 +122,17 @@ export default async function ResultsPage({
           const [rows, total, votedCount] = await Promise.all([
             prisma.voter.findMany({
               where: { electionId: election.id },
-              select: { name: true, email: true, votedAt: true },
+              select: { name: true, email: true, hasVoted: true },
               orderBy: [{ name: "asc" }, { email: "asc" }],
               take: PREVIEW_ROWS,
             }),
             prisma.voter.count({ where: { electionId: election.id } }),
-            prisma.voter.count({ where: { electionId: election.id, votedAt: { not: null } } }),
+            prisma.voter.count({ where: { electionId: election.id, hasVoted: true } }),
           ]);
           return {
             preview: rows.map((v) => ({
               label: v.name?.trim() || v.email.split("@")[0],
-              voted: v.votedAt !== null,
+              voted: v.hasVoted,
             })),
             total,
             votedCount,

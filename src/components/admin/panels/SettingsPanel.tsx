@@ -17,7 +17,7 @@ interface VoterRow {
   id: string;
   email: string;
   name: string | null;
-  votedAt: Date | null;
+  hasVoted: boolean;
 }
 
 function fmt(d: Date | null): string {
@@ -49,9 +49,10 @@ export function SettingsPanel({
 }) {
   const [editing, setEditing] = useState(false);
   const rosterCount = voters.length;
-  // EncryptedBallot 以 voterId unique upsert，一人一格，所以已投票的 voter 數 ＝ 票匭裡的密文數。
-  // D14-1「作廢並重辦」的確認對話框要標出這個數字，不必另外查 EncryptedBallot。
-  const votedCount = voters.filter((v) => v.votedAt !== null).length;
+  // castBallot 在同一交易裡設 hasVoted 並插入密文、且一人只能投一次，所以已投票的
+  // voter 數 ＝ 票匭裡的密文數（彌封前）。D14-1「作廢並重辦」的確認對話框要標出這個
+  // 數字，不必另外查 EncryptedBallot——而且彌封後票匭是空的，查它反而會得到 0。
+  const votedCount = voters.filter((v) => v.hasVoted).length;
 
   return (
     <div className="flex flex-col gap-5">
@@ -137,7 +138,7 @@ export function SettingsPanel({
                 {v.name && <p className="font-mono text-[11px] text-muted-foreground truncate">{v.email}</p>}
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                {v.votedAt ? (
+                {v.hasVoted ? (
                   <Badge className="bg-tone-green-badge text-tone-green-text">已投票</Badge>
                 ) : (
                   <Badge className="bg-card">尚未投票</Badge>

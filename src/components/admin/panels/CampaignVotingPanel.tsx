@@ -69,7 +69,7 @@ export function CampaignVotingPanel({
             </span>
           </p>
           <p className="mt-1 text-xs font-medium text-muted-foreground">
-            截止前選舉人可跨裝置無限重投，以最後一次為準——這裡的數字只反映「入匭人數」，不反映內容。
+            每人只能投一次、送出後不能改——這裡的數字只反映「入匭人數」，不反映內容。
           </p>
         </Card>
       )}

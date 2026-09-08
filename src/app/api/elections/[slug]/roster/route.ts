@@ -19,7 +19,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/elections/[
 
   const voters = await prisma.voter.findMany({
     where: { electionId: election.id },
-    select: { name: true, email: true, votedAt: true },
+    select: { name: true, email: true, hasVoted: true },
     orderBy: [{ name: "asc" }, { email: "asc" }],
   });
 
@@ -32,7 +32,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/elections/[
     ...voters.map((v) => {
       const raw = v.name?.trim() || v.email.split("@")[0];
       const label = guardCsvFormula(raw).replace(/"/g, '""');
-      return `"${label}",${v.votedAt ? "已投票" : "未投票"}`;
+      return `"${label}",${v.hasVoted ? "已投票" : "未投票"}`;
     }),
   ];
   return new NextResponse(`﻿${rows.join("\n")}\n`, {

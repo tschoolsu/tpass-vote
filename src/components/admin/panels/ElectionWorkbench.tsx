@@ -77,7 +77,7 @@ interface VoterData {
   id: string;
   email: string;
   name: string | null;
-  votedAt: Date | null;
+  hasVoted: boolean;
 }
 
 interface ElectionData {
@@ -160,7 +160,7 @@ export function ElectionWorkbench({
 
   const approvedCandidates = election.candidates.filter((c) => c.status === "approved");
   const rosterCount = election.voters.length;
-  const votedCount = election.voters.filter((v) => v.votedAt !== null).length;
+  const votedCount = election.voters.filter((v) => v.hasVoted).length;
   const turnoutPct = rosterCount > 0 ? Math.round((votedCount / rosterCount) * 1000) / 10 : null;
   const hasKey = election.tallyPublicKeyJwk !== null;
   // 選舉基本資料／候選人審核在投票開始（voting 及之後）鎖定，判準集中在 lib/election-status。
