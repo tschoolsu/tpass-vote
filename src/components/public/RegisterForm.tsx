@@ -8,6 +8,7 @@ import { Button, Card, Input, Label, Textarea, cn } from "tpass-ui";
 import { Markdown } from "@/components/public/Markdown";
 import { registerCandidate, type RegisterInput } from "@/app/e/[slug]/register/actions";
 import type { MemberInfo } from "@/components/public/shared";
+import { prepareUpload, uploadErrorMessage } from "@/lib/image-compress";
 
 type MemberField = MemberInfo;
 
@@ -15,6 +16,9 @@ interface AttachmentFile {
   id: string;
   filename: string;
 }
+
+/** 上傳的兩個階段。壓縮在手機上要數秒，跟上傳分開顯示才不會讓人以為當掉。 */
+type UploadPhase = "compressing" | "uploading";
 
 const LEADER_LABELS = ["候選人", "副手"];
 
@@ -42,8 +46,10 @@ export function RegisterForm({
   const [attachments, setAttachments] = React.useState<AttachmentFile[]>(
     initial?.attachments ?? [],
   );
-  const [uploading, setUploading] = React.useState(false);
-  const [photoUploading, setPhotoUploading] = React.useState<Record<number, boolean>>({});
+  const [attachmentPhase, setAttachmentPhase] = React.useState<UploadPhase | null>(null);
+  const [photoPhase, setPhotoPhase] = React.useState<Record<number, UploadPhase | null>>({});
+  const [attachmentError, setAttachmentError] = React.useState<string | null>(null);
+  const [photoErrors, setPhotoErrors] = React.useState<Record<number, string | null>>({});
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState(false);
@@ -56,24 +62,35 @@ export function RegisterForm({
 
   async function handleMemberPhoto(idx: number, file: File | null) {
     if (!file) return;
-    setError(null);
-    setPhotoUploading((prev) => ({ ...prev, [idx]: true }));
+    setPhotoErrors((prev) => ({ ...prev, [idx]: null }));
+    setPhotoPhase((prev) => ({ ...prev, [idx]: "compressing" }));
     try {
+      const prepared = await prepareUpload(file, "photo");
+      if (!prepared.ok) {
+        setPhotoErrors((prev) => ({ ...prev, [idx]: prepared.message }));
+        return;
+      }
+      setPhotoPhase((prev) => ({ ...prev, [idx]: "uploading" }));
       const form = new FormData();
-      form.set("file", file);
+      form.set("file", prepared.file);
       form.set("electionId", electionId);
       form.set("kind", "photo");
       const res = await fetch("/api/upload", { method: "POST", body: form });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? `大頭照上傳失敗（${res.status}）`);
+        setPhotoErrors((prev) => ({
+          ...prev,
+          [idx]: uploadErrorMessage(res.status, body?.error ?? null),
+        }));
+        return;
       }
       const uploaded = (await res.json()) as { id: string };
       setMembers((prev) => prev.map((m, i) => (i === idx ? { ...m, photo: uploaded.id } : m)));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "大頭照上傳失敗，請再試一次");
+    } catch {
+      // 網路層直接斷掉（含 nginx reset）走這裡，拿不到狀態碼。
+      setPhotoErrors((prev) => ({ ...prev, [idx]: "大頭照上傳失敗，請檢查網路後再試一次。" }));
     } finally {
-      setPhotoUploading((prev) => ({ ...prev, [idx]: false }));
+      setPhotoPhase((prev) => ({ ...prev, [idx]: null }));
       const input = photoInputRefs.current[idx];
       if (input) input.value = "";
     }
@@ -85,25 +102,33 @@ export function RegisterForm({
 
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
-    setError(null);
-    setUploading(true);
+    setAttachmentError(null);
     try {
       for (const file of Array.from(files)) {
+        setAttachmentPhase("compressing");
+        const prepared = await prepareUpload(file, "attachment");
+        if (!prepared.ok) {
+          // 多選時其中一個壞掉：講清楚是哪一個，前面已經上傳成功的保留。
+          setAttachmentError(`${file.name}：${prepared.message}`);
+          return;
+        }
+        setAttachmentPhase("uploading");
         const form = new FormData();
-        form.set("file", file);
+        form.set("file", prepared.file);
         form.set("electionId", electionId);
         const res = await fetch("/api/upload", { method: "POST", body: form });
         if (!res.ok) {
           const body = (await res.json().catch(() => null)) as { error?: string } | null;
-          throw new Error(body?.error ?? `上傳失敗（${res.status}）`);
+          setAttachmentError(`${file.name}：${uploadErrorMessage(res.status, body?.error ?? null)}`);
+          return;
         }
         const uploaded = (await res.json()) as AttachmentFile;
         setAttachments((prev) => [...prev, uploaded]);
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "上傳失敗，請再試一次");
+    } catch {
+      setAttachmentError("上傳失敗，請檢查網路後再試一次。");
     } finally {
-      setUploading(false);
+      setAttachmentPhase(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
@@ -215,14 +240,14 @@ export function RegisterForm({
             <div>
               <Label>大頭照（選票需載明相片，必填）</Label>
               <p className="mt-0.5 text-xs font-medium text-muted-foreground">
-                將公開顯示於選票與候選卡。接受 jpg/png/webp，單檔 10MB 以內。
+                將公開顯示於選票與候選卡。接受 jpg/png/webp/heic，過大會自動壓縮。
               </p>
               <input
                 ref={(el) => {
                   photoInputRefs.current[idx] = el;
                 }}
                 type="file"
-                accept="image/jpeg,image/png,image/webp"
+                accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif"
                 onChange={(ev) => handleMemberPhoto(idx, ev.target.files?.[0] ?? null)}
                 className="hidden"
                 id={`photo-${idx}`}
@@ -232,15 +257,21 @@ export function RegisterForm({
                   type="button"
                   variant="default"
                   size="sm"
-                  disabled={photoUploading[idx]}
+                  disabled={photoPhase[idx] != null}
                   onClick={() => photoInputRefs.current[idx]?.click()}
                 >
-                  {photoUploading[idx] ? (
+                  {photoPhase[idx] != null ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <UploadCloud className="h-4 w-4" />
                   )}
-                  {photoUploading[idx] ? "上傳中…" : m.photo ? "更換大頭照" : "上傳大頭照"}
+                  {photoPhase[idx] === "compressing"
+                    ? "壓縮中…"
+                    : photoPhase[idx] === "uploading"
+                      ? "上傳中…"
+                      : m.photo
+                        ? "更換大頭照"
+                        : "上傳大頭照"}
                 </Button>
                 {m.photo && (
                   <Button type="button" variant="ghost" size="sm" onClick={() => removeMemberPhoto(idx)}>
@@ -249,6 +280,11 @@ export function RegisterForm({
                   </Button>
                 )}
               </div>
+              {photoErrors[idx] && (
+                <p role="alert" className="mt-1.5 text-xs font-bold text-destructive">
+                  {photoErrors[idx]}
+                </p>
+              )}
             </div>
           </div>
         </Card>
@@ -315,7 +351,8 @@ export function RegisterForm({
       <Card>
         <Label>學生證影本（可多張）</Label>
         <p className="mt-1 text-sm font-medium text-muted-foreground">
-          供選委會核對身分，僅開放管理員檢視。接受 jpg/png/webp/pdf，單檔 10MB 以內。
+          供選委會核對身分，僅開放管理員檢視。接受 jpg/png/webp/heic/pdf，單檔 10MB
+          以內；圖片過大會自動壓縮，PDF 不會。
         </p>
 
         <div className="mt-3 flex flex-wrap gap-2">
@@ -342,7 +379,7 @@ export function RegisterForm({
             ref={fileInputRef}
             type="file"
             multiple
-            accept="image/jpeg,image/png,image/webp,application/pdf"
+            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif,application/pdf"
             onChange={(e) => handleFiles(e.target.files)}
             className="hidden"
             id="attachment-input"
@@ -351,16 +388,25 @@ export function RegisterForm({
             type="button"
             variant="default"
             size="sm"
-            disabled={uploading}
+            disabled={attachmentPhase != null}
             onClick={() => fileInputRef.current?.click()}
           >
-            {uploading ? (
+            {attachmentPhase != null ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <UploadCloud className="h-4 w-4" />
             )}
-            {uploading ? "上傳中…" : "選擇檔案上傳"}
+            {attachmentPhase === "compressing"
+              ? "壓縮中…"
+              : attachmentPhase === "uploading"
+                ? "上傳中…"
+                : "選擇檔案上傳"}
           </Button>
+          {attachmentError && (
+            <p role="alert" className="mt-2 text-sm font-bold text-destructive">
+              {attachmentError}
+            </p>
+          )}
         </div>
       </Card>
 
@@ -370,7 +416,7 @@ export function RegisterForm({
         </p>
       )}
 
-      <Button type="submit" variant="primary" disabled={submitting || uploading}>
+      <Button type="submit" variant="primary" disabled={submitting || attachmentPhase != null}>
         {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
         {submitting ? "送出中…" : "送出登記"}
       </Button>
