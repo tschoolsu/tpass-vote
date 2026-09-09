@@ -56,3 +56,8 @@ next-env.d.ts
 
 # SDD 工作區（ledger、brief、review package），純暫存不進 git
 .superpowers/
+
+# 安全稽核測試（tests/audit/）。刻意留在本機：這批測試會對真實資料庫做連線飽和、
+# 記憶體壓力與偽造憑證的攻擊模擬，不該在 CI 上被誤觸；`pnpm test` 只收 tests/*.test.ts，
+# 本來就不會跑到它們。
+tests/audit/
