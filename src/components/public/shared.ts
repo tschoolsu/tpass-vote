@@ -26,9 +26,10 @@ export const STATUS_STYLE: Record<string, string> = {
   established: "bg-tone-violet-badge text-tone-violet-text",
 };
 
+// 後台的 ELECTION_KIND_LABEL 是同一組 kind 的另一份措辭（少了 recall）。改其中一邊的名稱時兩邊都要改。
 export const KIND_LABEL: Record<string, string> = {
   leader: "學生會長／副會長",
-  grade_rep: "班聯會代表",
+  grade_rep: "年級代表",
   other: "其他選舉",
   recall: "罷免案",
 };
