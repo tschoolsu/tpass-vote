@@ -6,10 +6,23 @@ TSchool 數位服務平台的學生會選舉子模組（消費端）。公告、
 - 子網域（本機）：`https://vote.lvh.me:3006`（tpass-auth:3000 / tpass-portal:3001 之後）
 - 技術棧：Next 16.3 + React 19 + Tailwind v4 + tpass-auth-js + Prisma 7 (Postgres)
 
-> **目前狀態：功能完整，尚未部署（`tpass-registry` 的 `deployed:false`）。**
+> **目前狀態：已上線（2026-09-05 起，https://vote.tschoolsu.org ，`deployed:true`）。**
 > 完整選舉流程：公告、候選人登記與補正審核、雙信封加密投票（一人一票，送出後不可更改）、
 > 彌封、本地開票、結果公告與重選場次；罷免、連署、補選、職務登記表亦已實作。
 > 法規對應見下方〈選罷法對應〉。
+>
+> 部署步驟一律以 [`../docs/HOST.md`](../docs/HOST.md) 為準，不要照抄本檔或舊 spec 裡的片段。
+> 主機上三種身分不能混用（2026-09-09 實查確認）：
+>
+> | 做什麼 | 用什麼身分 | 為什麼 |
+> | --- | --- | --- |
+> | `git`／`pnpm`／`pm2`／build（`/home/service/tpass-vote`） | `sudo -iu service` | 目錄屬 `service`；用自己的帳號 git 會擋 `dubious ownership`，用 root 會把 `.next/` 變成 root 擁有，下次部署炸 `EACCES` |
+> | `psql`／`pg_dump`（DB 名與 role 都是 `t_vote`） | `sudo -u postgres` | 主機的 PostgreSQL **沒有個人 role**，直接下 `psql` 會 `FATAL: role "yushun" does not exist` |
+> | nginx／systemctl／`/etc` | `sudo <指令>` | —— |
+>
+> 本服務的 `deploy.sh` 是六行版（已含 `pnpm install` 與 `prisma migrate deploy`），
+> 其他六個服務還是四行版。**主機上沒有任何資料庫備份機制**（沒有 cron、沒有 timer），
+> 會動 schema 的部署前務必自己先 `pg_dump`——Prisma 沒有 down migration，回滾只能靠它。
 
 ## 本機啟動
 
