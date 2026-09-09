@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { Button, Textarea, Label } from "tpass-ui";
 import { initiateRecall } from "@/app/offices/[id]/recall/actions";
+import { RECALL_REASON_MAX_LENGTH } from "@/lib/recall";
 
 export function InitiateRecallForm({ officeId }: { officeId: string }) {
   const router = useRouter();
@@ -42,10 +43,13 @@ export function InitiateRecallForm({ officeId }: { officeId: string }) {
           onChange={(e) => setReason(e.target.value)}
           required
           rows={5}
-          maxLength={4000}
+          maxLength={RECALL_REASON_MAX_LENGTH}
           className="mt-1 min-h-32"
           placeholder="請說明罷免事由（支援 markdown，將公開顯示於連署頁）"
         />
+        <p className="mt-1 text-right text-xs font-medium text-muted-foreground">
+          {Array.from(reason).length} / {RECALL_REASON_MAX_LENGTH} 字
+        </p>
       </div>
 
       <label className="flex items-start gap-2 rounded-xl border-2 border-foreground bg-secondary p-3 text-sm font-bold">

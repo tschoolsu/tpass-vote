@@ -71,3 +71,29 @@ export function canInitiateRecall(startedAt: Date | null, now: Date): boolean {
   if (!startedAt) return false;
   return now.getTime() >= recallEligibleFrom(startedAt).getTime();
 }
+
+// 罷免事由長度上限。這是全站唯一「任一登入師生能寫進 DB、內容完全由他決定」的自由文字
+// 欄位——Election.recallReason 是 Postgres TEXT，DB 不設限；next.config.ts 為了大場次開票
+// 把 serverActions.bodySizeLimit 放寬到 8mb，所以沒有這條檢查時，單發就能塞 8MB 垃圾，
+// 每個職務各塞一發、永久躺著。其餘公開寫入路徑各自有擋（投票 row lock、連署與登記的唯一
+// 索引、上傳的每人每場 20 檔配額），只有這裡漏掉。
+//
+// 數字沿用 InitiateRecallForm 原本就有的 maxLength={4000}：前端一直是這個上限，只是它
+// 可以被繞過（server action 直接呼叫即可），這裡是把同一條規則補到擋得住的那一層，
+// 不順手收緊既有行為。
+//
+// 以碼點計而非 String.length：後者一個 emoji 算 2，同樣的可見字數會依內容給出不同結果。
+export const RECALL_REASON_MAX_LENGTH = 4000;
+
+export type RecallReasonResult = { ok: true; value: string } | { ok: false; error: string };
+
+// 事由的正規化＋驗證。單一事實來源：server action 與登記表單的 maxLength 都讀這裡，
+// 前端只是 UX，真正的把關在 action 內。
+export function validateRecallReason(raw: string): RecallReasonResult {
+  const value = raw.trim();
+  if (value === "") return { ok: false, error: "請填寫罷免事由" };
+  if (Array.from(value).length > RECALL_REASON_MAX_LENGTH) {
+    return { ok: false, error: `罷免事由過長（上限 ${RECALL_REASON_MAX_LENGTH} 字）` };
+  }
+  return { ok: true, value };
+}

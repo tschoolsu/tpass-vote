@@ -1,5 +1,12 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { recallThreshold, recallPassed, canInitiateRecall, recallEligibleFrom } from "@/lib/recall";
+import {
+  recallThreshold,
+  recallPassed,
+  canInitiateRecall,
+  recallEligibleFrom,
+  validateRecallReason,
+  RECALL_REASON_MAX_LENGTH,
+} from "@/lib/recall";
 import { parseDatetimeLocalInTimeZone } from "@/app/admin/elections/election-schema";
 import { SITE_TIMEZONE } from "@/config/site";
 
@@ -93,4 +100,45 @@ describe("recallEligibleFrom（承接 offices 的 startedAt）不依賴 process 
       expect(canInitiateRecall(startedAt, new Date("2026-03-01T04:00:00Z"))).toBe(true);
     });
   }
+});
+
+// 罷免事由是全站唯一「任一登入師生能寫進 DB、且長度不設限」的欄位（Election.recallReason
+// 是 Postgres TEXT，schema 無上限）。next.config.ts 把 serverActions.bodySizeLimit 放寬到
+// 8mb 之後，單發就能塞 8MB；每個職務各塞一發，垃圾會永久躺在資料庫裡。
+// 其餘公開寫入路徑都已有擋（投票 row lock、連署/登記唯一索引、上傳每人每場 20 檔配額），
+// 只有這裡漏掉——上限在這裡定義一次，action 與表單共用。
+describe("validateRecallReason", () => {
+  it("空字串 → 擋下", () => {
+    expect(validateRecallReason("")).toEqual({ ok: false, error: "請填寫罷免事由" });
+  });
+
+  it("只有空白 → 擋下（與空字串同一句錯誤）", () => {
+    expect(validateRecallReason("   \n\t ")).toEqual({ ok: false, error: "請填寫罷免事由" });
+  });
+
+  it("正常事由 → 通過並回傳 trim 過的內容", () => {
+    expect(validateRecallReason("  怠忽職守  ")).toEqual({ ok: true, value: "怠忽職守" });
+  });
+
+  it("恰好等於上限 → 通過", () => {
+    const reason = "字".repeat(RECALL_REASON_MAX_LENGTH);
+    expect(validateRecallReason(reason)).toEqual({ ok: true, value: reason });
+  });
+
+  it("超過上限 1 字 → 擋下", () => {
+    const result = validateRecallReason("字".repeat(RECALL_REASON_MAX_LENGTH + 1));
+    expect(result.ok).toBe(false);
+  });
+
+  it("長度以 trim 後的內容計：前後空白撐到超長不算超長", () => {
+    const padded = " ".repeat(5000) + "怠忽職守" + " ".repeat(5000);
+    expect(validateRecallReason(padded)).toEqual({ ok: true, value: "怠忽職守" });
+  });
+
+  // 以 UTF-16 code unit 計長度時，一個 emoji 算 2，同樣的可見字數會依內容有無 emoji
+  // 而給出不同結果。改以碼點計，「幾個字」對使用者是一致的。
+  it("長度以碼點計，emoji 算一個字", () => {
+    const reason = "🗳".repeat(RECALL_REASON_MAX_LENGTH);
+    expect(validateRecallReason(reason).ok).toBe(true);
+  });
 });

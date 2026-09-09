@@ -8,7 +8,7 @@
 import { Prisma } from "@/generated/prisma/client";
 import { requireSession } from "@/lib/guard";
 import { prisma } from "@/lib/db";
-import { canInitiateRecall } from "@/lib/recall";
+import { canInitiateRecall, validateRecallReason } from "@/lib/recall";
 
 export type InitiateRecallResult =
   | { ok: true; slug: string }
@@ -17,8 +17,11 @@ export type InitiateRecallResult =
 export async function initiateRecall(officeId: string, reason: string): Promise<InitiateRecallResult> {
   const session = await requireSession(`/offices/${officeId}/recall/new`);
 
-  const trimmedReason = reason.trim();
-  if (trimmedReason === "") return { ok: false, error: "請填寫罷免事由" };
+  // 長度上限在 lib/recall.ts，與表單的 maxLength 同一個來源；表單的 maxLength 只是 UX，
+  // 把關在這裡（DB 的 recallReason 是無上限的 TEXT，這是唯一擋得住的地方）。
+  const validated = validateRecallReason(reason);
+  if (!validated.ok) return { ok: false, error: validated.error };
+  const trimmedReason = validated.value;
 
   try {
     const created = await prisma.$transaction(async (tx) => {
