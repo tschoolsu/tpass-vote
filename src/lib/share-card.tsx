@@ -12,6 +12,7 @@ import { join } from "node:path";
 import QRCode from "qrcode";
 import { prisma } from "@/lib/db";
 import { getObject } from "@/lib/storage";
+import { jpegOrientation, orientationTransform } from "@/lib/jpeg-orientation";
 import { SITE_TIMEZONE } from "@/config/site";
 import { candidateDisplayName, plainExcerpt } from "@/components/public/shared";
 import { candidatePageUrl, type PublicCandidateData } from "@/lib/public-candidate";
@@ -74,6 +75,8 @@ export function renderCached(key: string, render: () => Promise<Response>): Prom
 
 interface CardPhoto {
   src: string | null;
+  // 手機直拍、沒經過瀏覽器壓縮的原檔要靠 EXIF 轉正，見 lib/jpeg-orientation.ts。
+  transform?: string;
   initial: string;
 }
 
@@ -90,16 +93,20 @@ export interface ShareCard {
 
 const CARD_IMAGE_MIME = new Set(["image/jpeg", "image/png"]);
 
-async function photoDataUri(id: string | null | undefined): Promise<string | null> {
-  if (!id) return null;
+async function loadPhoto(id: string | null | undefined): Promise<Omit<CardPhoto, "initial">> {
+  if (!id) return { src: null };
   const upload = await prisma.upload.findUnique({
     where: { id },
     select: { kind: true, mime: true, storageKey: true },
   });
   // 跟 /api/photos/[id] 同一條邊界：只有 kind === "photo" 的檔可以公開出現在圖上。
-  if (!upload || upload.kind !== "photo" || !CARD_IMAGE_MIME.has(upload.mime)) return null;
+  if (!upload || upload.kind !== "photo" || !CARD_IMAGE_MIME.has(upload.mime)) return { src: null };
   const body = await getObject(upload.storageKey);
-  return body ? `data:${upload.mime};base64,${body.toString("base64")}` : null;
+  if (!body) return { src: null };
+  return {
+    src: `data:${upload.mime};base64,${body.toString("base64")}`,
+    transform: upload.mime === "image/jpeg" ? orientationTransform(jpegOrientation(body)) : undefined,
+  };
 }
 
 async function qrDataUri(url: string): Promise<string> {
@@ -136,7 +143,7 @@ export async function loadShareCard(data: PublicCandidateData): Promise<ShareCar
   const [photos, qr] = await Promise.all([
     Promise.all(
       candidate.members.map(async (m) => ({
-        src: await photoDataUri(m.photo),
+        ...(await loadPhoto(m.photo)),
         initial: m.name.trim().slice(0, 1) || "?",
       })),
     ),
@@ -190,7 +197,13 @@ function Photo({ photo, size }: { photo: CardPhoto; size: number }) {
     >
       {photo.src ? (
         // eslint-disable-next-line @next/next/no-img-element -- satori 只認原生 img。
-        <img src={photo.src} alt="" width={size} height={size} style={{ objectFit: "cover" }} />
+        <img
+          src={photo.src}
+          alt=""
+          width={size}
+          height={size}
+          style={{ objectFit: "cover", transform: photo.transform }}
+        />
       ) : (
         photo.initial
       )}
@@ -249,7 +262,7 @@ export function OgCard({ card }: { card: ShareCard }) {
           <Photo key={i} photo={p} size={photoSize} />
         ))}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", flex: 1, gap: 22 }}>
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, gap: 22, maxHeight: "100%", overflow: "hidden" }}>
         <div style={{ display: "flex", fontSize: 30, fontWeight: 700, color: C.mutedFg }}>
           {card.electionTitle}
         </div>
@@ -266,7 +279,7 @@ export function OgCard({ card }: { card: ShareCard }) {
           {card.name}
         </div>
         <div style={{ display: "flex", fontSize: 28, fontWeight: 700, color: C.fg, lineHeight: 1.5 }}>
-          {plainExcerpt(card.platform, 56)}
+          {plainExcerpt(card.platform, 48)}
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", fontSize: 26, fontWeight: 900, color: C.primary }}>
@@ -280,7 +293,7 @@ export function OgCard({ card }: { card: ShareCard }) {
 }
 
 export function StoryCard({ card }: { card: ShareCard }) {
-  const photoSize = card.photos.length > 1 ? 400 : 560;
+  const photoSize = card.photos.length > 1 ? 320 : 400;
   return (
     <div
       style={{
@@ -312,18 +325,18 @@ export function StoryCard({ card }: { card: ShareCard }) {
         </div>
       </div>
 
-      <div style={{ display: "flex", justifyContent: "center", gap: 48, marginTop: 80 }}>
+      <div style={{ display: "flex", justifyContent: "center", gap: 48, marginTop: 64, flexShrink: 0 }}>
         {card.photos.map((p, i) => (
           <Photo key={i} photo={p} size={photoSize} />
         ))}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 28, marginTop: 72 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 24, marginTop: 56, flexShrink: 0 }}>
         <NumberBadge n={card.number} fontSize={64} />
         <div
           style={{
             display: "flex",
-            fontSize: nameSize(card.name, [148, 120, 88, 72]),
+            fontSize: nameSize(card.name, [132, 112, 84, 68]),
             fontWeight: 900,
             color: C.fg,
             lineHeight: 1.1,
@@ -338,28 +351,33 @@ export function StoryCard({ card }: { card: ShareCard }) {
           display: "flex",
           flexDirection: "column",
           gap: 16,
-          marginTop: 48,
-          padding: "40px 44px",
+          marginTop: 44,
+          padding: "36px 44px",
+          // 政見卡是唯一可以被壓縮的區塊：字太多就截掉，不能把投票時間和 QR 擠出畫面。
+          flexShrink: 1,
+          minHeight: 0,
+          overflow: "hidden",
           borderRadius: 32,
           border: `6px solid ${C.fg}`,
           boxShadow: `14px 14px 0 0 ${C.fg}`,
           background: C.card,
         }}
       >
-        <div style={{ display: "flex", fontSize: 34, fontWeight: 900, color: C.accent }}>政見</div>
-        <div style={{ display: "flex", fontSize: 40, fontWeight: 700, color: C.fg, lineHeight: 1.6 }}>
-          {plainExcerpt(card.platform, 90)}
+        <div style={{ display: "flex", fontSize: 32, fontWeight: 900, color: C.accent }}>政見</div>
+        <div style={{ display: "flex", fontSize: 36, fontWeight: 700, color: C.fg, lineHeight: 1.55 }}>
+          {plainExcerpt(card.platform, 54)}
         </div>
       </div>
 
-      <div style={{ display: "flex", flex: 1 }} />
+      <div style={{ display: "flex", flex: 1, minHeight: 32 }} />
 
       {card.votingLine && (
         <div
           style={{
             display: "flex",
             justifyContent: "center",
-            marginBottom: 40,
+            flexShrink: 0,
+            marginBottom: 36,
             padding: "16px 24px",
             borderRadius: 20,
             border: `5px solid ${C.fg}`,
@@ -373,7 +391,7 @@ export function StoryCard({ card }: { card: ShareCard }) {
         </div>
       )}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 44 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 44, flexShrink: 0 }}>
         <div
           style={{
             display: "flex",
