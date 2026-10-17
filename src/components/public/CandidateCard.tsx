@@ -5,7 +5,8 @@
 //
 // 大頭照走公開路徑 /api/photos/[id]（免 admin，選罷法第二十二條要求選票載明相片）；
 // 學生證影本等私密附件維持走 /api/files/[id]（admin-only），這裡完全不碰。
-import { User } from "lucide-react";
+import Link from "next/link";
+import { Share2, User } from "lucide-react";
 import { Badge } from "tpass-ui";
 import { candidateDisplayName, type MemberInfo } from "@/components/public/shared";
 import { Markdown } from "@/components/public/Markdown";
@@ -86,14 +87,25 @@ export function CandidateCard({
   kind,
   candidate,
   expanded = false,
+  href,
 }: {
   kind: string;
   candidate: PublicCandidate;
   expanded?: boolean;
+  /** 候選人個別頁（可分享、有預覽圖）。投票頁不給，免得投到一半被帶走。 */
+  href?: string;
 }) {
   return (
-    <div className="rounded-2xl border-2 border-foreground bg-card p-4 shadow-[4px_4px_0_0_var(--color-foreground)]">
+    <div className="flex flex-col gap-3 rounded-2xl border-2 border-foreground bg-card p-4 shadow-[4px_4px_0_0_var(--color-foreground)]">
       <CandidateInfo kind={kind} candidate={candidate} expanded={expanded} />
+      {href && (
+        <Link
+          href={href}
+          className="inline-flex items-center gap-1.5 self-start text-sm font-bold text-accent hover:underline"
+        >
+          <Share2 className="h-4 w-4" /> 個人頁・分享
+        </Link>
+      )}
     </div>
   );
 }

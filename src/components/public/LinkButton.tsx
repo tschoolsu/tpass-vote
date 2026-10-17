@@ -19,13 +19,23 @@ export function LinkButton({
   href,
   variant = "default",
   className,
+  download,
   children,
 }: {
   href: string;
   variant?: Variant;
   className?: string;
+  /** 指向檔案下載（route handler）時給檔名。走原生 <a>：next/link 會預取 href，等於白白多產一次檔。 */
+  download?: string;
   children: React.ReactNode;
 }) {
+  if (download !== undefined) {
+    return (
+      <a href={href} download={download} className={cn(BASE, VARIANT[variant], className)}>
+        {children}
+      </a>
+    );
+  }
   return (
     <Link href={href} className={cn(BASE, VARIANT[variant], className)}>
       {children}

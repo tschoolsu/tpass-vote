@@ -305,6 +305,7 @@ export default async function ElectionDetailPage({
                     members: c.members as unknown as MemberInfo[],
                     platform: c.platform,
                   }}
+                  href={c.number !== null ? `/e/${slug}/c/${c.number}` : undefined}
                 />
               ))}
             </div>
