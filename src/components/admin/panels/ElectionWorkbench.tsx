@@ -20,6 +20,7 @@ import {
   FileSignature,
   Gavel,
   History,
+  QrCode,
 } from "lucide-react";
 import { Badge, Button, Textarea } from "tpass-ui";
 import { ConfirmActionButton } from "@/components/admin/ConfirmActionButton";
@@ -462,12 +463,20 @@ export function ElectionWorkbench({
               </>
             )}
           </p>
-          <Link
-            href={`/admin/elections/${election.id}/audit-log`}
-            className="mt-1 inline-flex items-center gap-1 text-xs font-bold text-muted-foreground hover:text-foreground"
-          >
-            <History className="h-3.5 w-3.5" /> 稽核紀錄
-          </Link>
+          <div className="mt-1 flex flex-wrap items-center gap-3">
+            <Link
+              href={`/admin/elections/${election.id}/audit-log`}
+              className="inline-flex items-center gap-1 text-xs font-bold text-muted-foreground hover:text-foreground"
+            >
+              <History className="h-3.5 w-3.5" /> 稽核紀錄
+            </Link>
+            <Link
+              href={`/admin/elections/${election.id}/poster`}
+              className="inline-flex items-center gap-1 text-xs font-bold text-muted-foreground hover:text-foreground"
+            >
+              <QrCode className="h-3.5 w-3.5" /> 宣傳海報
+            </Link>
+          </div>
         </div>
 
         <div className="flex shrink-0 flex-col items-end gap-2">
