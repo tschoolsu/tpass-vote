@@ -113,6 +113,8 @@ export interface MemberInfo {
   // 大頭照的 Upload id（走 /api/photos/[id] 公開顯示）。選罷法要求選票載明相片，新登記一律必填；
   // 型別留 optional 只是為了相容登記於此欄位存在前的既有資料，讀取端要能處理沒有相片的情況。
   photo?: string | null;
+  // 經歷與事蹟（Markdown，公開）。新登記必填；舊資料沒有這欄，讀取端要能處理缺值。
+  experience?: string;
 }
 
 /** 候選人顯示名稱：leader 場次聯名顯示（候選人＋副手），其餘單人。 */

@@ -84,7 +84,10 @@ model Candidate {
   id          String   @id @default(cuid())
   electionId  String
   election    Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
-  members     Json // [{name,email,grade}]；leader 聯名 2 人，其餘 1 人
+  members     Json // [{name,email,grade,photo,experience}]；leader 聯名 2 人，其餘 1 人。整包公開顯示
+  // 學號，順序對應 members。私密（只給選委核對名冊），所以不放進會被公開頁整包吐出去的 members；
+  // 公開查詢一律用 select 列欄位，不得帶到這欄。登記於此欄位存在前的舊資料為 []。
+  studentIds  String[] @default([])
   number      Int? // 號次，審核通過後編定
   platform    String // 政見
   attachments Json? // Upload id 清單（學生證影本等）

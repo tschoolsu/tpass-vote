@@ -109,6 +109,7 @@ export async function cloneElection(
         data: toCopy.map((c) => ({
           electionId: created.id,
           members: c.members as Prisma.InputJsonValue,
+          studentIds: c.studentIds,
           number: c.number,
           platform: c.platform,
           attachments:

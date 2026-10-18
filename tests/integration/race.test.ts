@@ -1086,7 +1086,14 @@ describe("D7-5（第 2 輪）registerCandidate：重送不再覆寫剛核准的�
         const registering = as(CAND, () =>
           registerCandidate(SLUG, {
             members: [
-              { name: CAND.name ?? CAND.email, email: CAND.email, grade: "二年級", photo: photoId },
+              {
+                name: CAND.name ?? CAND.email,
+                email: CAND.email,
+                grade: "二年級",
+                studentId: "S0001",
+                experience: "經歷",
+                photo: photoId,
+              },
             ],
             platform: `第 ${attempt} 輪重送`,
             attachmentIds: [attachmentId],

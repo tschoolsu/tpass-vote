@@ -147,7 +147,7 @@ describe("跨物件存取（IDOR）", () => {
     const victim = await makeUploads(a, VOTER_B);
     const r = await as(CAND, () =>
       registerCandidate(slugA, {
-        members: [{ name: "小偷", email: CAND.email, grade: "二年級", photo: victim.photoId }],
+        members: [{ name: "小偷", email: CAND.email, grade: "二年級", studentId: "S0001", experience: "經歷", photo: victim.photoId }],
         platform: "政見",
         attachmentIds: [victim.attachmentId],
       }),
@@ -159,7 +159,7 @@ describe("跨物件存取（IDOR）", () => {
     const mine = await makeUploads(b, CAND);
     const r = await as(CAND, () =>
       registerCandidate(slugA, {
-        members: [{ name: "跨場", email: CAND.email, grade: "二年級", photo: mine.photoId }],
+        members: [{ name: "跨場", email: CAND.email, grade: "二年級", studentId: "S0001", experience: "經歷", photo: mine.photoId }],
         platform: "政見",
         attachmentIds: [mine.attachmentId],
       }),
@@ -171,7 +171,7 @@ describe("跨物件存取（IDOR）", () => {
     const { attachmentId } = await makeUploads(a, CAND);
     const r = await as(CAND, () =>
       registerCandidate(slugA, {
-        members: [{ name: "冒充", email: CAND.email, grade: "二年級", photo: attachmentId }],
+        members: [{ name: "冒充", email: CAND.email, grade: "二年級", studentId: "S0001", experience: "經歷", photo: attachmentId }],
         platform: "政見",
         attachmentIds: [attachmentId],
       }),

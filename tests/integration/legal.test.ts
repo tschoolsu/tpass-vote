@@ -660,13 +660,49 @@ describe("候選人登記", () => {
     const { attachmentId } = await makeUploads(electionId, CAND);
     const r = await as(CAND, () =>
       registerCandidate(slug, {
-        members: [{ name: "無照者", email: CAND.email, grade: "二年級", photo: "" }],
+        members: [
+          { name: "無照者", email: CAND.email, grade: "二年級", studentId: "S0001", experience: "經歷", photo: "" },
+        ],
         platform: "政見",
         attachmentIds: [attachmentId],
       }),
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain("大頭照");
+  });
+
+  it("經歷與事蹟必填", async () => {
+    const slug = "experience-required";
+    const created = await makeElection({ slug });
+    const electionId = created.electionId!;
+    await advanceTo(electionId, "registration");
+    const { registerCandidate } = await import("@/app/e/[slug]/register/actions");
+    const { makeUploads } = await import("../helpers/flow");
+    const { photoId, attachmentId } = await makeUploads(electionId, CAND);
+    const r = await as(CAND, () =>
+      registerCandidate(slug, {
+        members: [
+          { name: "沒經歷", email: CAND.email, grade: "二年級", studentId: "S0001", experience: "  ", photo: photoId },
+        ],
+        platform: "政見",
+        attachmentIds: [attachmentId],
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("經歷");
+  });
+
+  it("學號另存 studentIds，不進會被公開頁整包吐出的 members", async () => {
+    const slug = "student-id-private";
+    const created = await makeElection({ slug });
+    const electionId = created.electionId!;
+    await advanceTo(electionId, "registration");
+    const r = await registerAs(slug, electionId, CAND);
+    expect(r.ok).toBe(true);
+    const c = await prisma.candidate.findFirstOrThrow({ where: { electionId } });
+    expect(c.studentIds).toEqual(["S0001"]);
+    expect(JSON.stringify(c.members)).not.toContain("S0001");
+    expect((c.members as { experience?: string }[])[0]?.experience).toBe("測試經歷");
   });
 });
 

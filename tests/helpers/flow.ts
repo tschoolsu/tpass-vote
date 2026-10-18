@@ -118,6 +118,8 @@ export async function registerAs(
           name: identity.name ?? identity.email,
           email: identity.email,
           grade: opts.grade ?? "二年級",
+          studentId: "S0001",
+          experience: "測試經歷",
           photo: photoId,
         },
       ],

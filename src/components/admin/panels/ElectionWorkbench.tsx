@@ -69,6 +69,7 @@ interface CandidateData {
   status: string;
   platform: string;
   members: unknown;
+  studentIds: string[];
   reviewNote: string | null;
   createdBy: string;
   attachments: unknown;

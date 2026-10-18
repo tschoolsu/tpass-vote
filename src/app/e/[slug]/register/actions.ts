@@ -4,6 +4,7 @@
 // 2. 禁止重複登記：同一登記者（createdBy）已有非 rejected/withdrawn 的登記就拒絕新增；
 //    needs_fix 狀態允許編輯重送（同一筆覆寫，狀態轉回 pending）。
 // 3. 附件一律驗證屬於本場選舉、且是本人上傳，擋別人 upload id 被拿來冒用。
+// 4. 學號是私密資料：從 members 拆出來另存 Candidate.studentIds，members JSON 會被公開頁整包吐出去。
 
 import { Prisma } from "@/generated/prisma/client";
 import { z } from "zod";
@@ -15,6 +16,8 @@ const memberSchema = z.object({
   name: z.string().trim().min(1, "姓名必填").max(50),
   email: z.string().trim().min(1, "email 必填").max(120).regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "email 格式不正確"),
   grade: z.string().trim().min(1, "年級／班級必填").max(20),
+  studentId: z.string().trim().min(1, "學號必填").max(20),
+  experience: z.string().trim().min(1, "請填寫經歷與事蹟").max(2000, "經歷與事蹟過長"),
   // 大頭照 Upload id：選罷法要求選票載明相片，必填。實際歸屬（kind=photo、屬於本場選舉、
   // 本人上傳）在下面另外查 DB 驗證，這裡只驗格式非空。
   photo: z.string().trim().min(1, "請上傳大頭照"),
@@ -100,7 +103,10 @@ export async function registerCandidate(
     select: { id: true },
   });
 
-  const membersJson = data.members as unknown as Prisma.InputJsonValue;
+  const studentIds = data.members.map((m) => m.studentId);
+  const membersJson = data.members.map(
+    ({ studentId: _studentId, ...publicInfo }) => publicInfo,
+  ) as unknown as Prisma.InputJsonValue;
   const attachmentsJson = data.attachmentIds as unknown as Prisma.InputJsonValue;
 
   if (existing) {
@@ -108,6 +114,7 @@ export async function registerCandidate(
       where: { id: existing.id, status: { in: ["needs_fix", "rejected", "withdrawn"] } },
       data: {
         members: membersJson,
+        studentIds,
         platform: data.platform,
         attachments: attachmentsJson,
         status: "pending",
@@ -127,6 +134,7 @@ export async function registerCandidate(
       data: {
         electionId: election.id,
         members: membersJson,
+        studentIds,
         platform: data.platform,
         attachments: attachmentsJson,
         status: "pending",

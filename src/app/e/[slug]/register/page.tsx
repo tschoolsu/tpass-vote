@@ -118,11 +118,27 @@ export default async function RegisterPage({
                 </div>
                 <div>
                   <p className="font-bold text-sm">{m.name}</p>
-                  <p className="text-xs font-medium text-muted-foreground">{m.grade}</p>
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {m.grade}
+                    {existing.studentIds[i] && `・學號 ${existing.studentIds[i]}`}
+                  </p>
                 </div>
               </div>
             ))}
           </div>
+          {(existing.members as unknown as MemberInfo[]).some((m) => m.experience?.trim()) && (
+            <div className="mt-4 border-t-2 border-foreground/10 pt-3">
+              <p className="font-bold text-accent text-sm">經歷與事蹟</p>
+              {(existing.members as unknown as MemberInfo[]).map((m, i) =>
+                m.experience?.trim() ? (
+                  <div key={i} className="mt-1.5 text-sm text-foreground/80">
+                    {election.kind === "leader" && <p className="font-bold text-foreground">{m.name}</p>}
+                    <Markdown text={m.experience} />
+                  </div>
+                ) : null,
+              )}
+            </div>
+          )}
           <div className="mt-4 border-t-2 border-foreground/10 pt-3">
             <p className="font-bold text-accent text-sm">政見</p>
             <div className="mt-1.5 text-sm text-foreground/80">
@@ -150,7 +166,10 @@ export default async function RegisterPage({
               initial={
                 editable
                   ? {
-                      members: editable.members as unknown as MemberInfo[],
+                      members: (editable.members as unknown as MemberInfo[]).map((m, i) => ({
+                        ...m,
+                        studentId: editable.studentIds[i] ?? "",
+                      })),
                       platform: editable.platform,
                       attachments: existingAttachments,
                     }

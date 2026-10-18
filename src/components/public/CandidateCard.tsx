@@ -1,4 +1,4 @@
-// 候選人資訊展示：大頭照、號次、成員姓名、政見（markdown 渲染）。
+// 候選人資訊展示：大頭照、號次、成員姓名、政見與各成員經歷（markdown 渲染）。
 // 純展示、無 hooks，server / client 兩邊都能安全複用（投票頁的互動卡片內也會包這個）。
 // `expanded`：預設 false（原生 <details> 摺疊，免 JS）；投票頁傳 true 直接展開，
 // 讓投票當下政見資訊明確可見，不用多一次點擊。
@@ -38,6 +38,22 @@ function MemberAvatar({ member }: { member: MemberInfo }) {
   );
 }
 
+/** 各成員的經歷與事蹟。舊登記沒有這欄，全員都沒填就整段不出現。 */
+function ExperienceList({ members }: { members: MemberInfo[] }) {
+  const filled = members.filter((m) => m.experience?.trim());
+  if (filled.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2 text-foreground/80">
+      {filled.map((m, i) => (
+        <div key={i}>
+          {members.length > 1 && <p className="font-bold text-foreground">{m.name}</p>}
+          <Markdown text={m.experience ?? ""} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function CandidateInfo({
   kind,
   candidate,
@@ -63,21 +79,43 @@ export function CandidateInfo({
         {candidateDisplayName(kind, candidate.members)}
       </h3>
       {expanded ? (
-        <div className="text-sm">
-          <p className="font-bold text-accent">政見</p>
-          <div className="mt-1.5 text-foreground/80">
-            <Markdown text={candidate.platform} />
+        <>
+          <div className="text-sm">
+            <p className="font-bold text-accent">政見</p>
+            <div className="mt-1.5 text-foreground/80">
+              <Markdown text={candidate.platform} />
+            </div>
           </div>
-        </div>
+          {candidate.members.some((m) => m.experience?.trim()) && (
+            <div className="text-sm">
+              <p className="font-bold text-accent">經歷與事蹟</p>
+              <div className="mt-1.5">
+                <ExperienceList members={candidate.members} />
+              </div>
+            </div>
+          )}
+        </>
       ) : (
-        <details className="group text-sm">
-          <summary className="cursor-pointer font-bold text-accent select-none">
-            政見
-          </summary>
-          <div className="mt-1.5 text-foreground/80">
-            <Markdown text={candidate.platform} />
-          </div>
-        </details>
+        <>
+          <details className="group text-sm">
+            <summary className="cursor-pointer font-bold text-accent select-none">
+              政見
+            </summary>
+            <div className="mt-1.5 text-foreground/80">
+              <Markdown text={candidate.platform} />
+            </div>
+          </details>
+          {candidate.members.some((m) => m.experience?.trim()) && (
+            <details className="group text-sm">
+              <summary className="cursor-pointer font-bold text-accent select-none">
+                經歷與事蹟
+              </summary>
+              <div className="mt-1.5">
+                <ExperienceList members={candidate.members} />
+              </div>
+            </details>
+          )}
+        </>
       )}
     </div>
   );

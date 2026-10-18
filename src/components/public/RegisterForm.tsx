@@ -10,7 +10,8 @@ import { registerCandidate, type RegisterInput } from "@/app/e/[slug]/register/a
 import type { MemberInfo } from "@/components/public/shared";
 import { prepareUpload, uploadErrorMessage } from "@/lib/image-compress";
 
-type MemberField = MemberInfo;
+// 學號只在表單與送出 payload 裡跟著成員走；伺服器端會拆出去另存（私密），不進公開的 members。
+type MemberField = MemberInfo & { studentId: string };
 
 interface AttachmentFile {
   id: string;
@@ -39,7 +40,14 @@ export function RegisterForm({
   const [members, setMembers] = React.useState<MemberField[]>(
     () =>
       initial?.members ??
-      Array.from({ length: memberCount }, () => ({ name: "", email: "", grade: "", photo: null })),
+      Array.from({ length: memberCount }, () => ({
+        name: "",
+        email: "",
+        grade: "",
+        studentId: "",
+        experience: "",
+        photo: null,
+      })),
   );
   const [platform, setPlatform] = React.useState(initial?.platform ?? "");
   const [platformTab, setPlatformTab] = React.useState<"write" | "preview">("write");
@@ -176,7 +184,11 @@ export function RegisterForm({
     }
 
     const payload: RegisterInput = {
-      members: members.map((m) => ({ ...m, photo: m.photo as string })),
+      members: members.map((m) => ({
+        ...m,
+        experience: m.experience ?? "",
+        photo: m.photo as string,
+      })),
       platform,
       attachmentIds: attachments.map((a) => a.id),
     };
@@ -210,7 +222,7 @@ export function RegisterForm({
       {members.map((m, idx) => (
         <Card key={idx}>
           <h3 className="font-extrabold">{labels[idx] ?? `登記人 ${idx + 1}`}</h3>
-          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <Label htmlFor={`name-${idx}`}>姓名</Label>
               <Input
@@ -246,6 +258,33 @@ export function RegisterForm({
                 className="mt-1"
               />
             </div>
+            <div>
+              <Label htmlFor={`studentId-${idx}`}>學號（僅選委會可見）</Label>
+              <Input
+                id={`studentId-${idx}`}
+                value={m.studentId}
+                onChange={(ev) => updateMember(idx, "studentId", ev.target.value)}
+                required
+                maxLength={20}
+                className="mt-1"
+              />
+            </div>
+          </div>
+
+          <div className="mt-3">
+            <Label htmlFor={`experience-${idx}`}>經歷與事蹟（公開）</Label>
+            <Textarea
+              id={`experience-${idx}`}
+              value={m.experience ?? ""}
+              onChange={(ev) => updateMember(idx, "experience", ev.target.value)}
+              required
+              maxLength={2000}
+              className="mt-1 min-h-28"
+              placeholder={"例：\n- 高一班聯會代表\n- 校慶籌備會總召"}
+            />
+            <p className="mt-1 text-xs font-medium text-muted-foreground">
+              將與政見一同公開。支援：**粗體**、- 條列、[連結](網址)
+            </p>
           </div>
 
           <div className="mt-3 flex items-center gap-3">

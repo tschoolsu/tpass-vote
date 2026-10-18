@@ -19,6 +19,7 @@ interface CandidateMember {
   grade?: string;
   // 大頭照的 Upload id（走 /api/photos/[id]），見 src/components/public/shared.ts 的 MemberInfo。
   photo?: string | null;
+  experience?: string;
 }
 
 export function CandidateReviewCard({
@@ -34,6 +35,7 @@ export function CandidateReviewCard({
     status: string;
     platform: string;
     members: unknown;
+    studentIds: string[];
     reviewNote: string | null;
     createdBy: string;
   };
@@ -92,6 +94,9 @@ export function CandidateReviewCard({
               <span>
                 {m.name}
                 {m.grade && <span className="text-muted-foreground"> · {m.grade}</span>}
+                {candidate.studentIds[i] && (
+                  <span className="font-mono text-[11px] text-muted-foreground"> · 學號 {candidate.studentIds[i]}</span>
+                )}
                 <span className="font-mono text-[11px] text-muted-foreground"> · {m.email}</span>
               </span>
             </li>
@@ -105,6 +110,22 @@ export function CandidateReviewCard({
           <Markdown text={candidate.platform} />
         </div>
       </div>
+
+      {members.some((m) => m.experience?.trim()) && (
+        <div>
+          <p className="font-bold text-sm mb-1">經歷與事蹟</p>
+          <div className="flex flex-col gap-2 text-sm font-medium">
+            {members.map((m, i) =>
+              m.experience?.trim() ? (
+                <div key={i}>
+                  {members.length > 1 && <p className="font-bold">{m.name}</p>}
+                  <Markdown text={m.experience} />
+                </div>
+              ) : null,
+            )}
+          </div>
+        </div>
+      )}
 
       {attachmentFiles.length > 0 && (
         <div>

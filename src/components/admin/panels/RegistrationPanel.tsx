@@ -7,6 +7,7 @@ interface CandidateRow {
   status: string;
   platform: string;
   members: unknown;
+  studentIds: string[];
   reviewNote: string | null;
   createdBy: string;
   attachments: unknown;
@@ -60,6 +61,7 @@ export function RegistrationPanel({
             status: c.status,
             platform: c.platform,
             members: c.members,
+            studentIds: c.studentIds,
             reviewNote: c.reviewNote,
             createdBy: c.createdBy,
           }}
